@@ -1,7 +1,5 @@
 #%% imports
 
-import os
-
 from astropy.io import fits
 from matplotlib import pyplot as plt
 

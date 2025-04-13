@@ -8,7 +8,7 @@ from astropy import coordinates as astrocoord
 from astropy import units as u
 from astropy import table
 
-import catalog_utilities as catutils
+from target_selection_tools import catalog_utilities as catutils
 
 
 def get_simbad_from_names(names, extra_cols=(), suppress_blank_response_warnings=False):

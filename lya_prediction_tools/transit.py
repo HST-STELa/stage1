@@ -1,15 +1,14 @@
 from math import pi, nan
-import warnings
 
 import numpy as np
-from scipy.stats import norm
 from tqdm import tqdm
 from astropy import units as u
 from matplotlib import pyplot as plt
 
-import ism
-import lya
 import utilities as utils
+
+from lya_prediction_tools import ism
+from lya_prediction_tools import lya
 
 
 def depth_occulting_tail(catalog):

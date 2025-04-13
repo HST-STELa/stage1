@@ -3,9 +3,7 @@
 from astropy import table
 
 from stage1.lya_prediction_tools import lya
-from stage1.target_selection_tools import catalog_utilities as catutils
-from stage1 import paths
-
+from stage1.target_selection_tools import catalog_utilities as catutils, paths
 
 #%% load selections
 

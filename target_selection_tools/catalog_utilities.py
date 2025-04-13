@@ -7,7 +7,7 @@ from astropy import table, coordinates as coord, time, units as u
 from tqdm import tqdm
 from scipy.spatial import KDTree
 
-import columns
+from target_selection_tools import columns
 import paths
 
 
@@ -253,16 +253,6 @@ def unique_star_indices(cat):
 def planets2hosts(cat):
     cols = [col for col in cat.colnames if not col.startswith('pl_')]
     return cat[cols][unique_star_indices(cat)]
-
-
-def safe_interp_table(xnew, oldxcol, oldycol, table):
-    usable = np.ones(len(table), bool)
-    for col in [oldxcol, oldycol]:
-        if hasattr(table[col], 'mask'):
-            usable = usable & ~table[col].mask
-    slim = table[usable]
-    slim.sort(oldxcol)
-    return np.interp(xnew, slim[oldxcol], slim[oldycol])
 
 
 def empty_table(length, names, dtypes):

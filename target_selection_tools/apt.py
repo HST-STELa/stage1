@@ -1,16 +1,16 @@
 from math import nan
-import re
 
 from astropy import table
 import numpy as np
 from scipy import interpolate
 
-import paths
-import query
-import catalog_utilities as catutils
-import reference_tables as ref
-import empirical as emp
-import galex_estimate
+from lya_prediction_tools import etc
+
+from target_selection_tools import query
+from target_selection_tools import catalog_utilities as catutils
+from target_selection_tools import reference_tables as ref
+from target_selection_tools import empirical as emp
+from target_selection_tools import galex_estimate
 
 
 def get_simbad_info(simbad_ids):
@@ -306,7 +306,7 @@ def write_target_table(aptcat, filepath, overwrite=False):
 
 
 def acquisition_setup(catalog):
-    etc_acq = ref.etc_acq_times
+    etc_acq = etc.etc_acq_times
     n = len(catalog)
     colnames = 'acq_filter acq_Texp_snr40 acq_Texp acq_Tsat'.split()
     dtypes = 'object float float float'.split()

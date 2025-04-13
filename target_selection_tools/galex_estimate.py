@@ -1,8 +1,6 @@
 import numpy as np
 
-from astropy import table
-
-import reference_tables as ref
+from target_selection_tools import reference_tables as ref
 
 # using a catalog of galex mags vs B-V color to do estimate a mag for a standard field star and then adjusting
 # based on rotation rate or assuming saturated for stars without a known rotation rate or age

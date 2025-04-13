@@ -9,10 +9,9 @@ import numpy as np
 from astropy import units as u
 from tqdm import tqdm
 
-import lya
+from lya_prediction_tools import lya
 import utilities as utils
-import ism
-import paths
+from lya_prediction_tools import ism
 
 
 def is_pos_real(cat, col):
@@ -115,7 +114,7 @@ def transit_snr(planet, expt_out=3500, expt_in=6000, add_jitter=False, optimisti
     v_integrate = [-150, 100]
 
     rv_star = planet['st_radv'] * u.km / u.s
-    v_trans, d_trans_temp = np.loadtxt(paths.reference_tables / 'generic_transit_absorption_spectrum.csv', delimiter=',').T
+    v_trans, d_trans_temp = np.loadtxt('generic_transit_absorption_spectrum.csv', delimiter=',').T
     # broaden the absorption profile to better match GJ 436 transit
     v_trans *= 2
     d_trans_norm = d_trans_temp / np.max(d_trans_temp)
@@ -185,7 +184,7 @@ def transit_snr_proposal(cat, case='nominal'):
 
     v_integrate = [-150, 100]
 
-    v_trans, d_trans = np.loadtxt(paths.reference_tables / 'generic_transit_absorption_spectrum.csv', delimiter=',').T
+    v_trans, d_trans = np.loadtxt('generic_transit_absorption_spectrum.csv', delimiter=',').T
     d_trans_norm = d_trans / np.max(d_trans)
 
     SNRs = []

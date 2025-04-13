@@ -6,8 +6,6 @@ from astropy import coordinates as coord
 from astropy import units as u
 from tqdm import tqdm
 
-import catalog_utilities as catutils
-
 match_dist_default = 3*u.arcmin
 
 

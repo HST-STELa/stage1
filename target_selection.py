@@ -13,10 +13,10 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from stage1.lya_prediction_tools import transit, lya
 import paths
-from stage1.target_selection_tools import galex_query, duplication_checking as dc, catalog_utilities as catutils, query, \
-    columns, apt, empirical, reference_tables as ref
+from lya_prediction_tools import transit, lya
+from target_selection_tools import galex_query, duplication_checking as dc, catalog_utilities as catutils, query, \
+    columns, apt, empirical
 
 erg_s_cm2 = u.Unit('erg s-1 cm-2')
 allocated_orbits = 204
@@ -1278,7 +1278,8 @@ if toggle_checkpoint_saves:
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv')
+    cat = catutils.load_and_mask_ecsv(
+        paths.intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv')
 
 
 #%% estimate EUV

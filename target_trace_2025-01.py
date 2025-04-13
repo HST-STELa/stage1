@@ -3,13 +3,11 @@ from pathlib import Path
 
 import numpy as np
 from astropy import table
-from tqdm import tqdm
 from matplotlib import pyplot as plt
 
 import paths
-import utilities as utils
-from stage1.lya_prediction_tools import heritage, transit
-from stage1.target_selection_tools import catalog_utilities as catutils, empirical
+from lya_prediction_tools import heritage, transit
+from target_selection_tools import catalog_utilities as catutils, empirical
 
 
 #%% load old and new catalogs
@@ -41,7 +39,8 @@ reformat_tic_id(candidates2)
 
 # latest candidates and selections
 can3cut1 = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt3__fill-basic_properties.ecsv')
-can3cut2 = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt4__cut-planet_host_types__add-galex_lya_transit_snr.ecsv')
+can3cut2 = catutils.load_and_mask_ecsv(
+    paths.intermediates / 'chkpt4__cut-planet_host_types__add-galex_lya_transit_snr.ecsv')
 can3cut3 = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt6__add-categories_scores.ecsv')
 chosen3 = can3cut3[can3cut3['stage1']]
 

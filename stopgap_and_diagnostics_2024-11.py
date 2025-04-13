@@ -1,5 +1,5 @@
 #%% imports and constants
-from math import nan, pi
+from math import nan
 
 from astropy import table
 from astropy import units as u
@@ -7,9 +7,9 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from stage1.target_selection_tools import catalog_utilities as catutils
 import paths
-from stage1.lya_prediction_tools import heritage, transit
+from target_selection_tools import catalog_utilities as catutils
+from lya_prediction_tools import heritage, transit
 
 #%% load second cut
 cut2 = catutils.load_and_mask_ecsv(paths.intermediates / 'cut2_planet_and_host_type.ecsv')

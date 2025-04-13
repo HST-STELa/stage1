@@ -9,8 +9,8 @@ from scipy.stats import norm
 from tqdm import tqdm
 
 import utilities as utils
-import ism
-import reference_tables as ref
+from lya_prediction_tools import ism
+from lya_prediction_tools import etc
 
 
 # region intrinsic lya line shape
@@ -199,13 +199,13 @@ def __default_rv_handler(catalog, default_rv):
 
 
 # region ETC reference info for SNR calcs
-etc_ref = ref.g140m_etc_countrates
+etc_ref = etc.g140m_etc_countrates
 w_etc = etc_ref['wavelength'] * u.AA # EF = earth frame
 we_etc = utils.mids2edges(w_etc.value, simple=True) * u.AA
 v_etc = w2v(w_etc.value)
 
-etc_ref['flux2cps'] = etc_ref['target_counts'] / ref.g140m_expt_ref / ref.g140m_flux_ref
-etc_ref['bkgnd_cps'] = (etc_ref['total_counts'] - etc_ref['target_counts'])/ref.g140m_expt_ref
+etc_ref['flux2cps'] = etc_ref['target_counts'] / etc.g140m_expt_ref / etc.g140m_flux_ref
+etc_ref['bkgnd_cps'] = (etc_ref['total_counts'] - etc_ref['target_counts'])/etc.g140m_expt_ref
 # endregion
 
 

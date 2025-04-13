@@ -58,7 +58,7 @@ def new_name(path, target='infer'):
         date = h0['tdateobs']
         time = h0['ttimeobs'].replace(':', '')
     time = time[:6]
-    suffix, = re.findall('\w{9}_\w{3}.[a-z]+', h0['filename'])
+    suffix, = re.findall(r'\w{9}_\w{3}.[a-z]+', h0['filename'])
     name = (f"{target}.hst-{instrument}-{grating}.{date}T{time}.{suffix}")
     return name
 
