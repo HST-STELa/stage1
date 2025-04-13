@@ -1,0 +1,3 @@
+These spectra were used with the STIS ETC in order to make the tables in the `etc_grids` folder. They are not used in the code, but are kept here in case those tables need updating in the future. The spectra were taken primarily from the MUSCLES program, along with a solar spectrum for a G archetype and a calspec spectrum for an F archetype.
+
+All the spectra either had their Lya profiles masked or they were masked before saving in a standardized format. The `add_lya.py` code was used to add estimated Lya profiles back in without any ISM absorption. If that code needs to be run again, it must be run in the scope of the main target selection folder as it imports `lya` and `paths`.

@@ -1,6 +1,19 @@
+#%% imports
+
+from astropy import table
+
+from stage1.lya_prediction_tools import lya
+from stage1.target_selection_tools import catalog_utilities as catutils
+from stage1 import paths
 
 
+#%% load selections
 
+cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt8__target-build.ecsv')
+cat.sort('stage1_rank')
+selected = cat[cat['stage1'].filled(False)]
+backup = cat[cat['stage1_backup'].filled(False)]
+roster = table.vstack((selected, backup))
 
 #%% information for input to observation progress sheet
 
