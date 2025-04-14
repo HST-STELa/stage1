@@ -5,8 +5,8 @@ import numpy as np
 import lya
 import paths
 
-masked_folder = paths.inputs / 'reference_spectra/lya_masked'
-added_folder = paths.inputs / 'reference_spectra/lya_added_intrinsic'
+masked_folder = paths.selection_inputs / 'reference_spectra/lya_masked'
+added_folder = paths.selection_inputs / 'reference_spectra/lya_added_intrinsic'
 files = list(masked_folder.glob('*.spec'))
 for path in files:
     spec = table.Table.read(path, format='ascii.ecsv')

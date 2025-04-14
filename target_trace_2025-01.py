@@ -38,10 +38,10 @@ reformat_tic_id(chosen2)
 reformat_tic_id(candidates2)
 
 # latest candidates and selections
-can3cut1 = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt3__fill-basic_properties.ecsv')
+can3cut1 = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv')
 can3cut2 = catutils.load_and_mask_ecsv(
-    paths.intermediates / 'chkpt4__cut-planet_host_types__add-galex_lya_transit_snr.ecsv')
-can3cut3 = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt6__add-categories_scores.ecsv')
+    paths.selection_intermediates / 'chkpt4__cut-planet_host_types__add-galex_lya_transit_snr.ecsv')
+can3cut3 = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt6__add-categories_scores.ecsv')
 chosen3 = can3cut3[can3cut3['stage1']]
 
 #%% make tic id the index of all catalogs

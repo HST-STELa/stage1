@@ -45,7 +45,7 @@ default_sys_rv = "ism"
 #%% load old merged table (if available)
 
 """This is needed in scattered places even if you skip the block that creates it, so it is wise to load it."""
-merged_path = paths.intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv'
+merged_path = paths.selection_intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv'
 if merged_path.exists():
     merged = catutils.load_and_mask_ecsv(merged_path)
 
@@ -140,8 +140,8 @@ columns.operate_on_suffixes(confirmed, 'pl_trandur', fix_inaccurate_trandur_unit
 Save tables here. 
 """
 
-confirmed.write(paths.intermediates / 'confirmed_planets.ecsv', overwrite=True)
-tois.write(paths.intermediates / 'tois.ecsv', overwrite=True)
+confirmed.write(paths.selection_intermediates / 'confirmed_planets.ecsv', overwrite=True)
+tois.write(paths.selection_intermediates / 'tois.ecsv', overwrite=True)
 
 
 #%% Load - confirmed & tois
@@ -149,8 +149,8 @@ tois.write(paths.intermediates / 'tois.ecsv', overwrite=True)
 Load tables if restarting from this position.
 """
 
-confirmed = catutils.load_and_mask_ecsv(paths.intermediates / 'confirmed_planets.ecsv')
-tois = catutils.load_and_mask_ecsv(paths.intermediates / 'tois.ecsv')
+confirmed = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'confirmed_planets.ecsv')
+tois = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'tois.ecsv')
 
 
 #%% define period match tolerance
@@ -550,13 +550,13 @@ catutils.flag_cut(cat, period_cut, period_cut_str)
 """This may take several minutes."""
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv', overwrite=True)
     merged = cat.copy() # used later to check that various targets were considered
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt1__merged-confirmed-tois-community.ecsv')
 
 
 #%% PRUNE
@@ -670,13 +670,13 @@ assert np.all(np.isfinite(cat['st_radv'].filled(0)))
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt2__cut-dist-period__add-simbad-rvs-names.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt2__cut-dist-period__add-simbad-rvs-names.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt2__cut-dist-period__add-simbad-rvs-names.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt2__cut-dist-period__add-simbad-rvs-names.ecsv')
 
 
 #%% fill key missing params
@@ -934,13 +934,13 @@ cat['flag_multiplanet'] = table.MaskedColumn(flag_multi, fill_value=False,
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt3__fill-basic_properties.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt3__fill-basic_properties.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv')
 
 
 #%% PRUNE
@@ -958,7 +958,7 @@ Results saved will be reloaded and matched in in order to save time.
 """
 
 # try loading and cross-matching galex first
-filepath = paths.intermediates / 'galex_magntiudes.ecsv'
+filepath = paths.selection_intermediates / 'galex_magntiudes.ecsv'
 if filepath.exists():
     galex_tbl = catutils.load_and_mask_ecsv(filepath)
     cat = table.join(cat, galex_tbl, 'id', join_type='left')
@@ -1038,19 +1038,19 @@ if toggle_save_galex:
             name = f'sy_{band}mag{suffix}'
             galex_cols.append(name)
     galex_tbl = cat[galex_cols]
-    galex_tbl.write(paths.intermediates / 'galex_magntiudes.ecsv', overwrite=True)
+    galex_tbl.write(paths.selection_intermediates / 'galex_magntiudes.ecsv', overwrite=True)
 
 
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt4__add-galex.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt4__add-galex.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt4__add-galex.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt4__add-galex.ecsv')
 
 
 #%% estimate Lya based on galex
@@ -1227,13 +1227,13 @@ catutils.flag_cut(cat, mask_remove, remove_str)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv')
 
 
 #%% PRUNE
@@ -1272,14 +1272,14 @@ dc.merge_verified(cat, verified)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(
-        paths.intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv')
+        paths.selection_intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv')
 
 
 #%% estimate EUV
@@ -1401,14 +1401,7 @@ zero_out = outflow_unlikely.filled(False)
 cat['score'][zero_out] = 0
 
 # pick top score for each host
-assert not np.any(cat['tic_id'].mask)
-catutils.set_index(cat, 'tic_id')
-cat['score_host'] = table.MaskedColumn(length=len(cat), dtype=float, mask=True)
-tic_ids = np.unique(cat['tic_id'].filled(0))
-for tic_id in tic_ids:
-    i_planets = cat.loc_indices[tic_id]
-    top_score = cat['score'][i_planets].max()
-    cat['score_host'][i_planets] = top_score
+catutils.pick_planet_parameters(cat, 'score', max, 'score_host')
 
 _, unq_inverse = np.unique(cat['score_host'], return_inverse=True)
 rank = unq_inverse.max() - unq_inverse + 1
@@ -1418,13 +1411,13 @@ cat['stage1_rank'] = table.MaskedColumn(rank)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt7__add-flags-scores.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt7__add-flags-scores.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt7__add-flags-scores.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__add-flags-scores.ecsv')
 
 
 #%% verify ISR table
@@ -1529,13 +1522,13 @@ catutils.flag_cut(cat, cut_mask, cut_comment)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.intermediates / 'chkpt8__target-build.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt8__target-build.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.intermediates / 'chkpt8__target-build.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
 
 
 #%% manual entry activity parameters
@@ -1549,7 +1542,7 @@ like most other inputs, but I've pulled a lot of late nights and just need to ge
 
 """If the existing observations are bad, we should reobserve these!"""
 
-np.savetxt(paths.outputs / 'verify_archival_observations.txt', list(observations_to_verify), fmt='%s')
+np.savetxt(paths.selection_outputs / 'verify_archival_observations.txt', list(observations_to_verify), fmt='%s')
 
 
 #%% save reports on special requests
@@ -1598,13 +1591,13 @@ roster = table.vstack((selected, backup))
 #%% save selected planets and hosts
 
 if toggle_save_outputs:
-    selected.write(paths.outputs / 'stage1_planet_catalog.ecsv', overwrite=True)
+    selected.write(paths.selection_outputs / 'stage1_planet_catalog.ecsv', overwrite=True)
     selected_hosts = catutils.planets2hosts(selected)
-    selected_hosts.write(paths.outputs / 'stage1_host_catalog.ecsv', overwrite=True)
+    selected_hosts.write(paths.selection_outputs / 'stage1_host_catalog.ecsv', overwrite=True)
 
-    backup.write(paths.outputs / 'stage1_backup_planet_catalog.ecsv', overwrite=True)
+    backup.write(paths.selection_outputs / 'stage1_backup_planet_catalog.ecsv', overwrite=True)
     backup_hosts = catutils.planets2hosts(backup)
-    backup_hosts.write(paths.outputs / 'stage1_backup_host_catalog.ecsv', overwrite=True)
+    backup_hosts.write(paths.selection_outputs / 'stage1_backup_host_catalog.ecsv', overwrite=True)
 
     # simplified table of key info
     save_info_sets = (
@@ -1619,7 +1612,7 @@ if toggle_save_outputs:
     savecols, _, = zip(*save_info_sets)
     for name, fmt in save_info_sets:
         selected[name].format = fmt
-    filepath = paths.outputs / f'stage1_planets_basic_info.txt'
+    filepath = paths.selection_outputs / f'stage1_planets_basic_info.txt'
     with open(filepath, 'w') as f:
         sys.stdout = f
         selected[savecols].pprint(-1, -1, align='<')
@@ -1673,7 +1666,7 @@ if toggle_save_outputs:
     unconfirmed[checked] = False
 
     list_to_vet = roster['toi'][unconfirmed].tolist()
-    np.savetxt(paths.outputs / 'tess_candidates_in_need_of_vetting.txt', list_to_vet, fmt='%s')
+    np.savetxt(paths.selection_outputs / 'tess_candidates_in_need_of_vetting.txt', list_to_vet, fmt='%s')
 
 
 
@@ -1727,7 +1720,7 @@ print('')
 name_change_tbl.pprint(-1)
 
 if toggle_save_outputs:
-    apt.write_target_table(apt_target_table[mask_new], paths.outputs / 'new_targets_for_apt.csv', overwrite=True)
+    apt.write_target_table(apt_target_table[mask_new], paths.selection_outputs / 'new_targets_for_apt.csv', overwrite=True)
 
 acq_setup_table = apt.acquisition_setup(targets)
 apt_info['acq'] = acq_setup_table['acq_filter']
@@ -1751,7 +1744,7 @@ i_apt_, i_past_, _, _ = past_coords.search_around_sky(apt_coords, 0.1*u.arcsec)
 i_apt_ = i_apt_[np.argsort(i_past_)]
 old_target_new_info = apt_target_table[['Target Name', 'Other Fluxes', 'Comments']][i_apt_]
 if toggle_save_outputs:
-    old_target_new_info.write(paths.outputs / 'new_info_old_targets.csv', overwrite=True)
+    old_target_new_info.write(paths.selection_outputs / 'new_info_old_targets.csv', overwrite=True)
 
 
 #%% M dwarfs not in ISR table
@@ -1764,7 +1757,7 @@ if toggle_save_outputs:
     Mnames = apt_info['name'][Ms]
     not_in_isr = ~np.in1d(Mnames, ref.mdwarf_isr['Target'])
     Ms_to_add = Mnames[not_in_isr]
-    np.savetxt(paths.outputs / 'Mdwarfs_to_add_to_ISR_table.txt', Ms_to_add, fmt='%s')
+    np.savetxt(paths.selection_outputs / 'Mdwarfs_to_add_to_ISR_table.txt', Ms_to_add, fmt='%s')
 
 
 #%% visit labels for APT
@@ -1802,14 +1795,14 @@ if toggle_save_outputs:
     in_apt = np.isin(labeltbl['target'], apt_info['name'])
     names_in_apt = labeltbl['target'][in_apt]
     apt_visit_info = apt_info.loc[names_in_apt]
-    apt_visit_info.write(paths.outputs / 'info_for_apt_entry.csv', overwrite=True)
+    apt_visit_info.write(paths.selection_outputs / 'info_for_apt_entry.csv', overwrite=True)
 
     catutils.set_index(apt_target_table, 'Target Name')
     _labeltbl_apt_names = apt.cat2apt_names(labeltbl['target'])
     in_targets = np.isin(_labeltbl_apt_names, apt_target_table['Target Name'])
     names_in_targets = _labeltbl_apt_names[in_targets]
     apt_visit_info = apt_target_table.loc[names_in_targets]
-    apt_visit_info.write(paths.outputs / 'info_all_targets.csv', overwrite=True)
+    apt_visit_info.write(paths.selection_outputs / 'info_all_targets.csv', overwrite=True)
 
 
 #%% save the label map
@@ -1884,7 +1877,7 @@ etctbl.meta['Notes'] = ("FUV values are measured values from GALEX when availabl
                         "be used for M dwarf clearance per ISR-2017.")
 
 if toggle_save_outputs:
-    etctbl.write(paths.outputs / 'etc_inputs_for_brightness_checks.ecsv', overwrite=True)
+    etctbl.write(paths.selection_outputs / 'etc_inputs_for_brightness_checks.ecsv', overwrite=True)
 
 
 #%% list of borderline SpTs for ISR
@@ -1929,7 +1922,7 @@ needs_investigation = spt_needs_investigation | teff_needs_investigation & targe
 targets_to_investigate = targets[['hostname', 'st_spectype']][needs_investigation]
 
 if toggle_save_outputs:
-    targets_to_investigate.write(paths.outputs / 'targets_needing_spT_followup.csv', overwrite=True)
+    targets_to_investigate.write(paths.selection_outputs / 'targets_needing_spT_followup.csv', overwrite=True)
 
 
 #%% End Note

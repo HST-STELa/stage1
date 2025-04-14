@@ -12,7 +12,7 @@ from target_selection_tools import catalog_utilities as catutils
 from lya_prediction_tools import heritage, transit
 
 #%% load second cut
-cut2 = catutils.load_and_mask_ecsv(paths.intermediates / 'cut2_planet_and_host_type.ecsv')
+cut2 = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'cut2_planet_and_host_type.ecsv')
 
 #%% load SNRs and parameters from first phase II submission
 
@@ -160,7 +160,7 @@ cols, _ = zip(*col_fmt_pairs)
 pretty_table = comparison[cols]
 for col, fmt in col_fmt_pairs:
     pretty_table[col].format = fmt
-pretty_table.write(paths.outputs / 'diff_tbl_submissions_1_2.csv', overwrite=True)
+pretty_table.write(paths.selection_outputs / 'diff_tbl_submissions_1_2.csv', overwrite=True)
 
 # now this can be opened in spreadsheet software for easier viewing
 
