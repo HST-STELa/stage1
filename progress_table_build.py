@@ -38,15 +38,17 @@ export.rename_columns(oldnames, newnames)
 
 # set Status to selected, backup, or archival
 n = len(roster_hosts)
-lya_obs_mask = roster_hosts['lya_observed'].filled(False)
+lya_obs_mask = roster_hosts['lya_verified'].filled('') == 'pass'
+fuv_obs_mask = roster_hosts['fuv_verified'].filled('') == 'pass'
 selected_mask = roster_hosts['stage1'].filled(False)
 backup_mask = roster_hosts['stage1_backup'].filled(False)
-export['Status'] = table.Column(length=n, dtype='object')
-export['Status'] = 'archival'
-export['Status'][selected_mask & ~lya_obs_mask] = 'selection'
-export['Status'][backup_mask & ~lya_obs_mask] = 'backup'
-export['1a Archival Data'] = roster_hosts['lya_observed']
-export['1b Archival Data'] = roster_hosts['fuv_observed']
+export['Status'] = table.MaskedColumn(length=n, dtype='object', mask=True)
+export['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
+export['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
+export['Status'][selected_mask & ~lya_obs_mask] = '1a target'
+export['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
+export['1a External Data'] = roster_hosts['lya_observed']
+export['1b External Data'] = roster_hosts['fuv_observed']
 
 # 1a labels
 labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
@@ -70,4 +72,14 @@ for lbl, pcntl in sets:
     observed = lya.lya_at_earth_auto(roster_hosts, n_H, lya_factor=lya_factor, **params)
     _fluxes = np.trapz(observed, wgrid[None, :], axis=1)
     lya_fluxes_earth.append(_fluxes)
-export['Nominal Lya Flux']
+export['Nominal Lya Flux'] = lya_fluxes_earth[0]
+export['Optimistic Lya Flux'] = lya_fluxes_earth[1]
+
+
+#%% save (careful, will overwrite existing file!)
+
+cols_in_order = ('Rank', 'Target', 'No. of Planets', 'Status', '1a Visit Label', '1a External Data', 'Nominal Lya Flux',
+                 'Optimistic Lya Flux', 'Nominal Transit SNR', 'Optimistic Transit SNR', '1b Visit Label',
+                 '1b External Data')
+export = export[cols_in_order]
+export.write('progress_reviews/progress_table_columns_from_selection_process.csv', overwrite=True)

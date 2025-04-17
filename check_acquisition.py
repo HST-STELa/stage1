@@ -10,6 +10,7 @@ import database_utilities as dbutils
 
 directory = '/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis'
 # targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
+# targets = ['toi-2015', 'toi-2079']
 targets = 'any'
 inst = 'hst-stis-mirvis'
 rawfiles = dbutils.find_target_files('raw', targets, directory)

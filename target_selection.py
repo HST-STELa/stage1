@@ -16,7 +16,7 @@ from tqdm import tqdm
 import paths
 from lya_prediction_tools import transit, lya
 from target_selection_tools import galex_query, duplication_checking as dc, catalog_utilities as catutils, query, \
-    columns, apt, empirical
+    columns, apt, empirical, reference_tables as ref
 
 erg_s_cm2 = u.Unit('erg s-1 cm-2')
 allocated_orbits = 204

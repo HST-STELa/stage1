@@ -250,16 +250,17 @@ def unique_star_indices(cat):
     return sorted(i)
 
 
-def pick_planet_parameters(cat, colname, picking_function=np.max, hostcolname='default', fillvalue=nan):
+def pick_planet_parameters(cat, colname, picking_function=np.max, hostcolname='default'):
     """adds a column with the name '{col}_host' that gives the parameters of only one planet"""
     assert not np.any(cat['tic_id'].mask)
     set_index(cat, 'tic_id')
     hostcol = f'{colname}_host' if hostcolname == 'default' else hostcolname
+    oldcol = cat[colname]
     cat[hostcol] = table.MaskedColumn(length=len(cat), dtype=cat[colname].dtype, mask=True)
     tic_ids = np.unique(cat['tic_id'].filled(0))
     for tic_id in tic_ids:
         i_planets = cat.loc_indices[tic_id]
-        top_score = picking_function(cat[colname][i_planets])
+        top_score = picking_function(oldcol[i_planets])
         cat[hostcol][i_planets] = top_score
 
 
