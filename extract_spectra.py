@@ -26,7 +26,7 @@ import utilities as utils
 os.chdir('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis')
 targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
 
-tagfiles = dbutils.find_target_files('tag', targets)
+tagfiles = dbutils.find_data_files('tag', targets)
 print("Spectra to be extracted from:")
 print('\n'.join(tagfiles))
 
@@ -100,7 +100,7 @@ for tagfile in tagfiles:
 
 ydefault = 387 # extraction location if no trace visible
 
-fltfiles = dbutils.find_target_files('flt', targets)
+fltfiles = dbutils.find_data_files('flt', targets)
 print(f'As plots appear click the trace at either the Lya red wing (g140m) or at the C II line (g140l), then click off axes.\n'
       '\n'
       'You can zoom and pan, but coordinates will be registered for each click. '
@@ -148,7 +148,7 @@ tracelocs = dict(zip(ids,locs))
 
 #%% now rerun the extraction at the appropriate locations
 
-fltfiles = dbutils.find_target_files('flt', targets)
+fltfiles = dbutils.find_data_files('flt', targets)
 
 # remove existing x1d files
 print('Proceed with deleting and recreating x1ds associated with?')

@@ -188,6 +188,10 @@ def pcolor_reg(x, y, z, **kw):
     plt.axis('tight')
 
 
+def is_list_like(obj):
+    return isinstance(obj, (list, tuple, np.ndarray))
+
+
 def click_coords(fig=None, timeout=600.):
     if fig is None:
         fig = plt.gcf()

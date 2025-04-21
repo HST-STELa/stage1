@@ -4,6 +4,8 @@ import re
 
 from astropy.io import fits
 
+import utilities as utils
+
 def rename_files(directory, overwrite=False):
     directory = Path(directory)
     paths = list(directory.glob('*.fits'))
@@ -95,19 +97,39 @@ def modify_file_label(file, new_label):
     """Used to replace, e.g., _x1d with _tag"""
     file = Path(file)
     newname = re.sub(r'_\w{3}\.', f'_{new_label}.', file.name)
-    return Path(file.root) / newname
+    return Path(file.parent) / newname
 
 
-def find_target_files(extension='*', targets='any', directory='.'):
+def find_data_files(extension='*', targets='any', instruments='any', after='2020', before='inf', directory='.'):
+    """
+    targets needs to be 'any' or a list of targets like ['k2-9', 'toi-1204']
+    instruments can be 'any'; a single string capturing just observatory, isntrument, or spectrograph
+    like 'hst', 'hst-stis', or 'hst-stis-g140m'; or a list of full instrument strings like
+    ['hst-stis-g140m', 'hst_stis-e140m']
+    """
     directory = Path(directory)
     files = list(directory.glob(f'*_{extension}.fits'))
-    if targets == 'any':
-        return files
-    if hasattr(targets, '__iter__'):
-        file_targets = [f.name.split('.')[0] for f in files]
-        files = [f for f,target in zip(files, file_targets) if target in targets]
-        return files
-    else:
-        raise ValueError('Targets must be "any" or a list of target names.')
+
+    if targets != 'any':
+        if utils.is_list_like(targets):
+            file_targets = [f.name.split('.')[0] for f in files]
+            files = [f for f,target in zip(files, file_targets) if target in targets]
+        else:
+            raise ValueError('Targets must be "any" or a list of target names.')
+
+    if instruments != 'any':
+        if isinstance(instruments, str):
+            files = [f for f in files if instruments in f.name]
+        elif utils.is_list_like(instruments):
+            file_insts = [f.name.split('.')[1] for f in files]
+            files = [f for f,inst in zip(files, file_insts) if inst in instruments]
+        else:
+            raise ValueError('Targets must be "any", a string, or a list of target names.')
+
+    file_dates = [f.name.split('.')[2] for f in files]
+    files =  [f for f,date in zip(files, file_dates) if date > after]
+    files =  [f for f,date in zip(files, file_dates) if date < before]
+
+    return files
 
 
