@@ -72,7 +72,7 @@ def normed_bb(w, Umag):
     Tbb = 9000*u.K
     bb = synphot.models.BlackBody1D(temperature=Tbb)
     bb = synphot.SourceSpectrum(bb)
-    bb_normed = bb.normalize(Umag, band=u_band, vegaspec=vegaspec)
+    bb_normed = bb.normalize(Umag*synphot.units.VEGAMAG, band=u_band, vegaspec=vegaspec)
     y = bb_normed(w, flux_unit='FLAM')
     return y.to('erg s-1 cm-2 AA-1')
 
