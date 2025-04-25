@@ -367,11 +367,11 @@ def acquisition_setup(catalog):
 
 
 def find_nearest_etc_rows(Teff, grating):
-    etc = getattr(ref, f'etc_{grating}_times')
-    ietcs = list(range(len(etc)))
-    findline = interpolate.interp1d(etc['Teff'], ietcs, 'nearest', bounds_error=False, fill_value='extrapolate')
+    Tetc = getattr(etc, f'etc_{grating}_times')
+    ietcs = list(range(len(Tetc)))
+    findline = interpolate.interp1d(Tetc['Teff'], ietcs, 'nearest', bounds_error=False, fill_value='extrapolate')
     i_lines = findline(Teff).astype(int)
-    return etc[i_lines]
+    return Tetc[i_lines]
 
 
 def buffer_times(catalog, grating='g140m'):
@@ -403,15 +403,15 @@ def count_rate_estimates(catalog, grating='g140m'):
     return cps_local, cps_global
 
 
-class LabelGenerator:
+class VisitLabel:
     _character_shift = 13
 
-    def __init__(self, current_label="A0"):
+    def __init__(self, label="A0"):
         """
         Initialize the label generator with a given label.
         :param current_label: Starting label (e.g., 'C3'). Defaults to 'A0'.
         """
-        self.current_label = current_label
+        self.label = label
 
     def _increment_label(self, label):
         """
@@ -447,8 +447,8 @@ class LabelGenerator:
         """
         Generate and return the next label.
         """
-        self.current_label = self._increment_label(self.current_label)
-        return self.current_label
+        self.label = self._increment_label(self.label)
+        return VisitLabel(self.label)
 
     @classmethod
     def _shift(cls, letter, shift):
@@ -458,14 +458,35 @@ class LabelGenerator:
     @classmethod
     def base_from_pair(cls, paired_label):
         base0 = cls._shift(paired_label[0], -cls._character_shift)
-        return base0 + paired_label[-1]
+        return VisitLabel(base0 + paired_label[-1])
 
     @classmethod
     def paired_label(cls, base_label):
         paired0 = cls._shift(base_label[0], cls._character_shift)
-        return paired0 + base_label[-1]
+        return VisitLabel(paired0 + base_label[-1])
 
     def next_pair(self):
         base = self.next_label()
         pair = self.paired_label(base)
-        return (base, pair)
+        return base, pair
+
+    def __eq__(self, other):
+        return self.label == other.label
+
+    def __gt__(self, other):
+        s, o = self.label, other.label
+        if s[1] > '9' and o[1] > '9': # both end in letters
+            return s > o
+        elif s[1] <= '9' and o[1] <= '9': # both end in numbers
+            return s > o
+        else: # one ends in a letter and the other in a number
+            return s[1] > o[1]
+
+    def __str__(self):
+        return self.label
+
+    def __repr__(self):
+        return f'VisitLabel({str(self)})'
+
+    def __getitem__(self, item):
+        return self.label[item]

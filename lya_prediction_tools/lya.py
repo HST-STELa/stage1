@@ -124,28 +124,41 @@ def v2w(v):
     return  (v/const.c.to('km/s').value + 1)*wlab_H.value
 
 
+def sig_from_fwhm_velocity(w0, fwhm):
+    sig = fwhm/2/np.sqrt(2*np.log(2))*w0/const.c
+    return sig.to(w0.unit)
+
+
+def sig_from_fwhm_wave(w0, fwhm):
+    sig = fwhm/2/np.sqrt(2*np.log(2))
+    return sig.to(fwhm.unit)
+
+
+def gaussian_profile(w, w0, amp, sigma):
+    f = amp*np.exp(-(w - w0)**2/2/sigma**2)
+    return f
+
+
+def gaussian_amp(flux, sigma):
+    return flux / np.sqrt(2 * np.pi) / sigma
+
+
+def gaussian_flux(amp, sigma):
+    return np.sqrt(2*np.pi)*sigma*amp
+
+
 def reversed_lya_profile(w, rv, flux):
     w0 = doppler_shift(wlab_H, rv)
 
-    def sig_from_fwhm(fwhm):
-        sig = fwhm/2/np.sqrt(2*np.log(2))*w0/const.c
-        return sig.to(w0.unit)
-    sig_broad, sig_narrow = map(sig_from_fwhm, (fwhm_broad, fwhm_narrow))
+    sig_broad, sig_narrow = [sig_from_fwhm_velocity(w0, fwhm) for fwhm in (fwhm_broad, fwhm_narrow)]
     sig_reverse = sig_narrow*sig_ratio_reverse_narrow
-
-    def gaussian_profile(amp, sigma):
-        f = amp*np.exp(-(w - w0)**2/2/sigma**2)
-        return f
-
-    def gaussian_flux(amp, sigma):
-        return np.sqrt(2*np.pi)*sigma*amp
 
     raw_flux = (gaussian_flux(1, sig_narrow)
                 + gaussian_flux(amp_ratio_broad_narrow, sig_broad)
                 - gaussian_flux(amp_ratio_reverse_narrow, sig_reverse))
-    raw_profile = (gaussian_profile(1, sig_narrow)
-                   + gaussian_profile(amp_ratio_broad_narrow, sig_broad)
-                   - gaussian_profile(amp_ratio_reverse_narrow, sig_reverse))
+    raw_profile = (gaussian_profile(w, w0, 1, sig_narrow)
+                   + gaussian_profile(w, w0, amp_ratio_broad_narrow, sig_broad)
+                   - gaussian_profile(w, w0, amp_ratio_reverse_narrow, sig_reverse))
     profile = flux/raw_flux * raw_profile
     return profile
 

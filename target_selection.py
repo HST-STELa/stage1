@@ -20,17 +20,17 @@ from target_selection_tools import galex_query, duplication_checking as dc, cata
 
 erg_s_cm2 = u.Unit('erg s-1 cm-2')
 allocated_orbits = 204
-backup_orbits = 0.2 * 204
+backup_orbits = int(round(0.2 * 204))
 
 
 #%% toggles and settings
 
 toggle_plots = False
 
-toggle_save_outputs = True
+toggle_save_outputs = False
 toggle_save_galex = False
-toggle_save_difftbl = True
-toggle_save_visit_labels = True
+toggle_save_difftbl = False
+toggle_save_visit_labels = False
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
 toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
@@ -1257,7 +1257,7 @@ if toggle_remake_filtered_hst_archive:
 hst_filtered = table.Table.read(paths.hst_observations / 'hst_observations_filtered.ecsv')
 our_observations = hst_filtered['prop'] == 17804
 hst_filtered = hst_filtered[~our_observations]
-verified = table.Table.read(paths.checked / 'verified_observations.csv')
+verified = table.Table.read(paths.checked / 'verified_external_observations.csv')
 
 
 #%% mark observations
@@ -1771,16 +1771,16 @@ if len(unmatched) > 0:
     raise KeyError(f'These targets in the visit label table have no match: {unmatched.tolist()}')
 
 new_batch_no = labeltbl['batch'].max() + 1
-last_base_label = labeltbl['base'][-1]
-assert sum(labeltbl['base'] == last_base_label) == 1
-labeler = apt.LabelGenerator(last_base_label)
+existing_base_labels = list(map(apt.VisitLabel, labeltbl['base'].tolist()
+                                                + labeltbl['base_redo'].filled('00').tolist()))
+last_base_label = max(existing_base_labels)
 
 targets_selected = catutils.planets2hosts(selected)
 for row in targets_selected:
     name = row['hostname']
     if name not in labeltbl['target']:
-        lbl_pair = labeler.next_pair()
-        new_row = [name, *lbl_pair, new_batch_no]
+        last_base_label, pair = last_base_label.next_pair()
+        new_row = [name, str(last_base_label), str(pair), new_batch_no]
         labeltbl.add_row(new_row)
 
 catutils.set_index(labeltbl, 'target')
@@ -1819,11 +1819,7 @@ apt_info.pprint(-1)
 
 # find a target or visit and print its row
 apt_info.add_index('name')
-apt_info.add_index('lbl1')
-apt_info.add_index('lbl2')
 print(apt_info.loc['name', 'GJ 143'])
-print(apt_info.loc['lbl1', 'B5'])
-print(apt_info.loc['lbl2', 'T3'])
 
 
 #%% check that no targets exceed bright limits
