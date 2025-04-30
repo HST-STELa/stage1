@@ -16,7 +16,7 @@ parameters = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3
 parameters = catutils.planets2hosts(parameters)
 isr_table = table.Table.read(paths.checked / 'mdwarf_isr_continuously_updated flux values export.csv')
 isr_table.add_index('Target')
-i = isr_table.loc_indices['EXAMPLES BELOW']
+i = isr_table.loc_indices['COMPANIONS']
 isr_table = isr_table[:i]
 
 target_names = isr_table['Target']
