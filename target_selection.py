@@ -1771,8 +1771,7 @@ if len(unmatched) > 0:
     raise KeyError(f'These targets in the visit label table have no match: {unmatched.tolist()}')
 
 new_batch_no = labeltbl['batch'].max() + 1
-existing_base_labels = list(map(apt.VisitLabel, labeltbl['base'].tolist()
-                                                + labeltbl['base_redo'].filled('00').tolist()))
+existing_base_labels = list(map(apt.VisitLabel, labeltbl['base'].tolist()))
 last_base_label = max(existing_base_labels)
 
 targets_selected = catutils.planets2hosts(selected)
