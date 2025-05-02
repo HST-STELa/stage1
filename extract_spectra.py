@@ -11,6 +11,7 @@ except ImportError:
 import os
 from pathlib import Path
 import glob
+from copy import copy
 
 from matplotlib import pyplot as plt
 from astropy.io import fits
@@ -146,6 +147,47 @@ for ff in fltfiles:
 tracelocs = dict(zip(ids,locs))
 
 
+#%% fit and remove FUV glow
+#TODO
+
+
+#%% extract traces without background
+
+fltfiles = dbutils.find_data_files('flt', targets)
+
+# remove existing files
+labels = "x1dbk1 x1dtrace x1dbk2".split('')
+print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
+print('\n'.join([f.name for f in fltfiles]))
+_ = input('y/n? ')
+if _ == 'y':
+    for fltfile in fltfiles:
+        id = fits.getval(fltfile, 'asn_id').lower()
+        traceloc = tracelocs[id]
+        x1d_params = get_x1dparams(x1dfile)
+
+        mod_params = copy(x1d_params)
+        mod_params['bk1size'] = mod_params['bk2size'] = 0
+        mod_params['bk1offst'] = mod_params['bk2offst'] = 0
+
+        y1 = traceloc + x1d_params['bk1offst']
+        yt = traceloc
+        y2 = traceloc + x1d_params['bk2offst']
+        sz1 = x1d_params['bk1size']
+        szt = x1d_params['extrsize']
+        sz2 = x1d_params['bk2size']
+        sets = ((y1, sz1, labels[0]),
+                (yt, szt, labels[1]),
+                (y2, sz2, labels[2]))
+
+        for y, sz, lbl in sets:
+            x1dfile = dbutils.modify_file_label(fltfile, lbl)
+            if x1dfile.exists():
+                os.remove(x1dfile)
+
+            stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
+
+
 #%% now rerun the extraction at the appropriate locations
 
 fltfiles = dbutils.find_data_files('flt', targets)
@@ -160,8 +202,8 @@ if _ == 'y':
         if x1dfile.exists():
             os.remove(x1dfile)
 
+        x1d_params = get_x1dparams(x1dfile)
         id = fits.getval(fltfile, 'asn_id').lower()
         traceloc = tracelocs[id]
-        x1d_params = get_x1dparams(x1dfile)
         stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
 

@@ -118,7 +118,7 @@ def mids2edges(mids, start='mid', first='adjacent', simple=False):
     return e
 
 
-def cumtrapz(y, x, zero_start=False):
+def cumulative_trapz(y, x, zero_start=False):
     result = np.cumsum(midpts(y)*np.diff(x))
     if zero_start:
         result = np.insert(result, 0, 0)
@@ -144,7 +144,7 @@ def intergolate(x_bin_edges,xin,yin, left=None, right=None):
     x = np.hstack((x_bin_edges, xin))
     x = np.sort(x)
     y = np.interp(x, xin, yin, left, right)
-    I = cumtrapz(y, x, True)
+    I = cumulative_trapz(y, x, True)
     Iedges = np.interp(x_bin_edges, x, I)
     y_bin_avg = np.diff(Iedges)/np.diff(x_bin_edges)
 
