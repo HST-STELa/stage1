@@ -88,7 +88,7 @@ def bin_average(x_bin_edges, x, y, left=None, right=None):
     left and right have the same definition as in np.interp
     """
     I = cumulative_trapz(y, x, True)
-    Iedges = np.interp(x_bin_edges, x, I)
+    Iedges = np.interp(x_bin_edges, x, I, left=left, right=right)
     y_bin_avg = np.diff(Iedges)/np.diff(x_bin_edges)
     return y_bin_avg
 
