@@ -13,7 +13,10 @@ from pathlib import Path
 import glob
 from copy import copy
 
+import matplotlib
+matplotlib.use('Qt5Agg')
 from matplotlib import pyplot as plt
+plt.ion()
 from astropy.io import fits
 import numpy as np
 
@@ -25,14 +28,18 @@ import utilities as utils
 # you will need to be in the directory for the files
 
 os.chdir('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis')
-targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
+# targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
+# targets = ['toi-1696']
+targets = 'any'
 
-tagfiles = dbutils.find_data_files('tag', targets)
+obs_filters = dict(targets=targets, after='2025-04-13')
+
+tagfiles = dbutils.find_data_files('tag', **obs_filters)
 print("Spectra to be extracted from:")
-print('\n'.join(tagfiles))
+print('\n'.join([tf.name for tf in tagfiles]))
 
 
-#%% point to where hte calibration files are
+#%% point to where the calibration files are
 
 setenvs = """
 setenv CRDS_PATH /Users/parke/crds_cache/
@@ -77,12 +84,21 @@ def get_x1dparams(file):
     else:
         raise ValueError
     assert (bkoffst - bksize / 2) > (extrsize / 2) + 5
-    newparams = dict(bk1offst=-bkoffst, bk2offst=bkoffst, bk1size=bksize, bk2size=bksize)
+    newparams = dict(extrsize=extrsize, bk1offst=-bkoffst, bk2offst=bkoffst, bk1size=bksize, bk2size=bksize)
     allparams = {**min_params, **newparams}
     return allparams
 
 
 #%% run an initial extraction
+
+# check for 0-length exposures
+files_with_no_data = []
+for tagfile in tagfiles:
+    gtis = fits.getdata(tagfile, extname='GTI')
+    if len(gtis['start']) == 0:
+        files_with_no_data.append(tagfile)
+if files_with_no_data:
+    raise ValueError(f"These files have no data:\n{'\n'.join(files_with_no_data)}")
 
 overwrite_consent = False
 for tagfile in tagfiles:
@@ -101,7 +117,7 @@ for tagfile in tagfiles:
 
 ydefault = 387 # extraction location if no trace visible
 
-fltfiles = dbutils.find_data_files('flt', targets)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m',  **obs_filters)
 print(f'As plots appear click the trace at either the Lya red wing (g140m) or at the C II line (g140l), then click off axes.\n'
       '\n'
       'You can zoom and pan, but coordinates will be registered for each click. '
@@ -153,10 +169,10 @@ tracelocs = dict(zip(ids,locs))
 
 #%% extract traces without background
 
-fltfiles = dbutils.find_data_files('flt', targets)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m', **obs_filters)
 
 # remove existing files
-labels = "x1dbk1 x1dtrace x1dbk2".split('')
+labels = "x1dbk1 x1dtrace x1dbk2".split()
 print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
 print('\n'.join([f.name for f in fltfiles]))
 _ = input('y/n? ')
@@ -164,11 +180,12 @@ if _ == 'y':
     for fltfile in fltfiles:
         id = fits.getval(fltfile, 'asn_id').lower()
         traceloc = tracelocs[id]
-        x1d_params = get_x1dparams(x1dfile)
+        x1d_params = get_x1dparams(fltfile)
 
         mod_params = copy(x1d_params)
         mod_params['bk1size'] = mod_params['bk2size'] = 0
         mod_params['bk1offst'] = mod_params['bk2offst'] = 0
+        del mod_params['extrsize']
 
         y1 = traceloc + x1d_params['bk1offst']
         yt = traceloc
@@ -185,12 +202,12 @@ if _ == 'y':
             if x1dfile.exists():
                 os.remove(x1dfile)
 
-            stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
+            stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=y, extrsize=sz, **mod_params)
 
 
 #%% now rerun the extraction at the appropriate locations
 
-fltfiles = dbutils.find_data_files('flt', targets)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m', **obs_filters)
 
 # remove existing x1d files
 print('Proceed with deleting and recreating x1ds associated with?')

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-observations = '/Users/parke/Google Drive/Research/STELa/data/uv_observations'
+observations = Path('/Users/parke/Google Drive/Research/STELa/data/uv_observations')
 
 selection_inputs = Path('target_selection_data/inputs')
 selection_intermediates = Path('target_selection_data/intermediates')

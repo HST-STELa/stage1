@@ -15,7 +15,7 @@ def rename_files(directory, overwrite=False):
     newpaths = []
     for path in paths:
         target = get_target(path)
-        if target in ['WAVEHITM']:
+        if target in ['wavehitm', 'waveline']:
             target = find_visit_primary_target(path, directory)
         newname = new_name(path, target)
 
@@ -84,7 +84,7 @@ def get_target(path):
 
 def find_visit_primary_target(path, directory):
     id = fits.getval(path, 'asn_id').lower()
-    files = directory.glob(f'*{id}*_tag*')
+    files = list(directory.glob(f'*{id}*_tag*'))
     if len(files) == 0:
         raise ValueError('There must be a tag file from the same visit as the file below in the directory '
                          'in order to infer the primary visit target'
@@ -133,3 +133,7 @@ def find_data_files(extension='*', targets='any', instruments='any', after='2020
     return files
 
 
+def pathname_max(folder, glob_str):
+    folder = Path(folder)
+    paths = list(folder.glob(glob_str))
+    return max(paths)
