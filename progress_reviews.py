@@ -38,13 +38,13 @@ main_table = table.Table.from_pandas(main_table)
 main_table.add_index('Target')
 
 #%% settings
-saveplots = True
+saveplots = False
 
 # targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
 # targets = ['toi-2015', 'toi-2079']
 targets = 'any'
 
-obs_filters = dict(targets=targets, after='2025-04-13', directory=data_folder)
+obs_filters = dict(targets=targets, after='2025-01-01', directory=data_folder)
 
 
 #%% make a csv of the observation dates to drop into the main progress spreadsheet
@@ -315,7 +315,7 @@ for xf in x1dfiles:
     plt.ylim(ylim)
     plt.xlabel('Velocity in System Frame (km s-1)')
     plt.ylabel('Flux Density (cgs)')
-    plt.legend(('signal', 'background'))
+    plt.legend(('signal', 'background', '-1 σ, 0 σ, +1 σ predictions'))
 
     if saveplots:
         pngfile = str(xf).replace('_x1d.fits', '_plot-spec.png')

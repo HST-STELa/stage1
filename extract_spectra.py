@@ -67,6 +67,7 @@ crds.bestrefs.assign_bestrefs(file_strings, sync_references=True, verbosity=10)
 
 
 #%% set extraction parameters
+pass
 
 # note that the G140L traces get as low as 100 and G140M as low as 150, so I can't go hog wild with the backgroun regions
 # x1d_params = dict()
@@ -74,17 +75,27 @@ def get_x1dparams(file):
     min_params = dict(maxsrch=0.01,
                       bksmode='off')  # no background smoothing
     if 'g140m' in file.name:
-        extrsize = 19
-        bkoffst = 30
-        bksize = 20
+        newparams = dict(
+            extrsize=19,
+            bk1offst=-30, bk2offst=30,
+            bk1size=20, bk2size=20
+        )
     elif 'g140l' in file.name:
-        extrsize = 13
-        bkoffst = 30
-        bksize = 20
+        newparams = dict(
+            extrsize=13,
+            bk1offst=-30, bk2offst=30,
+            bk1size=20, bk2size=20
+        )
+    elif 'e140m' in file.name:
+        newparams = dict(
+            extrsize=7,
+            bk1size=5, bk2size=5,
+        )
     else:
         raise ValueError
-    assert (bkoffst - bksize / 2) > (extrsize / 2) + 5
-    newparams = dict(extrsize=extrsize, bk1offst=-bkoffst, bk2offst=bkoffst, bk1size=bksize, bk2size=bksize)
+    if 'bk1offst' in newparams:
+        assert (abs(newparams['bk1offst']) - newparams['bk1size'] / 2) > (newparams['extrsize'] / 2) + 5
+        assert (abs(newparams['bk2offst']) - newparams['bk2size'] / 2) > (newparams['extrsize'] / 2) + 5
     allparams = {**min_params, **newparams}
     return allparams
 
@@ -117,13 +128,13 @@ for tagfile in tagfiles:
 
 ydefault = 387 # extraction location if no trace visible
 
-fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m',  **obs_filters)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis',  **obs_filters)
 print(f'As plots appear click the trace at either the Lya red wing (g140m) or at the C II line (g140l), then click off axes.\n'
       '\n'
       'You can zoom and pan, but coordinates will be registered for each click. '
       'Just make sure your last click is where you want it to be before clikcing off axes.\n'
       '\n'
-      'If you cannot find the trace, click at x < 100 to indicate this and the default y location'
+      'If you cannot find the trace, click at x < 100 to indicate this and the default y location '
       'will be used.\n'
       '\n'
       '(Sorry that this is cloodgy :)')
@@ -134,80 +145,43 @@ for ff in fltfiles:
     id = h[0].header['asn_id'].lower()
     ids.append(id)
 
-    grating = h[0].header['opt_elem'].lower()
-    if grating not in ['g140l', 'g140m']:
-        raise NotImplementedError
-
     img = h[1].data
     plt.figure()
     plt.title(Path(ff).name)
     plt.imshow(np.cbrt(img), aspect='auto')
 
+    fx = dbutils.modify_file_label(ff, 'x1d')
+    hx = fits.open(fx)
+    y = hx[1].data['extrlocy']
+    x = np.arange(img.shape[1]) + 0.5
+    plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5)
+
     xy = utils.click_coords()
-    xloc, yloc = xy[-1]
-    if xloc < 100:
-        yloc = ydefault
+    xclick, yclick = xy[-1]
+
+    if xclick < 100:
+        a2 = ydefault
+        dy = 0
         plt.annotate('default used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
+    else:
+        # find offset to nearest trace
+        yt = np.array([np.interp(xclick, x, yy) for yy in y])
+        dist = np.abs(yt - yclick)
+        imin = np.argmin(dist)
+        dy = yclick - yt[imin]
+        a2 = hx[1].data['a2center'] + dy
 
-    plt.axhline(yloc, color='r', alpha=0.5)
+    plt.plot(x, y.T + dy, color='w', alpha=0.5)
 
-    # adjust to the center of the flt based on how the pipeline tilts the trace
-    if grating == 'g140m':
-        yloc += 1.35
-    if grating == 'g140l':
-        yloc += 0.76
-
-    locs.append(yloc)
+    locs.append(a2)
     h.close()
 
 tracelocs = dict(zip(ids,locs))
 
 
-#%% fit and remove FUV glow
-#TODO
-
-
-#%% extract traces without background
-
-fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m', **obs_filters)
-
-# remove existing files
-labels = "x1dbk1 x1dtrace x1dbk2".split()
-print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
-print('\n'.join([f.name for f in fltfiles]))
-_ = input('y/n? ')
-if _ == 'y':
-    for fltfile in fltfiles:
-        id = fits.getval(fltfile, 'asn_id').lower()
-        traceloc = tracelocs[id]
-        x1d_params = get_x1dparams(fltfile)
-
-        mod_params = copy(x1d_params)
-        mod_params['bk1size'] = mod_params['bk2size'] = 0
-        mod_params['bk1offst'] = mod_params['bk2offst'] = 0
-        del mod_params['extrsize']
-
-        y1 = traceloc + x1d_params['bk1offst']
-        yt = traceloc
-        y2 = traceloc + x1d_params['bk2offst']
-        sz1 = x1d_params['bk1size']
-        szt = x1d_params['extrsize']
-        sz2 = x1d_params['bk2size']
-        sets = ((y1, sz1, labels[0]),
-                (yt, szt, labels[1]),
-                (y2, sz2, labels[2]))
-
-        for y, sz, lbl in sets:
-            x1dfile = dbutils.modify_file_label(fltfile, lbl)
-            if x1dfile.exists():
-                os.remove(x1dfile)
-
-            stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=y, extrsize=sz, **mod_params)
-
-
 #%% now rerun the extraction at the appropriate locations
 
-fltfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m', **obs_filters)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', **obs_filters)
 
 # remove existing x1d files
 print('Proceed with deleting and recreating x1ds associated with?')
@@ -222,5 +196,63 @@ if _ == 'y':
         x1d_params = get_x1dparams(x1dfile)
         id = fits.getval(fltfile, 'asn_id').lower()
         traceloc = tracelocs[id]
+        if 'e140m' in fltfile.name:
+            traceloc = traceloc[-8]
         stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
+
+
+#%% extract traces without background
+
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', **obs_filters)
+
+# remove existing files
+labels = "x1dbk1 x1dtrace x1dbk2".split()
+print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
+print('\n'.join([f.name for f in fltfiles]))
+_ = input('y/n? ')
+if _ == 'y':
+    for fltfile in fltfiles:
+        id = fits.getval(fltfile, 'asn_id').lower()
+        x1d_params = get_x1dparams(fltfile)
+
+        x1dfile = dbutils.modify_file_label(fltfile, 'x1d')
+        tracelocs = fits.getdata(x1dfile, 1)['a2center']
+        if 'e140m' in fltfile.name:
+            traceloc = tracelocs[-8]
+
+            mod_params = copy(x1d_params)
+            mod_params['bk1size'] = mod_params['bk2size'] = 0
+            mod_params['bk1offst'] = mod_params['bk2offst'] = 0
+            del mod_params['extrsize']
+
+            yt = traceloc
+            szt = x1d_params['extrsize']
+            sets = ((yt, szt, labels[1]),)
+        else:
+            traceloc, = tracelocs
+
+            mod_params = copy(x1d_params)
+            mod_params['bk1size'] = mod_params['bk2size'] = 0
+            mod_params['bk1offst'] = mod_params['bk2offst'] = 0
+            del mod_params['extrsize']
+
+            y1 = traceloc + x1d_params['bk1offst']
+            yt = traceloc
+            y2 = traceloc + x1d_params['bk2offst']
+            sz1 = x1d_params['bk1size']
+            szt = x1d_params['extrsize']
+            sz2 = x1d_params['bk2size']
+            sets = ((y1, sz1, labels[0]),
+                    (yt, szt, labels[1]),
+                    (y2, sz2, labels[2]))
+
+        for y, sz, lbl in sets:
+            x1dfile = dbutils.modify_file_label(fltfile, lbl)
+            if x1dfile.exists():
+                os.remove(x1dfile)
+
+            stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=y, extrsize=sz, **mod_params)
+
+
+
 

@@ -195,7 +195,7 @@ class AirglowModel(object):
         # supersample the wavelength grid
         wmin = min(min(wavegrid) for wavegrid in wavegrids)
         wmax = max(max(wavegrid) for wavegrid in wavegrids)
-        return np.arange(wmin, wmax, dw_sample)
+        return np.arange(wmin, wmax+dw_sample, dw_sample)
 
     # region convenience functions for parsing and setting parameters
     def tile_params(self, params_single_set):
@@ -299,7 +299,7 @@ class AirglowModel(object):
             ys.append(y)
 
         # bin
-        ys_binned = [bin_average(w, wavesup, y, left=0, right=0) for w, y in zip(wavegrids, ys)]
+        ys_binned = [bin_average(w, wavesup, y, left=None, right=None) for w, y in zip(wavegrids, ys)]
 
         return ys_binned
     params_1d_to_2d.__doc__.format(_1d_organization_string)
@@ -360,11 +360,12 @@ def test_airglow_models(three_trace_files):
         wgrid = mids2edges(w[keep])
         wavegrids.append(wgrid)
 
-    # increase the flux of one of the traces by 2
-    # fluxes[1] *= 2
+    # play with purposefully varying the fluxes to see how the fit handles it
+    fluxes[0] *= 0.9
+    fluxes[2] *= 1.1
 
-    sets = ((0.001, 'tight tolerance'),
-            (10, 'loose tolerances'))
+    sets = ((10, 'loose tolerances'),
+            (0.001, 'tight tolerances'))
     for tol_rel, tol_label in sets:
 
         # set up a model with tight tolerances
@@ -411,7 +412,7 @@ def test_airglow_models(three_trace_files):
         # plot corner for fluxes
         for name, slc in model.param_slices.items():
             fig = plt.figure()
-            labels = [f'flux {i+1}' for i in range(3)]
+            labels = [f'{name} {i+1}' for i in range(3)]
             # corner.corner(np.log10(sampler.flatchain[:,slc]), labels=labels, fig=fig)
             corner.corner(sampler.flatchain[:,slc], labels=labels, fig=fig)
             fig.suptitle(f'{tol_label} {name} posteriors')
