@@ -1,4 +1,5 @@
 #%% imports and constants
+import string
 import sys
 import re
 import warnings
@@ -13,31 +14,52 @@ import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
+import catalog_utilities
 import paths
+import catalog_utilities as catutils
 from lya_prediction_tools import transit, lya
-from target_selection_tools import galex_query, duplication_checking as dc, catalog_utilities as catutils, query, \
-    columns, apt, empirical, reference_tables as ref
+from target_selection_tools import galex_query
+from target_selection_tools import duplication_checking as dc
+from target_selection_tools import reference_tables as ref
+from target_selection_tools import query, columns, apt, empirical
+import database_utilities as dbutils
 
 erg_s_cm2 = u.Unit('erg s-1 cm-2')
+
+
+#%% settings and toggles
+
 allocated_orbits = 204
-backup_orbits = int(round(0.2 * 204))
 
+# if true, pulls the latest versions of these files from the progress review folder:
+# - visit list from status xml
+# - manually udpated observation status excel sheet
+# then makes sure all planned visits are kept and lemons are dropped
+# whether an fuv visit is kept or dropped depends on the "pass to stage 1b?" column in the excel sheet
+toggle_mid_cycle_update = True
+# use thes to specify visits we are going to add back in or remove for whatever reason
+# for example, in the May update I wanted to remove the K2-72 fuv visit Z2 because of an error in the clearance sheet
+# and add in NB for TOI-2015 due to revised pass through cut
+hand_remove_visits = 'BJ OJ P4 P1 R2 NC T1 O3 R3 W4 L5 Y5 Z2'.split()
+hand_add_visits = 'K3 R1 P5 S6 V9 Z4 NM ND OI'.split()
 
-#%% toggles and settings
+# adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
+backup_orbits = 5
+# backup_orbits = int(round(0.2 * 204))
 
-toggle_plots = False
+toggle_plots = True
 
-toggle_save_outputs = False
-toggle_save_galex = False
-toggle_save_difftbl = False
+toggle_save_outputs = True
+toggle_save_galex = True
+toggle_save_difftbl = True
 toggle_save_visit_labels = False
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
 toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
 
-diff_label = 'transit--150-50_final_build'
-toggle_checkpoint_saves = False
-toggle_target_removal_test = False
+diff_label = 'target-backfill-2025-05'
+toggle_checkpoint_saves = True
+toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
 default_sys_rv = "ism"
 
@@ -62,7 +84,7 @@ tois = query.pull_exoarchive_catalog('toi', toicols)
 
 tois_uncut = tois.copy()
 tois_uncut.write(paths.ipac / 'tois_uncut.ecsv', overwrite=True)
-confirmed.write(paths.ipac / 'confirmed.ecsv', overwrite=True)
+confirmed.write(paths.ipac / 'confirmed_uncut.ecsv', overwrite=True)
 
 
 #%% Sanity cuts
@@ -77,7 +99,7 @@ tois['discoverymethod'] = 'Transit'
 
 # Ensure all columns have masks
 for cat in [confirmed, tois]:
-    columns.add_masks(cat)
+    catalog_utilities.add_masks(cat)
 
 # all planets must have known periods
 for cat in [confirmed, tois]:
@@ -355,8 +377,7 @@ print(f'Final number of targets in the merged table {len(cat)}')
 # make sure every column still has a mask
 assert all(hasattr(col, 'mask') for col in cat.itercols())
 
-# Make sure the merge warnings from the table stack operation are not dangerous.
-pass
+print('\nMake sure the merge warnings from the table stack operation are not dangerous.')
 
 #%% define unique planet ids
 
@@ -568,8 +589,8 @@ cat = catutils.make_a_cut(cat, 'stage1', keepers=keepers)
 #%% target removal test
 
 """This allows for a test where a number of promising targets are removed. The idea is to
-verify test for bugs that might cause values to be computed and then assigned to the wrong
-targets. If so, the remocal of some targets could cause the ordering of others in the list
+ test for bugs that might cause values to be computed and then assigned to the wrong
+targets. If so, the removal of some targets could cause the ordering of others in the list
 of selected targets to change. If the order does not change, the test is passed.
 
 The test isn't automatic -- you have to look at the before and after target selections
@@ -822,6 +843,7 @@ cat['pl_eqt'][transfer] = Teq[transfer]
 
 ## Mplanet from Rplanet
 # note that whenever there is a massj there is a masse -- I checked
+n_bad_mass = np.sum(~isgood('pl_bmasse'))
 transfer = isgood('pl_rade') & ~isgood('pl_bmasse')
 Rp = get_nanfilled('pl_rade')
 Rp = Rp.to_value('Rearth')
@@ -833,8 +855,8 @@ M[small] = 0.9718 * Rp[small] ** 3.58
 M[medium] = 1.436 * Rp[medium] ** 1.7
 M[large] = 150 # after the breakpoint, increases in mass hardly change radius. we'll assume a lowish mass.
 assert np.all(M[transfer] > 0)
-print(f'{np.sum(transfer)} of {n_bad_orbsmax} bad planet Teq values filled based on radiusing Chen and Kipping 2017 relationships.'
-      f'BEWARE for gas giants a mass of 150 Mearth was assumed. After stage 1, only measured masses should be used.')
+print(f'{np.sum(transfer)} of {n_bad_mass} bad planet mass values filled based on radius in Chen and Kipping 2017 relationships.'
+      f'\nBEWARE for gas giants a mass of 150 Mearth was assumed. After stage 1, only measured masses should be used.')
 if toggle_plots:
     hist_compare('pl_bmasse', M, 'Mp from Rp')
     med_compare = M[medium]/cat['pl_bmasse'][medium].filled(nan)
@@ -916,7 +938,8 @@ catutils.flag_cut(cat, mask_no_HHe.filled(False), remove_no_HHe)
 
 
 #%% flag young systems
-young = cat['st_age'].filled(5) < 1
+young = (cat['st_age'].filled(5) < 1) & (cat['st_agelim'].filled(0) != -1)
+# note that lim == 1 corresponds to < the value in the table, -1 is >
 cat['flag_young'] = table.MaskedColumn(young)
 
 
@@ -1210,15 +1233,15 @@ because its name has changed (or some other problematic reason)
 if 'tois_uncut' not in locals():
     tois_uncut = catutils.load_and_mask_ecsv(paths.ipac / 'tois_uncut.ecsv')
 if 'confirmed' not in locals():
-    confirmed = catutils.load_and_mask_ecsv(paths.ipac / 'confirmed.ecsv')
-all_checked_ids = catutils.read_hand_checked_planets(('remove', 'vetted'))
+    confirmed = catutils.load_and_mask_ecsv(paths.ipac / 'confirmed_uncut.ecsv')
+all_checked_ids = catutils.read_hand_checked_planets(('remove', 'vetted', 'no-exofop'))
 in_tois = np.in1d(all_checked_ids, tois_uncut['toi'].astype(str))
 in_confirmed = np.in1d(all_checked_ids, confirmed['pl_name'])
 in_input_tables = in_tois | in_confirmed
 assert np.all(in_input_tables)
 # if this raises an error, figure out why some targets weren't matched and fix it!
 
-ids_to_remove = catutils.read_hand_checked_planets(('remove',))
+ids_to_remove = catutils.read_hand_checked_planets(('remove', 'no-exofop'))
 mask_remove = np.in1d(cat['id'], ids_to_remove) | np.in1d(cat['toi'], ids_to_remove)
 remove_str = "Removed because planet candidate failed manual vetting."
 catutils.flag_cut(cat, mask_remove, remove_str)
@@ -1388,7 +1411,7 @@ cat['flag_measured_mass'] = cat['pl_bmassprov'] == 'Mass'
 
 # flag Lya or FUV already
 
-cat['flag_has_FUV_or_Lya_already'] = (cat['lya_observed'].astype(float) + cat['fuv_observed'].astype(float)) == 1
+cat['flag_has_FUV_or_Lya_already'] = (cat['external_lya'].astype(float) + cat['external_fuv'].astype(float)) == 1
 
 
 #%% score systems
@@ -1401,7 +1424,7 @@ zero_out = outflow_unlikely.filled(False)
 cat['score'][zero_out] = 0
 
 # pick top score for each host
-catutils.pick_planet_parameters(cat, 'score', max, 'score_host')
+catutils.pick_planet_parameters(cat, 'score', np.max, 'score_host')
 
 _, unq_inverse = np.unique(cat['score_host'], return_inverse=True)
 rank = unq_inverse.max() - unq_inverse + 1
@@ -1428,7 +1451,78 @@ if len(unmatched) > 0:
     raise KeyError(f'These names in the M dwarf ISR table have no match: {unmatched.tolist()}')
 
 
-#%% build target list and allocate orbits
+#%% setup for orbit allocation
+
+if not toggle_mid_cycle_update:
+    available_free = allocated_orbits
+    available_planned = 0
+    lemons = []
+    planned_targets = []
+else:
+    # this is a mid-cycle update, in which case we need to track what visits have already been cemented
+    # and what lemons have been identified
+    latest_status_path = dbutils.pathname_max(paths.status_snapshots, 'HST-17804-visit-status*.xml')
+    labels_in_phase2 = dc.parse_visit_labels_from_xml_status(latest_status_path)
+
+    # eliminate redo orbits for failed observations
+    # these can be identified by the fact that they start with a number
+    labels_in_phase2 = [lbl for lbl in labels_in_phase2 if lbl[0] in string.ascii_uppercase]
+
+    # add and remove according to hand-picked stuff
+    labels_in_phase2.extend(hand_add_visits)
+    [labels_in_phase2.remove(_lbl) for _lbl in hand_remove_visits]
+
+    # load the hand updated observing status sheet to ID lemons
+    path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
+    progress_tbl = catutils.read_excel(path_main_table)
+    progress_tbl.add_index('Target')
+    drop = progress_tbl['Pass to\nStage 1b?'] == False
+    lemons = progress_tbl['Target'][drop]
+    lemons = [ref.locked2archive_name_map.get(name, name) for name in lemons] # update to the latest archive names
+
+    # make sure every lemon has a match
+    assert np.all(np.in1d(lemons, cat['hostname']))
+
+    # load the visit label table
+    labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
+    labeltbl.add_index('target')
+
+    # list targets that are in the phase 2
+    lya_planned = np.in1d(labeltbl['base'], labels_in_phase2)
+    fuv_planned = np.in1d(labeltbl['pair'], labels_in_phase2)
+
+    # update to the latest archive names
+    _targnames = [ref.locked2archive_name_map.get(name, name) for name in labeltbl['target']]
+
+    # make a table for accounting
+    plantbl = table.Table(data=(_targnames, lya_planned, fuv_planned),
+                          names='name lya fuv'.split())
+    available_planned = lya_planned | fuv_planned
+    plantbl = plantbl[available_planned]
+    planned_targets = plantbl['name'].tolist()
+    plantbl.add_index('name')
+
+    # make sure all targets in phase 2 have a match
+    assert np.all(np.in1d(plantbl['name'], cat['hostname']))
+
+    # count how many freed-up orbits there are that we can allocate
+    plantbl['lemon'] = False
+    ilmn = plantbl.loc_indices[lemons]
+    plantbl['lemon'][ilmn] = True
+    available_planned = sum(plantbl['lya']) + sum(plantbl['fuv'] & ~plantbl['lemon'])
+    available_free = allocated_orbits - available_planned
+    absent_fuv_mask = plantbl['lemon'] & ~plantbl['fuv']
+    print('The fuv visits for thse lemons were already absent in the Phase II:')
+    print('\t' + ', '.join(plantbl['name'][absent_fuv_mask].tolist()))
+
+    # add some columns for tracking as orbits are allocated
+    plantbl['lya_registered'] = False
+    plantbl['fuv_registered'] = False
+    plantbl['lemon'] = np.in1d(plantbl['name'], lemons)
+    catutils.scrub_indices(plantbl)
+    plantbl = plantbl['name lya lya_registered fuv fuv_registered lemon'.split()] # grouping columns for easy viewing
+    plantbl.add_index('name')
+
 
 """remember there are still targets we don't want to observe in the table for tracking purposes, 
 so better clean those before we start building a list
@@ -1439,78 +1533,153 @@ candidates = cat[cat['stage1']]
 candidates = catutils.planets2hosts(candidates)
 candidates.sort('score_host', reverse=True)
 
+# prep columns for which gratings will be used
 catutils.set_index(cat, 'tic_id')
 catutils.add_filled_masked_column(cat, 'stage1_g140m', nan, mask=True)
 catutils.add_filled_masked_column(cat, 'stage1_g140l', nan, mask=True)
 catutils.add_filled_masked_column(cat, 'stage1_e140m', nan, mask=True)
 
-observations_to_verify = []
-def valid_observation(host, key):
-    if host[f'{key}_observed']:
-        verified = host[f'{key}_verified']
-        if verified in ['pass', 'planned']:
-            return True
-        elif verified == 'fail':
-            return False
-        else:
-            observations_to_verify.append((host['hostname'], key))
-            return True
-    else:
-        return False
+available_backup = backup_orbits
+if backup_orbits:
+    catutils.add_filled_masked_column(cat, 'stage1_backup', False, dtype=bool)
 
-selected_tic_ids = []
-used_orbits = 0
-i = 0
-orbit_limit =  allocated_orbits + backup_orbits
-catutils.add_filled_masked_column(cat, 'stage1_backup', False, dtype=bool)
 cat['stage1_orbit_total'] = table.MaskedColumn(len(cat), mask=True, dtype=int)
-while used_orbits < orbit_limit:
-    g140m, g140l, e140m = 0, 0, 0
+
+
+#%% build target list and allocate orbits, THIS IS WHERE THE MAGIC HAPPENS!
+
+"""allocate orbits target by target working down the ranks"""
+selected_tic_ids = []
+observations_to_verify = []
+i = 0
+stela_orbit_count = 0
+while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
+    print(f"\rTarget: {i+1}/{len(candidates)}", end="", flush=True)
+    # find the indices of planets associated with the target host and whether any are already in stage 1
+    # fom an earlier iteration of this loop
     host = candidates[i]
     name = host['hostname']
     tic_id_ = host['tic_id']
     j = cat.loc_indices[tic_id_]
     j = np.atleast_1d(j)
     in_stage1 = (cat['stage1'][j].filled(False) == True)
-    valid_lya_obs = valid_observation(host, 'lya')
-    valid_fuv_obs = valid_observation(host, 'fuv')
-    if apt.does_mdwarf_isr_require_e140m(name):
-        e140m = 0 if (valid_lya_obs and valid_fuv_obs) else 1
+
+    # get key info about external observations and if e140m is needed
+    valid_external_lya_obs = host['external_lya_status'] in ['planned', 'valid', 'unverified']
+    valid_external_fuv_obs = host['external_fuv_status'] in ['planned', 'valid', 'unverified']
+    lya_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'lya')
+    fuv_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'fuv')
+
+    # mark for verification if target would have been included but for having been already observed
+    if available_free > 0:
+        for band in ('lya', 'fuv'):
+            if host[f'external_{band}_status'] == 'unverified':
+                observations_to_verify.append(f'{name} {band}')
+
+    # allocate orbits
+    g140m, g140l, e140m = 0, 0, 0
+    if not valid_external_lya_obs:
+        if lya_requires_e140m:
+            e140m = 1
+        else:
+            g140m = 1
+    if not valid_external_fuv_obs:
+        if name not in lemons:
+            if fuv_requires_e140m:
+                e140m = 1
+            else:
+                g140l = 1
+    assert not (g140m and e140m and g140l)
+
+    # counting...
+    stela_orbits = g140m + g140l + e140m
+
+    # classify the target as externally observed, already in plan, new addition, or backup
+    if stela_orbits == 0:
+        status = 'external'
+    elif name in planned_targets:
+        iplan = plantbl.loc_indices[name]
+        planned = plantbl[iplan]
+        if stela_orbits > available_planned:
+            raise ValueError('Trying to allocate more planned orbits than expected.')
+        status = 'planned'
+        available_planned -= stela_orbits
+
+        # record for accounting
+        if not e140m:
+            plantbl['lya_registered'][iplan] = g140m
+            plantbl['fuv_registered'][iplan] = g140l
+        else:
+            # if e140m is the only mode used, things get trick bc we messed up some labels in the plan
+            if g140m and g140l:
+                raise ValueError('Trying to use all three modes for planned target.')
+            elif not (g140m or g140l):
+                if planned['lya'] and planned['fuv']:
+                    raise ValueError('Code wants to allocate a single lya or fuv orbit but two are already planned.')
+                else:
+                    # match the "registered" column to whether we labeled the E140M visit as lya or fuv
+                    plantbl['lya_registered'][iplan] = planned['lya']
+                    plantbl['fuv_registered'][iplan] = planned['fuv']
+            elif g140m:
+                plantbl['lya_registered'][iplan] = True
+                plantbl['fuv_registered'][iplan] = True
+            elif g140l:
+                raise ValueError("E140M used for Lya then G140L for FUV, which shouldn't happen")
+            else:
+                raise ValueError("how did we get here? I thought all options were accounted for")
     else:
-        g140m = 0 if valid_lya_obs else 1
-        g140l = 0 if valid_fuv_obs else 1
-    new_orbits = g140m + g140l + e140m
-    new_total = used_orbits + new_orbits
-    cat['stage1_orbit_total'][j] = new_total
-    # if in the guaranteed range
-    if new_orbits == 0:
+        if available_free > 0:
+            status = 'addition'
+            available_free -= stela_orbits
+        elif available_backup > 0:
+            status = 'backup'
+            available_backup -= stela_orbits
+        else:
+            i += 1
+            continue
+
+    if status == 'external':
         remove = j[in_stage1]
         cat['stage1'][remove] = False
         cat['decision'][remove] = 'Rejected because observations already exist.'
-    elif used_orbits < allocated_orbits:
+    elif status in ['planned', 'addition']:
+        stela_orbit_count += stela_orbits
+
+        # mark orbits for host, mark in stage 1
         selected_tic_ids.append(tic_id_)
         cat['stage1_g140m'][j] = g140m
         cat['stage1_g140l'][j] = g140l
         cat['stage1_e140m'][j] = e140m
         cat['stage1'][j] = True
+        cat['stage1_orbit_total'][j] = stela_orbit_count
 
+        # mark host and best planet as selected
         select = j[in_stage1]
         cat['decision'][select] = 'Host selected.'
 
+        # mark planets in same system that were previously rejected, if any, as now included
         reintroduce = j[~in_stage1]
         prefix = 'Host ultimately selected. Planet previously '
         readd_decisions = [prefix + decision for decision in cat['decision'][reintroduce]]
         cat['decision'][reintroduce] = readd_decisions
-
-        # special case if one orbit will end up in the backup range, then the target is both in stage1 and backup
-        if (new_orbits == 2) and (new_total > allocated_orbits):
-            cat['stage1_backup'][j] = True
-    else: # in the backup range
+    elif status == 'backup':
         cat['stage1_backup'][j] = True
         k = j[in_stage1]
         cat['decision'][k] = 'Reserved as backup target.'
-    used_orbits = new_total
+    else:
+        raise ValueError('status variable has unexpected value')
     i += 1
+print('\n\n')
+
+# check for discrepancies with existing apt
+if toggle_mid_cycle_update:
+    discrepant = ((plantbl['lya'] ^ plantbl['lya_registered'])  # ^ is the xor operator (returns true if the two differ)
+                  | (plantbl['fuv'] & ~plantbl['fuv_registered'] & ~plantbl['lemon'])
+                  | (~plantbl['fuv'] & plantbl['fuv_registered']))
+    if np.any(discrepant):
+        print('Disrepancies present! Resolve these.')
+        print('')
+        plantbl[discrepant].pprint(-1, -1)
 
 cut_mask = np.ones(len(cat), bool)
 i_keep = cat.loc_indices[selected_tic_ids]
@@ -1553,7 +1722,6 @@ savecol_fmt_pairs = (
     ('id', 's'),
     ('stage1', ' '),
     ('stage1_rank', '.0f'),
-    ('stage1_backup', '.0f'),
     ('Flya_1AU_adopted', '.2f'),
     ('Flya_earth_no_ISM', '.2e'),
     ('transit_snr_nominal', '.1f'),
@@ -1581,11 +1749,14 @@ for name in request_cols:
 
 cat.sort('stage1_rank')
 selected = cat[cat['stage1'].filled(False)]
-backup = cat[cat['stage1_backup'].filled(False)]
 print(f'{len(selected)} planets orbit the selected stage 1 targets.')
-print(f'{len(backup)} planets orbit the selected stage 1 backup targets.')
+roster_set = [selected]
+if backup_orbits > 0:
+    backup_cat = cat[cat['stage1_backup'].filled(False)]
+    print(f'{len(backup_cat)} planets orbit the selected stage 1 backup targets.')
+    roster_set.append(backup_cat)
 
-roster = table.vstack((selected, backup))
+roster = table.vstack(roster_set)
 
 
 #%% save selected planets and hosts
@@ -1595,9 +1766,10 @@ if toggle_save_outputs:
     selected_hosts = catutils.planets2hosts(selected)
     selected_hosts.write(paths.selection_outputs / 'stage1_host_catalog.ecsv', overwrite=True)
 
-    backup.write(paths.selection_outputs / 'stage1_backup_planet_catalog.ecsv', overwrite=True)
-    backup_hosts = catutils.planets2hosts(backup)
-    backup_hosts.write(paths.selection_outputs / 'stage1_backup_host_catalog.ecsv', overwrite=True)
+    if backup_orbits > 0:
+        backup_cat.write(paths.selection_outputs / 'stage1_backup_planet_catalog.ecsv', overwrite=True)
+        backup_hosts = catutils.planets2hosts(backup_cat)
+        backup_hosts.write(paths.selection_outputs / 'stage1_backup_host_catalog.ecsv', overwrite=True)
 
     # simplified table of key info
     save_info_sets = (
@@ -1737,7 +1909,7 @@ apt_info['Mdwarf'] = np.char.count(targets['st_spectype'].filled('M').astype(str
 
 for col in apt_info.columns:
     if apt_info[col].dtype == float:
-        apt_info[col].format = '.2f'
+        apt_info[col].format = '.1f'
 
 # new info for old targets
 i_apt_, i_past_, _, _ = past_coords.search_around_sky(apt_coords, 0.1*u.arcsec)
@@ -1779,7 +1951,7 @@ for row in targets_selected:
     name = row['hostname']
     if name not in labeltbl['target']:
         last_base_label, pair = last_base_label.next_pair()
-        new_row = [name, str(last_base_label), str(pair), new_batch_no]
+        new_row = [name, str(last_base_label), str(pair), new_batch_no, '', '']
         labeltbl.add_row(new_row)
 
 catutils.set_index(labeltbl, 'target')
@@ -1919,6 +2091,32 @@ targets_to_investigate = targets[['hostname', 'st_spectype']][needs_investigatio
 if toggle_save_outputs:
     targets_to_investigate.write(paths.selection_outputs / 'targets_needing_spT_followup.csv', overwrite=True)
 
+
+#%% optional: check that acq entry in APT is correct
+"""If they aren't way off, probably no need to correct and risk throwing off planning"""
+
+# parse latest pro file
+path = dbutils.pathname_max(paths.other, '*.pro')
+acq_apt_tbl = apt.parse_acqs_from_formatted_listing(path)
+
+# get apt names so we can match tables
+_newnames = [ref.archive2locked_name_map.get(name, name) for name in apt_info['name']]
+aptnames = apt.cat2apt_names(_newnames)
+apt_info['aptname'] = aptnames
+
+# run through checks
+catutils.set_index(apt_info, 'aptname')
+for row in acq_apt_tbl:
+    name, aper, expt = row
+    try:
+        intended_aper = apt_info.loc[name]['acq']
+        intended_expt = apt_info.loc[name]['Tacq']
+        if (aper != intended_aper) or not np.isclose(intended_expt, expt, atol=0.05):
+            print(f'Setting mismatch for {name}')
+            print(f'\tIn APT {aper} {expt:.1f}')
+            print(f'\tIntended {intended_aper} {intended_expt:.1f}')
+    except KeyError:
+        print(f'{name} not in apt_info table')
 
 #%% End Note
 """Once you have the pipeline has completed to your satisfication, 

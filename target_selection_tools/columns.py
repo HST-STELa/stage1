@@ -244,16 +244,8 @@ def empty_column_like(col, length=None):
     return emptycol
 
 
-def add_masks(catalog):
-    for name in catalog.colnames:
-        if not hasattr(catalog[name], 'mask'):
-            catalog[name] = table.MaskedColumn(catalog[name])
-
-
 def operate_on_suffixes(table, name, operation_function):
     for suffix in ['', 'err1', 'err2', 'lim']:
         fullname = name + suffix
         if fullname in table.colnames:
             table[fullname] = operation_function(table[fullname])
-
-

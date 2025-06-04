@@ -214,7 +214,7 @@ def __default_rv_handler(catalog, default_rv):
 # region ETC reference info for SNR calcs
 etc_ref = etc.g140m_etc_countrates
 w_etc = etc_ref['wavelength'] * u.AA # EF = earth frame
-we_etc = utils.mids2edges(w_etc.value, simple=True) * u.AA
+we_etc = utils.grid2bins(w_etc.value) * u.AA
 v_etc = w2v(w_etc.value)
 
 etc_ref['flux2cps'] = etc_ref['target_counts'] / etc.g140m_expt_ref / etc.g140m_flux_ref

@@ -6,8 +6,9 @@ from astropy import table
 from matplotlib import pyplot as plt
 
 import paths
+import catalog_utilities as catutils
 from lya_prediction_tools import heritage, transit
-from target_selection_tools import catalog_utilities as catutils, empirical
+from target_selection_tools import empirical
 
 
 #%% load old and new catalogs

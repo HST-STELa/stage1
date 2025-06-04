@@ -6,8 +6,8 @@ import numpy as np
 from astropy import table, coordinates as coord, time, units as u
 from tqdm import tqdm
 from scipy.spatial import KDTree
+import pandas as pd
 
-from target_selection_tools import columns
 import paths
 
 
@@ -53,7 +53,7 @@ def load_and_mask_ecsv(path):
     should have dtype object, it's not because of saving and loading a table.
     """
     catalog = table.Table.read(path)
-    columns.add_masks(catalog)
+    add_masks(catalog)
     return catalog
 
 
@@ -286,3 +286,23 @@ def match_by_position(ra1, dec1, ra2, dec2):
     coord2 = coord.SkyCoord(ra2, dec2)
     i1, i2, _, _ = coord2.search_around_sky(coord1)
     return i1, i2
+
+
+def read_excel(path):
+    tbl = pd.read_excel(path, keep_default_na=False)
+    tbl = table.Table.from_pandas(tbl)
+    return tbl
+
+
+def add_masks(catalog):
+    for name in catalog.colnames:
+        if not hasattr(catalog[name], 'mask'):
+            catalog[name] = table.MaskedColumn(catalog[name])
+
+
+def loc_indices_and_unmatched(indexed_catalog, values):
+    idx = indexed_catalog.loc_indices[values]
+    i_matched_values, = np.nonzero(values != -1)
+    i_unmatched_values, = np.nonzero(values == -1)
+    i_matches_in_catalog = idx[idx != -1]
+    return i_matched_values, i_matches_in_catalog, i_unmatched_values

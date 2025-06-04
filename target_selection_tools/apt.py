@@ -1,13 +1,13 @@
 from math import nan
+import re
 
 from astropy import table
 import numpy as np
 from scipy import interpolate
 
+import catalog_utilities as catutils
 from lya_prediction_tools import etc
-
 from target_selection_tools import query
-from target_selection_tools import catalog_utilities as catutils
 from target_selection_tools import reference_tables as ref
 from target_selection_tools import empirical as emp
 from target_selection_tools import galex_estimate
@@ -384,10 +384,10 @@ def buffer_times(catalog, grating='g140m'):
     return Tbuffer
 
 
-def does_mdwarf_isr_require_e140m(name):
+def does_mdwarf_isr_require_e140m(name, type='lya'):
     result = False
     if name in ref.mdwarf_isr['Target']:
-        isr_config = ref.mdwarf_isr.loc[name]['SCIENCE SETUP']
+        isr_config = ref.mdwarf_isr.loc[name][f'SCIENCE SETUP {type.upper()}']
         if 'E140M' in isr_config.upper():
             result = True
     return result
@@ -490,3 +490,33 @@ class VisitLabel:
 
     def __getitem__(self, item):
         return self.label[item]
+
+
+def parse_acqs_from_formatted_listing(path):
+
+    # Read file lines
+    with open(path, 'r') as file:
+        lines = file.readlines()
+
+    # Find lines containing 'ACQ'
+    acq_lines = [line for line in lines if 'ACQ' in line]
+
+    # Initialize lists to store extracted data
+    targets, apers, exptimes = [], [], []
+
+    # Define regex pattern for extraction
+    pattern = re.compile(r'\d+\s+(\S+)\s+STIS/CCD ACQ\s+(\S+).*?(\d+\.\d+|\d+)\s*S')
+
+    # Extract relevant information from each line
+    for line in acq_lines:
+        match = pattern.search(line)
+        if match:
+            target, aper, exptime = match.groups()
+            targets.append(target)
+            apers.append(aper)
+            exptimes.append(float(exptime))
+
+    # Create Astropy table
+    acq_table = table.Table([targets, apers, exptimes], names=('target', 'aper', 'exptime'))
+
+    return acq_table

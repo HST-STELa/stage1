@@ -7,7 +7,7 @@ import synphot
 
 import paths
 
-from target_selection_tools import catalog_utilities as catutils
+import catalog_utilities as catutils
 from lya_prediction_tools import ism, lya
 
 #%% load and join parameter and ISR tables -- make sure to download a new csv export first!

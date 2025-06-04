@@ -19,3 +19,6 @@ locked = selection_inputs / 'locked_choices'
 
 reports = selection_outputs / 'target_request_reports'
 difftbls = selection_outputs / 'diff_tables'
+
+progress_reviews = Path('progress_reviews')
+status_snapshots = progress_reviews / 'status_snapshots'

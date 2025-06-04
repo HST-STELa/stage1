@@ -18,104 +18,29 @@ def midpts(ary, axis=None):
         return (hi+lo)/2.0
 
 
-def mids2edges(mids, start='mid', first='adjacent', simple=False):
+def grid2bins(mids):
     """
-    Reconstructs bin edges given only the midpoints.
+    Reconstructs bin edges given only the midpoints by assuming the edges fall evenly between the midpoints.
+    Note that this assumption can be invalid, particularly if the midpoints are not spaced evenly.
 
     Parameters
     ----------
     mids : 1-D array-like
         A 1-D array or list of the midpoints from which bin edges are to be
         inferred.
-    start : {'left'|'right'|'mid'}, optional
-        left : start by assuming the spacing between the first two midpts
-            is the same as the spacing between the first two bin edges and
-            work from there
-        right : same as above, but using the last two midpoints and working
-            backwords
-        mid : put one bin edge at the middle of the center two midpoints and
-            work outwards. If there is an odd number of midpoints, use the
-            middle midpoint and the one to the left to start.
-    first : {float|'adjcacent'|'linear-i'|'linear-x'|function}, optional
-        Width of the starting bin to the spacing between the midpoints to extrapolate the
-        width of the first or last bin.
-
-        The linear options try to extrapolate the width of the start bin by
-        assuming the bin widths follow the same linear change as the midpoint
-        spacings. linear-i' assumes a linear change with respect to the bin index
-        whereas 'linear-x' assumes a linear change with respect to the bin
-        value. These can only be used with start set to
-        'left' or 'right'. Note that using 'linear' can produce nonsensical output
-        if the spacing between midpoints does not vary linearly.
-
-        Alternatively, a function may be provided that fits the midpoint spacings.
-        That function should
-        return a fit function (just like scipy's interp1d does), such that if
-        result = function(xin,yin), then yout = result(xout) is a valid.
 
     Result
     ------
     edges : np.array
         The inferred bin edges.
 
-    Could be accelerated with a cython implementation.
     """
 
-    if simple:
-        edges = midpts(mids)
-        d0 = edges[0] - mids[0]
-        d1 = mids[-1] - edges[-1]
-        return np.insert(edges, [0, len(edges)], [mids[0] - d0, mids[-1] + d1])
-
-    mids = np.array(mids)
-    N = len(mids)
-    e = np.zeros(N+1)
-    if type(first) is not float and first != 'adjacent' and start == 'mid':
-        raise ValueError("Start can only be 'mid' if fit == 'none'.")
-
-    if type(first) is float:
-        if start == 'left': e[0] = mids[0] - first/2.0
-        if start == 'right': e[-1] = mids[-1] + first/2.0
-    elif first == 'adjacent':
-        if start == 'left': e[0] = mids[0] - (mids[1] - mids[0])/2.0
-        if start == 'right': e[-1] = mids[-1] + (mids[-1] - mids[-2])/2.0
-    else:
-        d = mids[1:] - mids[:-1]
-        x = midpts(mids)
-        if first == 'linear-x':
-            c = np.polyfit(x, d, 1)
-            fitfun = lambda x: np.polyval(c, x)
-        if first == 'linear-i':
-            cdi = np.polyfit(np.arange(N-1), d, 1)
-            cix = np.polyfit(x, np.arange(N-1), 2)
-            def fitfun(x):
-                i = np.polyval(cix, x)
-                return np.polyval(cdi, i)
-        elif callable(first):
-            fitfun = first(x,d)
-
-        if start == 'left':
-            d0 = fitfun(mids[0])
-            e[0] = mids[0] - d0/2.0
-        if start == 'right':
-            d1 = fitfun(mids[-1])
-            e[-1] = mids[-1] + d1/2.0
-
-    if start == 'left':
-        for i in np.arange(0,N): e[i+1] = 2*mids[i] - e[i]
-    if start == 'right':
-        for i in np.arange(N-1,-1,-1): e[i] = 2*mids[i] - e[i+1]
-    if start == 'mid':
-        i = N//2
-        e[i] = (mids[i-1] + mids[i])/2.0
-        for i in np.arange(i-1,-1,-1): e[i] = 2*mids[i] - e[i+1]
-        for i in np.arange(i+1,N): e[i+1] = 2*mids[i] - e[i]
-
-    if any(e[1:] - e[:-1] <= 0):
-        warnings.warn('There are zero or negative length bins in the output. '
-                      'Consider using a different fit or start.', RuntimeWarning)
-
-    return e
+    edges = midpts(mids)
+    d0 = edges[0] - mids[0]
+    d1 = mids[-1] - edges[-1]
+    edges = np.insert(edges, [0, len(edges)], [mids[0] - d0, mids[-1] + d1])
+    return edges
 
 
 def cumulative_trapz(y, x, zero_start=False):
@@ -208,3 +133,14 @@ def click_coords(fig=None, timeout=600.):
     fig.canvas.mpl_disconnect(cid)
     return np.array(xy)
 
+
+def flux_integral(w, f, e=None):
+    we = grid2bins(w)
+    dw = np.diff(we)
+    flux = np.sum(dw*f)
+    if e is None:
+        return flux
+
+    flux_var = np.sum((dw*e)**2)
+    flux_err = np.sqrt(flux_var)
+    return flux, flux_err

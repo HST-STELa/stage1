@@ -1,0 +1,4 @@
+# theoretically, we could use an alias lookup for this, but you have to query one target at a time
+# and the output is hard to parse, so I decided a manual mapping is faster
+locked_name,archive_name
+TOI-4189,HD 35843

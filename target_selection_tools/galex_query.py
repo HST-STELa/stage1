@@ -79,9 +79,9 @@ def _skydist(ra0, dec0, ra1, dec1):
 
 
 def _other_band(band):
-    if band._upper() == "FUV":
+    if band.upper() == "FUV":
         return "NUV"
-    if band._upper() == "NUV":
+    if band.upper() == "NUV":
         return "FUV"
 
 
@@ -263,9 +263,9 @@ def get_nearest_source_fluxes(tbl, band, match_radius=2/3600.,
     # note that there  can be multiple exposures  for a single tile, so don't
     # use tile id for this.
     letter = band[0]
-    fluxcol = band._upper() + '_FLUX_APER_7'
+    fluxcol = band.upper() + '_FLUX_APER_7'
     othercol = _other_band(band) + '_FLUX_APER_7'
-    errcol = band._upper() + '_FLUXERR_APER_7'
+    errcol = band.upper() + '_FLUXERR_APER_7'
     unique_expend = np.unique(tbl[letter + 'expend'])
     unique_expend = unique_expend[unique_expend > 0]
     fluxes, errs, expts, offsets, starts = [], [], [], [], []

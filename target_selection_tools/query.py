@@ -8,7 +8,7 @@ from astropy import coordinates as astrocoord
 from astropy import units as u
 from astropy import table
 
-from target_selection_tools import catalog_utilities as catutils
+import catalog_utilities as catutils
 
 
 def get_simbad_from_names(names, extra_cols=(), suppress_blank_response_warnings=False):
@@ -70,6 +70,7 @@ def get_simbad_by_id(id_list, cols=()):
     resultset = service.search(querystr)
     simbad = resultset.to_table()
     return simbad
+
 
 def get_simbad_3d(catalog, search_radius, cols=()):
     """

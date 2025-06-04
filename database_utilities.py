@@ -127,8 +127,8 @@ def find_data_files(extension='*', targets='any', instruments='any', after='2020
             raise ValueError('Targets must be "any", a string, or a list of target names.')
 
     file_dates = [f.name.split('.')[2] for f in files]
-    files =  [f for f,date in zip(files, file_dates) if date > after]
-    files =  [f for f,date in zip(files, file_dates) if date < before]
+    files = [f for f,date in zip(files, file_dates) if date > after]
+    files = [f for f,date in zip(files, file_dates) if date < before]
 
     return files
 

@@ -32,7 +32,7 @@ os.chdir('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis
 # targets = ['toi-1696']
 targets = 'any'
 
-obs_filters = dict(targets=targets, after='2025-04-13')
+obs_filters = dict(targets=targets, after='2025-06-01')
 
 tagfiles = dbutils.find_data_files('tag', **obs_filters)
 print("Spectra to be extracted from:")
@@ -120,6 +120,7 @@ for tagfile in tagfiles:
     # exposure
     stis.inttag.inttag(tagfile, rawfile)
     root = dbutils.modify_file_label(tagfile, '')
+    root = str(root).replace('_', '')
     status = stis.calstis.calstis(rawfile, wavecal=wavfile, outroot=root) # exposure
     assert status == 0
 
@@ -161,7 +162,7 @@ for ff in fltfiles:
 
     if xclick < 100:
         a2 = ydefault
-        dy = 0
+        dy = hx[1].data['a2center'] - a2
         plt.annotate('default used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
     else:
         # find offset to nearest trace

@@ -4,8 +4,8 @@ import numpy as np
 from astropy import table
 
 import paths
+import catalog_utilities as catutils
 from lya_prediction_tools import lya, ism
-from target_selection_tools import catalog_utilities as catutils
 
 # region initial population of the progress table
 #%% compile stage1 selections and anything with archival data we want to consider for stage 2
@@ -13,7 +13,7 @@ from target_selection_tools import catalog_utilities as catutils
 cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
 mask = (cat['stage1'].filled(False) # either selected for stage1
         | cat['stage1_backup'].filled(False) # backup for stage1
-        | cat['lya_observed'].filled(False)) # or archival
+        | cat['external_lya'].filled(False)) # or archival
 roster = cat[mask]
 roster.sort('stage1_rank')
 
@@ -47,8 +47,8 @@ export['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
 export['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
 export['Status'][selected_mask & ~lya_obs_mask] = '1a target'
 export['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
-export['1a External Data'] = roster_hosts['lya_observed']
-export['1b External Data'] = roster_hosts['fuv_observed']
+export['1a External Data'] = roster_hosts['external_lya']
+export['1b External Data'] = roster_hosts['external_fuv']
 
 # 1a labels
 labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')

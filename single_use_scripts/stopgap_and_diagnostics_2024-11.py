@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 import paths
-from target_selection_tools import catalog_utilities as catutils
+import catalog_utilities as catutils
 from lya_prediction_tools import heritage, transit
 
 #%% load second cut
