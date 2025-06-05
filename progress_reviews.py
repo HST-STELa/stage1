@@ -32,11 +32,11 @@ target_table.add_index('aptname')
 
 # load up the latest export of the obs progress table
 path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
-main_table = catutils.read_excel(path_main_table)
-main_table.add_index('Target')
+progress_table = catutils.read_excel(path_main_table)
+progress_table.add_index('Target')
 
 #%% settings
-saveplots = False
+saveplots = True
 
 # targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
 # targets = ['toi-2015', 'toi-2079']
@@ -45,17 +45,23 @@ targets = 'any'
 obs_filters = dict(targets=targets, after='2025-05-10', directory=data_folder)
 
 
-#%% PROGRESS TABLE UPDATES
+#%% --- PROGRESS TABLE UPDATES ---
 pass
 
-#%% copy and groom key progress table columns for revision
-new_table = main_table.copy()
-for col in datecols:
-        new_table[col] = ''
-        new_table[col] = new_table[col].astype('object')
+#%% copy progress table for revision
+prog_update = progress_table.copy()
 
 
-#%% load and process latest target build
+#%% convert datetime cols to strings of just the date without time
+for col in prog_update.colnames:
+    valid = prog_update[col] != ''
+    if not np.any(valid):
+        continue
+    test_value = prog_update[col][valid][0]
+    if isinstance(test_value, datetime):
+        prog_update[col][valid] = [x.strftime("%b %d, %Y") for x in prog_update[col][valid]]
+
+#%% load and filter latest target build
 
 cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
 mask = (cat['stage1'].filled(False) # either selected for stage1
@@ -64,17 +70,25 @@ mask = (cat['stage1'].filled(False) # either selected for stage1
 roster = cat[mask]
 roster.sort('stage1_rank')
 
-# pick highest transit SNR of planets in system
+# pick the highest transit SNR of planets in system
 roster_picked_transit = roster.copy()
 catutils.pick_planet_parameters(roster_picked_transit, 'transit_snr_nominal', np.max, 'transit_snr_nominal')
 catutils.pick_planet_parameters(roster_picked_transit, 'transit_snr_optimistic', np.max, 'transit_snr_optimistic')
 
 # slim down to just the hosts
 roster_hosts = catutils.planets2hosts(roster_picked_transit)
-export = roster_hosts[['tic_id']].copy()
+target_info = roster_hosts[['tic_id']].copy()
+target_info.rename_column('tic_id', 'TIC ID')
+
 
 #%% tabulate basic info on targets
 pass
+
+target_info['Global\nRank'] = roster_hosts['stage1_rank']
+target_info['Target'] = roster_hosts['hostname']
+target_info['No. of\nPlanets'] = roster_hosts['sy_pnum']
+target_info["Nominal Lya\nTransit SNR"] = roster_hosts['transit_snr_nominal']
+target_info["Optimistic Lya\nTransit SNR"] = roster_hosts['transit_snr_optimistic']
 
 # set Status to selected, backup, or archival
 n = len(roster_hosts)
@@ -82,23 +96,34 @@ lya_obs_mask = roster_hosts['lya_verified'].filled('') == 'pass'
 fuv_obs_mask = roster_hosts['fuv_verified'].filled('') == 'pass'
 selected_mask = roster_hosts['stage1'].filled(False)
 backup_mask = roster_hosts['stage1_backup'].filled(False)
-export['Status'] = table.MaskedColumn(length=n, dtype='object', mask=True)
-export['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
-export['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
-export['Status'][selected_mask & ~lya_obs_mask] = '1a target'
-export['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
-export['1a External Data'] = roster_hosts['external_lya']
-export['1b External Data'] = roster_hosts['external_fuv']
+target_info['Status'] = table.MaskedColumn(length=n, dtype='object', mask=True)
+target_info['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
+target_info['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
+target_info['Status'][selected_mask & ~lya_obs_mask] = '1a target'
+target_info['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
+target_info['External\nLya'] = roster_hosts['external_lya']
+target_info['External\nFUV'] = roster_hosts['external_fuv']
 
-# 1a labels
+# tabulate labels (in case new targets added)
 labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
-labeltbl['target'] = labeltbl['target'].astype('object')
-labeltbl = table.join(export, labeltbl[['target', 'base', 'pair']], keys_left='Target', keys_right='target', join_type='left')
-labeltbl.sort('Rank')
-export['1a Visit Label'] = labeltbl['base']
-export['1b Visit Label'] = labeltbl['pair']
+catutils.set_index(labeltbl, 'tic_id')
+for col in ('base', 'pair'):
+    allcols = [name for name in labeltbl.colnames if col in name]
+    joined_label_col = []
+    for i, row in enumerate(target_info):
+        try:
+            j = labeltbl.loc_indices[row['TIC ID']]
+            labels = [labeltbl[name][j] for name in allcols if not np.ma.is_masked(labeltbl[name][j])]
+            joined_labels = ','.join(labels)
+            joined_label_col.append(joined_labels)
+        except KeyError:
+            joined_label_col.append('')
+    progname = 'Lya Visit\nLabels' if col == 'base' else 'FUV Visit\nLabels'
+    target_info[progname] = joined_label_col
 
-# region predicted lya fluxes
+
+#%% tabulate predicted lya fluxes
+
 params = dict(default_rv="ism", show_progress=True)
 wgrid = lya.wgrid_std
 sets = (('nominal', 0),
@@ -110,22 +135,17 @@ for lbl, pcntl in sets:
     observed = lya.lya_at_earth_auto(roster_hosts, n_H, lya_factor=lya_factor, **params)
     _fluxes = np.trapz(observed, wgrid[None, :], axis=1)
     lya_fluxes_earth.append(_fluxes)
-export['Nominal Lya Flux'] = lya_fluxes_earth[0]
-export['Optimistic Lya Flux'] = lya_fluxes_earth[1]
-# endregion
-
-#%% region match into existing table
+target_info['Nominal\nLya Flux'] = lya_fluxes_earth[0]
+target_info['Optimistic\nLya Flux'] = lya_fluxes_earth[1]
 
 
-cols_in_order = ('Rank', 'Target', 'No. of Planets', 'Status', '1a Visit Label', '1a External Data', 'Nominal Lya Flux',
-                 'Optimistic Lya Flux', 'Nominal Transit SNR', 'Optimistic Transit SNR', '1b Visit Label',
-                 '1b External Data')
-export = export[cols_in_order]
+#%% join with the existing table
 
-new_table =
+prog_update = table.join(prog_update, target_info, keys='TIC ID', join_type='outer')
 
 
-#%% update plan dates
+#%% parse STScI plan dates
+pass
 
 # parse the xml visit status export from STScI
 latest_status_path = dbutils.pathname_max(paths.status_snapshots, 'HST-17804-visit-status*.xml')
@@ -142,26 +162,38 @@ def parse_planwindow_date(text):
     except Exception as e:
         return None
 
+# setup new cols
+cols_to_update = 'Lya Visit\nin Phase II, Planned\nLya Obs, Last Lya\nObs, FUV Visit\nin Phase II, Planned\nFUV Obs, Last FUV\nObs'.split(', ')
+for name in cols_to_update:
+    name1 = name + '_1'
+    name2 = name + '_2'
+    prog_update.rename_column(name, name1)
+    prog_update[name2] = ''
+    prog_update[name2] = prog_update[name2].astype('object')
+
 # Iterate over each visit element in the visit status, find the appropriate row, and update dates
+# this can't be done with a standard table join given a row can be associated with multiple visits if there are redos
 records = []
+prog_update[f'Lya Visit\nin Phase II_2'] = False
+prog_update[f'FUV Visit\nin Phase II_2'] = False
 for visit in root.findall('visit'):
     visit_label = visit.attrib.get('visit')
-    lya_mask = np.char.count(main_table['lya visit'], visit_label)
-    fuv_mask = np.char.count(main_table['fuv visit'], visit_label)
+    lya_mask = np.char.count(prog_update['Lya Visit\nLabels_2'], visit_label)
+    fuv_mask = np.char.count(prog_update['FUV Visit\nLabels_2'], visit_label)
     if sum(lya_mask) > 0:
-        stage = 'lya'
+        stage = 'Lya'
         i, = np.nonzero(lya_mask)
     elif sum(fuv_mask) > 0:
-        stage = 'fuv'
+        stage = 'FUV'
         i, = np.nonzero(fuv_mask)
     else:
         raise ValueError('Visit label not found.')
 
     # mark observation as in the phase II
-    new_table[f'{stage} planned'][i] = True
+    prog_update[f'{stage} Visit\nin Phase II_2'][i] = True
 
-    plancol = f'{stage} plandate'
-    obscol = f'{stage} obsdate'
+    plancol = f'Planned\n{stage} Obs_2'
+    obscol = f'Last {stage}\nObs_2'
 
     # Get the status text (if available)
     status_elem = visit.find('status')
@@ -176,7 +208,7 @@ for visit in root.findall('visit'):
         start_time_elem = visit.find('startTime')
         if start_time_elem is not None and start_time_elem.text:
             actual_obs, = re.findall(r'\w{3} \d+, \d{4}', start_time_elem.text)
-            new_table[obscol][i] = actual_obs
+            prog_update[obscol][i] = actual_obs
     else:
         # For visits that have not executed (Scheduled, Flight Ready, Implementation, etc.)
         # if planWindow elements exist, extract the earliest possible observation date.
@@ -190,37 +222,48 @@ for visit in root.findall('visit'):
             earliest_date = min(dates)
             # Format the date as "Mon DD, YYYY" (e.g., "Mar 31, 2025")
             earliest_possible = earliest_date.strftime("%b %d, %Y")
-            new_table[plancol][i] = earliest_possible
+            prog_update[plancol][i] = earliest_possible
 
-#%% mark plan updates
-sorted_cols = list(newcols[:1])
-for col in newcols[1:]:
-    if 'date' in col:
-        strcol = []
-        for item in main_table[col]:
-            stritem = '' if item == '' else item.strftime("%b %d, %Y")
-            strcol.append(stritem)
-        strcol = table.Column(strcol)
-        new_table[col + ' old'] = strcol
+#%% sort progress table columns for easy comparison
+sorted_names = []
+for name in prog_update.colnames:
+    if '_1' in name:
+        name2 = name.replace('_1', '_2')
+        namediff = name.replace('_1','_diff')
+        diff = prog_update[name] != prog_update[name2]
+        prog_update[namediff] = diff
+        sorted_names.extend((name, name2, namediff))
+    elif ('_2' in name) or ('_diff' in name):
+        pass
     else:
-        new_table[col + ' old'] = main_table[col]
-    new_table[col + ' updated'] = new_table[col] != new_table[col + ' old']
-    sorted_cols.extend((col, col + ' old', col + ' updated'))
-new_table = new_table[sorted_cols]
+        sorted_names.append(name)
+prog_update = prog_update[sorted_names]
+
+#%% save a csv of progress table to inspect and copy columns back into official table
+pass
+
+# sort to match the original table
+catutils.set_index(prog_update, 'TIC ID')
+idx, _, _ = catutils.loc_indices_and_unmatched(prog_update, progress_table['TIC ID'])
+mask_new = ~np.in1d(prog_update['TIC ID'], progress_table['TIC ID'])
+i_new, = np.nonzero(mask_new)
+isort = idx + i_new.tolist()
+prog_update = prog_update[isort]
 
 today = datetime.today().strftime("%Y-%m-%d")
-new_table.write(paths.status_snapshots / f'visit_dates_for_copy-paste_{today}.csv', overwrite=True)
+prog_update.write(paths.status_snapshots / f'progress_table_updates_{today}.csv', overwrite=True)
 
 
-#%% make cumulative progress plots
+#%% --- PROGRESS PLOTS ---
 
-for stage in ['lya', 'fuv']:
-    mask = new_table[f'{stage} planned']
+for stage in ['Lya', 'FUV']:
+    mask = prog_update[f'{stage} Visit\nin Phase II_2']
+    mask = mask.astype(bool)
     n = np.sum(mask)
     ivec = np.arange(n) + 1
     datelists = []
-    for datekey in ['obsdate', 'plandate']:
-        date_strings = new_table[f'{stage} {datekey}'][mask]
+    for datekey in ['Planned\n{} Obs_2', 'Last {}\nObs_2']:
+        date_strings = prog_update[datekey.format(stage)][mask]
         dates = []
         for datestr in date_strings:
             if datestr in ['', 'SNAP']:
@@ -234,23 +277,27 @@ for stage in ['lya', 'fuv']:
         if dates:
             dates = time.Time(sorted(dates))
         datelists.append(dates)
-    obsdates, plandates = datelists
+    plandates, obsdates = datelists
 
     plt.figure()
     nobs = len(obsdates)
     nplan = len(plandates)
     if obsdates:
         plt.plot(obsdates.decimalyear, ivec[:nobs], 'k-', lw=2)
-    plt.plot(plandates.decimalyear, ivec[nobs:nobs+nplan], '--', lw=2, color='0.5')
+    if plandates:
+        plt.plot(plandates.decimalyear, ivec[nobs:nobs+nplan], '--', lw=2, color='0.5')
     plt.axhline(n, color='C2', lw=2)
     plt.xlim(2025.1, 2026.5)
     plt.ylim(-5, 135)
     plt.xlabel('Date')
     plt.ylabel(f'{stage.upper()} Observations Executed')
     plt.tight_layout()
-    plt.savefig(progress_folder / f'{stage} progress chart.pdf')
-    plt.savefig(progress_folder / f'{stage} progress chart.png', dpi=300)
+    plt.savefig(paths.progress_reviews / f'{stage} progress chart.pdf')
+    plt.savefig(paths.progress_reviews / f'{stage} progress chart.png', dpi=300)
 
+
+#%% --- OBSERVATION CHECKS ---
+pass
 
 #%% check acquisitions
 
@@ -283,17 +330,16 @@ for ff in fltfiles:
     plt.title(ff.name)
 
     x = np.arange(img.shape[1]) + 0.5
-    y = td['extrlocy']
-    ysz = td['extrsize']
+    i = 36 if 'e140m' in ff.name else 0
+    y = td['extrlocy'][i]
+    ysz = td['extrsize'][i]
     plt.plot(x, y.T, color='w', lw=0.5, alpha=0.5)
-    for _y, _ysz in zip(y, ysz):
-        plt.fill_between(x, _y - _ysz/2, _y + _ysz/2, color='w', lw=0, alpha=0.5)
+    plt.fill_between(x, y - ysz/2, y + ysz/2, color='w', lw=0, alpha=0.5)
     for ibk in (1,2):
-        off, sz = td[f'bk{ibk}offst'], td[f'bk{ibk}size']
-        ym = y + off[:,None]
-        y1, y2 = ym - sz[:,None]/2, ym + sz[:,None]/2
-        for yy1, yy2 in zip(y1, y2):
-            plt.fill_between(x, yy1, yy2, color='0.5', alpha=0.5, lw=0)
+        off, sz = td[f'bk{ibk}offst'][i], td[f'bk{ibk}size'][i]
+        ym = y + off
+        y1, y2 = ym - sz/2, ym + sz/2
+        plt.fill_between(x, y1, y2, color='0.5', alpha=0.5, lw=0)
 
     if saveplots:
         dpi = fig.get_dpi()
@@ -413,6 +459,9 @@ for xf in x1dfiles:
         fig.set_dpi(dpi)
 
 
+
+#%% --- INFREQUENT OR SINGLE USE CHECKS ---
+
 #%% table of target parameters combined with observation table values
 
 obscols = 'Rank,Target,Peak\nLya Flux,Integrated\nLya Flux,(O-C)/sigma,Pass to\nStage 1b?'.split(',')
@@ -431,9 +480,9 @@ hostcols = 'hostname ra dec sy_dist st_radv st_teff st_mass st_rad st_rotp st_ag
 _temp = bigtable.copy()
 _temp['hostname'] = _temp['hostname'].astype(str)
 
-diagnostic_table = table.join(_temp[hostcols], main_table[obscols],
+diagnostic_table = table.join(_temp[hostcols], progress_table[obscols],
                               keys_left='hostname', keys_right='Target', join_type='right')
-assert len(diagnostic_table) == len(main_table)
+assert len(diagnostic_table) == len(progress_table)
 diagnostic_table.rename_columns(oldcols, newcols)
 diagnostic_table.remove_column('target')
 

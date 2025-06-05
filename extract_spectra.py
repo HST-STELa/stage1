@@ -130,6 +130,7 @@ for tagfile in tagfiles:
 ydefault = 387 # extraction location if no trace visible
 
 fltfiles = dbutils.find_data_files('flt', instruments='hst-stis',  **obs_filters)
+
 print(f'As plots appear click the trace at either the Lya red wing (g140m) or at the C II line (g140l), then click off axes.\n'
       '\n'
       'You can zoom and pan, but coordinates will be registered for each click. '

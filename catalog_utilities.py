@@ -300,9 +300,10 @@ def add_masks(catalog):
             catalog[name] = table.MaskedColumn(catalog[name])
 
 
-def loc_indices_and_unmatched(indexed_catalog, values):
-    idx = indexed_catalog.loc_indices[values]
-    i_matched_values, = np.nonzero(values != -1)
-    i_unmatched_values, = np.nonzero(values == -1)
-    i_matches_in_catalog = idx[idx != -1]
-    return i_matched_values, i_matches_in_catalog, i_unmatched_values
+def loc_indices_and_unmatched(catalog, values):
+    index_column = catalog.indices[0].columns[0]
+    has_match = np.in1d(values, index_column)
+    i_matched, = np.nonzero(has_match)
+    i_unmatched, = np.nonzero(~has_match)
+    idx = catalog.loc_indices[values[has_match]]
+    return idx, i_matched, i_unmatched
