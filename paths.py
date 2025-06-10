@@ -22,3 +22,4 @@ difftbls = selection_outputs / 'diff_tables'
 
 progress_reviews = Path('progress_reviews')
 status_snapshots = progress_reviews / 'status_snapshots'
+data_reduction_tools = Path('data_reduction_tools')

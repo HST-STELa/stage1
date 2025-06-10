@@ -25,7 +25,8 @@ from lya_prediction_tools import lya, ism
 #%% paths and preloads
 data_folder = Path('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis')
 
-target_table = catutils.load_and_mask_ecsv(paths.selection_outputs / 'stage1_host_catalog.ecsv')
+target_table = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
+target_table = catutils.planets2hosts(target_table)
 aptnames = apt.cat2apt_names(target_table['hostname'].tolist())
 target_table['aptname'] = aptnames
 target_table.add_index('aptname')
@@ -36,13 +37,13 @@ progress_table = catutils.read_excel(path_main_table)
 progress_table.add_index('Target')
 
 #%% settings
-saveplots = True
+saveplots = False
 
 # targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
 # targets = ['toi-2015', 'toi-2079']
 targets = 'any'
 
-obs_filters = dict(targets=targets, after='2025-05-10', directory=data_folder)
+obs_filters = dict(targets=targets, after='2025-01-01', directory=data_folder)
 
 
 #%% --- PROGRESS TABLE UPDATES ---
@@ -203,14 +204,14 @@ for visit in root.findall('visit'):
     plan_windows = visit.findall('planWindow')
 
     # Check if this visit is flagged as "not a candidate..."
-    if status == "Executed":
+    if status in ["Executed", "Failed"]:
         # For executed visits use the startTime as the actual observation date.
         start_time_elem = visit.find('startTime')
         if start_time_elem is not None and start_time_elem.text:
             actual_obs, = re.findall(r'\w{3} \d+, \d{4}', start_time_elem.text)
             prog_update[obscol][i] = actual_obs
-    else:
-        # For visits that have not executed (Scheduled, Flight Ready, Implementation, etc.)
+    elif status != "Executed":
+        # For visits that have not executed or that failed (Scheduled, Flight Ready, Implementation, etc.)
         # if planWindow elements exist, extract the earliest possible observation date.
         dates = []
         for pw in plan_windows:
@@ -301,12 +302,23 @@ pass
 
 #%% check acquisitions
 
-rawfiles = dbutils.find_data_files('raw', instruments='hst-stis-mirvis', **obs_filters)
+# use tagfiles to find raw files to be sure I didn't forget to download any
+tagfiles = dbutils.find_data_files('tag', instruments='hst-stis', **obs_filters)
+rawfiles = []
+for tf in tagfiles:
+    pieces = dbutils.parse_filename(tf)
+    rsrch = f'{pieces['target']}.hst-stis-mirvis.*.{pieces['id'][:6]}*_raw.fits'
+    rf, = data_folder.glob(rsrch)
+    assert rf.exists()
+    rawfiles.append(rf)
 
 stages = ['coarse', 'fine', '0.2x0.2']
 for file in rawfiles:
     fig, axs = plt.subplots(1, 3, figsize=[7,3])
-    h = fits.open(file)
+    try:
+        h = fits.open(file)
+    except FileNotFoundError:
+        raise(FileNotFoundError('There is a tag file but '))
     for i, ax in enumerate(axs):
         data = h['sci', i+1].data
         ax.imshow(data)
@@ -386,18 +398,6 @@ for xf in x1dfiles:
     bk_flux = spec['background'] * flux_factor * size_scale
     plt.step(v, bk_flux, color='C2', where='mid')
 
-    # predicted lines
-    ylim = plt.ylim()
-    itarget = target_table.loc_indices[name.upper()]
-    predicted_fluxes = []
-    for pct in (-34, 0, +34):
-        n_H = ism.ism_n_H_percentile(50 + pct)
-        lya_factor = lya.lya_factor_percentile(50 - pct)
-        profile, = lya.lya_at_earth_auto(target_table[[itarget]], n_H, lya_factor=lya_factor, default_rv='ism')
-        plt.plot(vstd - rv, profile, color='0.5', lw=1)
-        predicted_flux = np.trapz(profile, lya.wgrid_std)
-        predicted_fluxes.append(predicted_flux.to_value('erg s-1 cm-2'))
-
     # line integral and (O-C)/sigma
     w, flux, error = spec['wavelength'], spec['flux'], spec['error']
     if 'g140m' in xf.name:
@@ -425,11 +425,41 @@ for xf in x1dfiles:
     else:
         O, E = 0, 0
         snr = 0
+        int_mask[:] = 0
+
+    # kinda kloogy but simple way to get a mask that covers the same integration intervals as the data but for the
+    # model profile grid
+    int_mask_mod = np.interp(lya.wgrid_std.value, w, int_mask)
+    int_mask_mod[int_mask_mod < 0.5] = 0
+    int_mask_mod = int_mask_mod.astype(bool)
+
+    # predicted lines
+    ylim = plt.ylim()
+    itarget = target_table.loc_indices[name.upper()]
+    predicted_fluxes = []
+    for pct in (-34, 0, +34):
+        n_H = ism.ism_n_H_percentile(50 + pct)
+        lya_factor = lya.lya_factor_percentile(50 - pct)
+        profile, = lya.lya_at_earth_auto(target_table[[itarget]], n_H, lya_factor=lya_factor, default_rv='ism')
+        plt.plot(vstd - rv, profile, color='0.5', lw=1)
+        # compute flux over same interval as it is computed from the observations
+        # this neglects instrument braodening plus the line profile will be wrong, but it's close enough
+        int_profile = profile.copy()
+        int_profile[~int_mask_mod] = 0
+        predicted_flux = np.trapz(int_profile, lya.wgrid_std)
+        predicted_fluxes.append(predicted_flux.to_value('erg s-1 cm-2'))
+
     C = predicted_fluxes[1]
     sigma_hi = max(predicted_fluxes) - predicted_fluxes[1]
     sigma_lo = predicted_fluxes[1] - min(predicted_fluxes)
     O_C_s = (O - C) / sigma_hi
     disposition = 'PASS' if snr >= 3 else 'DROP'
+
+    print('')
+    print(f'{name}')
+    print(f'\tpredicted nominal: {C:.2e}')
+    print(f'\tpredicted optimistic: {max(predicted_fluxes):.2e}')
+    print(f'\tmeasured: {O:.2e} ± {E:.1e}')
 
     flux_lbl = (f'{disposition}\n'
                 f'\n'
@@ -461,6 +491,7 @@ for xf in x1dfiles:
 
 
 #%% --- INFREQUENT OR SINGLE USE CHECKS ---
+pass
 
 #%% table of target parameters combined with observation table values
 

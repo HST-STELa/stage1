@@ -22,6 +22,7 @@ import numpy as np
 
 import database_utilities as dbutils
 import utilities as utils
+from data_reduction_tools import stis_extraction as stx
 
 
 #%% set the targets you want to extract, locate tag files
@@ -32,7 +33,8 @@ os.chdir('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis
 # targets = ['toi-1696']
 targets = 'any'
 
-obs_filters = dict(targets=targets, after='2025-06-01')
+# obs_filters = dict(targets=targets, after='2025-06-01')
+obs_filters = dict(targets=targets, before='2023-01-01')
 
 tagfiles = dbutils.find_data_files('tag', **obs_filters)
 print("Spectra to be extracted from:")
@@ -101,6 +103,7 @@ def get_x1dparams(file):
 
 
 #%% run an initial extraction
+pass
 
 # check for 0-length exposures
 files_with_no_data = []
@@ -126,8 +129,6 @@ for tagfile in tagfiles:
 
 
 #%% locate traces
-
-ydefault = 387 # extraction location if no trace visible
 
 fltfiles = dbutils.find_data_files('flt', instruments='hst-stis',  **obs_filters)
 
@@ -156,15 +157,18 @@ for ff in fltfiles:
     hx = fits.open(fx)
     y = hx[1].data['extrlocy']
     x = np.arange(img.shape[1]) + 0.5
-    plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5)
+    iln, = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')
+    
+    y_predicted = stx.predicted_trace_location(h)
+    pln, = plt.plot(512, y_predicted, 'y+', ms=10, label='predicted location')
 
     xy = utils.click_coords()
     xclick, yclick = xy[-1]
 
     if xclick < 100:
-        a2 = ydefault
+        a2 = y_predicted
         dy = hx[1].data['a2center'] - a2
-        plt.annotate('default used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
+        plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
     else:
         # find offset to nearest trace
         yt = np.array([np.interp(xclick, x, yy) for yy in y])
@@ -173,7 +177,8 @@ for ff in fltfiles:
         dy = yclick - yt[imin]
         a2 = hx[1].data['a2center'] + dy
 
-    plt.plot(x, y.T + dy, color='w', alpha=0.5)
+    nln, = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')
+    plt.legend(handles=(iln, pln, nln))
 
     locs.append(a2)
     h.close()

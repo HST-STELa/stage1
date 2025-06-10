@@ -14,9 +14,8 @@ from lya_prediction_tools import ism, lya
 
 parameters = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv')
 parameters = catutils.planets2hosts(parameters)
-isr_table = table.Table.read(paths.checked / 'mdwarf_isr_continuously_updated flux values export.csv')
-isr_table.add_index('Target')
-i = isr_table.loc_indices['COMPANIONS']
+isr_table = table.Table.read(paths.checked / 'mdwarf_isr_continuously_updated flux values export.csv', header_start=2, data_start=4)
+(i,), = np.nonzero(isr_table['Target'] == 'EXAMPLES BELOW')
 isr_table = isr_table[:i]
 
 target_names = isr_table['Target']
@@ -87,7 +86,7 @@ for target in target_parameters:
         print(f"No spectrum generated for {target['hostname']} because there is no stellar RV measurement in the catalog.")
         continue
 
-    fluxcols = ['F_C4', 'F_Si4', 'F_Lya']
+    fluxcols = ['f(C IV)6', 'f(Si IV)6', 'f(Ly a)6,7']
     Fc4, Fsi4, Flya = [target[key] * u.Unit('erg s-1 cm-2') for key in fluxcols]
     yc4 = flare_line(w, 1548.2*u.AA, Fc4, 0.2*u.AA)
     ysi4 = flare_line(w, 1393.8*u.AA, Fc4, 0.2*u.AA)
