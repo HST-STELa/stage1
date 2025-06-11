@@ -40,24 +40,24 @@ toggle_mid_cycle_update = True
 # use thes to specify visits we are going to add back in or remove for whatever reason
 # for example, in the May update I wanted to remove the K2-72 fuv visit Z2 because of an error in the clearance sheet
 # and add in NB for TOI-2015 due to revised pass through cut
-hand_remove_visits = 'BJ OJ P4 P1 R2 NC T1 O3 R3 W4 L5 Y5 Z2'.split()
-hand_add_visits = 'K3 R1 P5 S6 V9 Z4 NM ND OI'.split()
+hand_remove_visits = 'J7'.split()
+hand_add_visits = 'W1 W6 OO OP'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
-backup_orbits = 5
+backup_orbits = 0
 # backup_orbits = int(round(0.2 * 204))
 
 toggle_plots = True
 
 toggle_save_outputs = True
-toggle_save_galex = True
+toggle_save_galex = False
 toggle_save_difftbl = True
-toggle_save_visit_labels = False
+toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
-toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
+toggle_remake_filtered_hst_archive = True  # only needed if archive file redownloaded
 
-diff_label = 'target-backfill-2025-05'
+diff_label = 'target-backfill-2025-06'
 toggle_checkpoint_saves = True
 toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
