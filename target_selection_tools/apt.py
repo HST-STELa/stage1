@@ -520,3 +520,5 @@ def parse_acqs_from_formatted_listing(path):
     acq_table = table.Table([targets, apers, exptimes], names=('target', 'aper', 'exptime'))
 
     return acq_table
+
+

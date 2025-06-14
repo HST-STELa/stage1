@@ -44,13 +44,13 @@ hand_remove_visits = 'J7'.split()
 hand_add_visits = 'W1 W6 OO OP'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
-backup_orbits = 0
+backup_orbits = 5
 # backup_orbits = int(round(0.2 * 204))
 
 toggle_plots = True
 
 toggle_save_outputs = True
-toggle_save_galex = False
+toggle_save_galex = True
 toggle_save_difftbl = True
 toggle_save_visit_labels = True
 
@@ -700,6 +700,46 @@ if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt2__cut-dist-period__add-simbad-rvs-names.ecsv')
 
 
+#%% filter HST observation table (only run if new catalog downloaded)
+
+"""get the latest catalog of all existing and planned observations at https://archive.stsci.edu/pub/catalogs/, paec-7-present.cat
+be careful not to download the _ss_ catalog as I think it is solar system objects"""
+
+if toggle_remake_filtered_hst_archive:
+    hst_observations_path = paths.hst_observations / 'paec_7-present.cat'
+    hst_filtered = dc.filter_hst_observations(hst_observations_path)
+    hst_filtered.write(paths.hst_observations / 'hst_observations_filtered.ecsv', overwrite=True)
+
+
+#%% load observation tables
+
+hst_filtered = table.Table.read(paths.hst_observations / 'hst_observations_filtered.ecsv')
+our_observations = hst_filtered['prop'] == 17804
+hst_filtered = hst_filtered[~our_observations]
+verified = table.Table.read(paths.checked / 'verified_external_observations.csv')
+
+
+#%% mark observations
+
+"""we should keep these in the table so that we can go back later and hand check targets that are good candidates
+to be sure that the lya and FUV observations did not fail"""
+
+dc.flag_duplicates(cat, hst_filtered)
+dc.merge_verified(cat, verified)
+
+
+#%% checkpoint
+
+if toggle_checkpoint_saves:
+    cat.write(paths.selection_intermediates / 'chkpt3__add-archival_obs_counts.ecsv', overwrite=True)
+
+
+#%% load checkpoint
+
+if toggle_checkpoint_saves:
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__add-archival_obs_counts.ecsv')
+
+
 #%% fill key missing params
 
 """
@@ -914,8 +954,11 @@ catutils.flag_cut(cat, suspect_b, suspect_b_str)
 min_logg = 3.5
 max_logg = 5.5
 logg = cat['st_logg'].filled(4)
-off_MS = (logg > max_logg) | (logg < min_logg)
-off_MS_str = f'Cut because star assumed not on main sequence due to logg outside of [{min_logg}, {max_logg}] range.'
+spTs = cat['st_spectype'].filled('V').astype('str')
+off_MS = ((logg > max_logg) | (logg < min_logg)
+          | (np.char.count(spTs, 'I') > 0))
+off_MS_str = (f'Cut because star assumed not on main sequence due to logg outside of [{min_logg}, {max_logg}] range or'
+              f'SpT had an "I" in it.')
 catutils.flag_cut(cat, off_MS, off_MS_str)
 
 # hot stars
@@ -957,18 +1000,18 @@ cat['flag_multiplanet'] = table.MaskedColumn(flag_multi, fill_value=False,
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt4__fill-basic_properties.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt4__fill-basic_properties.ecsv')
 
 
 #%% PRUNE
 
-cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_multiplanet'))
+cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_multiplanet', 'external_lya'))
 
 
 #%% load and match existing galex mags
@@ -1067,13 +1110,13 @@ if toggle_save_galex:
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt4__add-galex.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-galex.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt4__add-galex.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-galex.ecsv')
 
 
 #%% estimate Lya based on galex
@@ -1250,59 +1293,18 @@ catutils.flag_cut(cat, mask_remove, remove_str)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt6__add-lya_transit_snr.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-lya_transit_snr.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt6__add-lya_transit_snr.ecsv')
 
 
 #%% PRUNE
 
-cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_multiplanet'))
-
-
-#%% filter HST observation table (only run if new catalog downloaded)
-
-"""get the latest catalog of all existing and planned observations at https://archive.stsci.edu/pub/catalogs/, paec-7-present.cat
-be careful not to download the _ss_ catalog as I think it is solar system objects"""
-
-if toggle_remake_filtered_hst_archive:
-    hst_observations_path = paths.hst_observations / 'paec_7-present.cat'
-    hst_filtered = dc.filter_hst_observations(hst_observations_path)
-    hst_filtered.write(paths.hst_observations / 'hst_observations_filtered.ecsv', overwrite=True)
-
-
-#%% load observation tables
-
-hst_filtered = table.Table.read(paths.hst_observations / 'hst_observations_filtered.ecsv')
-our_observations = hst_filtered['prop'] == 17804
-hst_filtered = hst_filtered[~our_observations]
-verified = table.Table.read(paths.checked / 'verified_external_observations.csv')
-
-
-#%% mark observations
-
-"""we should keep these in the table so that we can go back later and hand check targets that are good candidates
-to be sure that the lya and FUV observations did not fail"""
-
-dc.flag_duplicates(cat, hst_filtered)
-dc.merge_verified(cat, verified)
-
-
-#%% checkpoint
-
-if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv', overwrite=True)
-
-
-#%% load checkpoint
-
-if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(
-        paths.selection_intermediates / 'chkpt6__cut-low_snr-or-fp-risk__add-archival_obs_counts.ecsv')
+cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_multiplanet', 'external_lya'))
 
 
 #%% estimate EUV
@@ -1434,13 +1436,13 @@ cat['stage1_rank'] = table.MaskedColumn(rank)
 #%% checkpoint
 
 if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt7__add-flags-scores.ecsv', overwrite=True)
+    cat.write(paths.selection_intermediates / 'chkpt7__cut-low-snr__add-flags-scores.ecsv', overwrite=True)
 
 
 #%% load checkpoint
 
 if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__add-flags-scores.ecsv')
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__cut-low-snr__add-flags-scores.ecsv')
 
 
 #%% verify ISR table
@@ -1507,12 +1509,13 @@ else:
 
     # count how many freed-up orbits there are that we can allocate
     plantbl['lemon'] = False
-    ilmn = plantbl.loc_indices[lemons]
+    lemons_in_plan = [l for l in lemons if l in plantbl['name']]
+    ilmn = plantbl.loc_indices[lemons_in_plan]
     plantbl['lemon'][ilmn] = True
     available_planned = sum(plantbl['lya']) + sum(plantbl['fuv'] & ~plantbl['lemon'])
     available_free = allocated_orbits - available_planned
     absent_fuv_mask = plantbl['lemon'] & ~plantbl['fuv']
-    print('The fuv visits for thse lemons were already absent in the Phase II:')
+    print('The fuv visits for these lemons were already absent in the Phase II:')
     print('\t' + ', '.join(plantbl['name'][absent_fuv_mask].tolist()))
 
     # add some columns for tracking as orbits are allocated
@@ -1527,7 +1530,8 @@ else:
 """remember there are still targets we don't want to observe in the table for tracking purposes, 
 so better clean those before we start building a list
 this must happen before filtering for hosts or else some planets with stage1=False may be selected"""
-candidates = cat[cat['stage1']]
+candidates = cat[cat['stage1'].filled(False)
+                 | (cat['requested_observed_transit'].filled(0) > 0)]
 
 # get just the hosts since we're not observing planets in stage 1
 candidates = catutils.planets2hosts(candidates)
@@ -1554,6 +1558,10 @@ observations_to_verify = []
 i = 0
 stela_orbit_count = 0
 while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
+    if i >= len(candidates):
+        raise ValueError('Reached the end of the candidate list without allocating all orbits. '
+                         'Running the next cell will likely reveal what happened based on discrepancies.')
+
     print(f"\rTarget: {i+1}/{len(candidates)}", end="", flush=True)
     # find the indices of planets associated with the target host and whether any are already in stage 1
     # fom an earlier iteration of this loop
@@ -1669,9 +1677,10 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     else:
         raise ValueError('status variable has unexpected value')
     i += 1
+
 print('\n\n')
 
-# check for discrepancies with existing apt
+#%% check for discrepancies
 if toggle_mid_cycle_update:
     discrepant = ((plantbl['lya'] ^ plantbl['lya_registered'])  # ^ is the xor operator (returns true if the two differ)
                   | (plantbl['fuv'] & ~plantbl['fuv_registered'] & ~plantbl['lemon'])
@@ -1680,6 +1689,9 @@ if toggle_mid_cycle_update:
         print('Disrepancies present! Resolve these.')
         print('')
         plantbl[discrepant].pprint(-1, -1)
+
+
+#%% flag selections
 
 cut_mask = np.ones(len(cat), bool)
 i_keep = cat.loc_indices[selected_tic_ids]
@@ -1698,13 +1710,6 @@ if toggle_checkpoint_saves:
 
 if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
-
-
-#%% manual entry activity parameters
-
-"""These are special cases for stars that would require buffer dumps or violate bright limits, so doing a little
-extra legwork to find some activity parameters was worthwhile. Probably I should put these in a separate input file
-like most other inputs, but I've pulled a lot of late nights and just need to get this done."""
 
 
 #%% save list of targets that need their planned or archival observations verified

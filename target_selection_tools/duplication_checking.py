@@ -1,5 +1,6 @@
 import re
 from functools import reduce
+import warnings
 
 import numpy as np
 from astropy import table
@@ -7,6 +8,9 @@ from astropy import coordinates as coord
 from astropy import units as u
 from tqdm import tqdm
 import xml.etree.ElementTree as ET
+
+import database_utilities as db
+from target_selection_tools import query
 
 match_dist_default = 3*u.arcmin
 
@@ -71,6 +75,12 @@ def hst_observation_matches(target, hst_obs_coords, maxdist=match_dist_default):
     return matches
 
 
+def hst_observation_xmatch(catalog, hst_obs_coords, maxdist=match_dist_default):
+    cat_coords = coord.SkyCoord(catalog['ra'], catalog['dec'])
+    i_cat, i_hst, _, _ = hst_obs_coords.search_around_sky(cat_coords, maxdist)
+    return i_cat, i_hst
+
+
 def identify_lya_observations(hst_observations):
     inst, spec, wave = hst_observations['config'], hst_observations['spec'], hst_observations['wave']
     e140m_lya = (np.char.count(spec, 'E140M') > 0) & (wave < 2000)
@@ -86,7 +96,33 @@ def identify_lya_observations(hst_observations):
 def flag_duplicates(planet_catalog, hst_observations, match_dist=match_dist_default, review_abstracts=False):
     cat = planet_catalog
     obs = hst_observations
-    obs_coords = hst_observation_coordinates(hst_observations)
+    obs_coords = hst_observation_coordinates(obs)
+    obs['coords'] = obs_coords
+
+    # first do a basic position match to filter the hst_observations
+    i_cat, i_hst = hst_observation_xmatch(cat, obs['coords'], match_dist)
+    i_hst = np.unique(i_hst)
+    obs = obs[i_hst]
+
+    # get tic ids of all observation targets
+    obs.sort('targname') # must sort bc np.unique will do so and it will mess me up when puting tic_ids back in
+    obs_names = obs['targname']
+    unq_names, i_map2obstbl = np.unique(obs_names, return_inverse=True)
+    simbad_names = db.groom_hst_names_for_simbad(unq_names)
+    simbad = query.get_simbad_from_names(simbad_names, extra_cols=['ids'])
+    if np.any(~simbad['simbad_match']):
+        names_not_found = unq_names[~simbad['simbad_match']]
+        raise ValueError(f'No SIMBAD matches for these names: \n\t{'\n\t'.join(names_not_found)}')
+    simbad.add_index('TYPED_ID')
+    tic_ids_lst = [] # some targets have multiple tic IDs, annoyingly, so need to account for that
+    for ids in simbad['IDS']:
+        result = re.findall(r'TIC (\d+)', ids)
+        if result:
+            tic_ids_lst.append(' '.join(result))
+        else:
+            tic_ids_lst.append('none')
+    tic_ids_lst = np.asarray(tic_ids_lst)
+    obs['tic_ids'] = tic_ids_lst[i_map2obstbl]
 
     # region search for observations
     name_template = 'n_{}_{}_obs'
@@ -108,9 +144,20 @@ def flag_duplicates(planet_catalog, hst_observations, match_dist=match_dist_defa
     if review_abstracts:
         cat['external_lya_transit'] = table.MaskedColumn(False, dtype=bool, length=n)
 
+    stowaway_infos = []
     for i, target in tqdm(list(enumerate(cat))):
-        matches = hst_observation_matches(target, obs_coords, match_dist)
+        matches = hst_observation_matches(target, obs['coords'], match_dist)
         matchobs = obs[matches]
+
+        if not np.ma.is_masked(target['tic_id']):
+            # id_matches = matchobs['tic_ids'] == target['tic_id']
+            id_matches = np.char.count(matchobs['tic_ids'], str(target['tic_id'])) > 0
+            if np.any(~id_matches):
+                stowaway_names = np.unique(matchobs['targname'][~id_matches]).tolist()
+                stowaway_info = f'{target['hostname']}: {', '.join(stowaway_names)}'
+                stowaway_infos.append(stowaway_info)
+                matchobs = matchobs[id_matches]
+
         inst, spec, wave = matchobs['config'], matchobs['spec'], matchobs['wave']
         # we could update this so that proper motions are taken into account as well, computing positions of the target
         # at the epoch of the initial matches and then narrowing the allowed distances to help avoid contaminants
@@ -133,6 +180,12 @@ def flag_duplicates(planet_catalog, hst_observations, match_dist=match_dist_defa
                                   | (cat['n_cos_g140l_obs'][i] > 0)
                                   | (cat['n_stis_g140l_obs'][i] > 0)
                                   | (cat['n_stis_e140m_obs'][i] > 0))
+
+    if stowaway_infos:
+        stowaway_warning = (f'\n\nSome stars matched HST observations within {match_dist} '
+                            f'that were for other targets. These were:\n\t')
+        stowaway_warning += '\n\t'.join(stowaway_infos)
+        warnings.warn(stowaway_warning)
 
 
 def add_abstracts(planet_catalog, hst_observations, abstract_dictonary, match_dist=match_dist_default,

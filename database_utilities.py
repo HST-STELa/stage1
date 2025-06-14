@@ -28,62 +28,18 @@ program_target_names = ("TRAPPIST-1, HD 136352, AU Mic, HD 63433, GJ 143, HD 953
                         "HD 219134, TOI-4307, LP 791-18, TOI-5521, TOI-244, TOI-6054, WASP-140, TOI-4451, TOI-4529, "
                         "TOI-5076, WASP-8, TOI-4364, TOI-715, TOI-1180, TOI-7052, TOI-3485, TOI-5531, TOI-553")
 program_target_names = program_target_names.split(', ')
+# name maps
+name_change_tbl = table.Table.read(paths.locked / 'stela_names.csv', comment='#')
+locked2archive_name_map = dict(zip(name_change_tbl['locked_name'].tolist(),
+                                   name_change_tbl['archive_name'].tolist()))
+archive2locked_name_map = {v: k for k, v in locked2archive_name_map.items()}
+
 program_target_names = [x.replace(' ', '').lower() for x in program_target_names]
-name_resolver = {
+
+exoarchive2stela_name_map = {
     'hd-85426': 'toi-1774',
     'hd-97507': 'toi-1203'
 }
-
-def rename_files(directory, overwrite=False):
-    directory = Path(directory)
-    paths = list(directory.glob('*.fits'))
-    if len(paths) == 0:
-        print('No fits files found.')
-
-    newpaths = []
-    unresolved_names = []
-    for path in paths:
-        target = get_target(path)
-        if target in ['wavehitm', 'waveline']:
-            target = find_visit_primary_target(path, directory)
-        if target not in program_target_names:
-            try:
-                target = name_resolver[target].lower()
-            except KeyError:
-                unresolved_names.append(target)
-                newpaths.append(None)
-                continue
-        newname = new_name(path, target)
-
-        newpath = directory / newname
-        if newpath != path:
-            newpaths.append(newpath)
-        else:
-            newpaths.append(None)
-
-    if unresolved_names:
-        print("These target names did not match to a program target. You will need to add an appropriate pair to"
-              "the database_utilities.name_resolver dictionary for their files to be renamed.")
-        for name in unresolved_names:
-            print(f'\t{name}')
-        print('')
-
-    print(f"You are about to execute this renaming of files in {directory}:")
-    for old, new in zip(paths, newpaths):
-        newname = 'Will not be renamed.' if new is None else new.name
-        print(f"\t{old.name} --> {newname}")
-    proceed = input('Note that files will be renamed, not copied. Proceed (y/n)?\n')
-
-    if proceed == 'y':
-        for old, new in zip(paths, newpaths):
-            if new is None:
-                continue
-            if new.exists():
-                if overwrite:
-                    os.remove(new)
-                else:
-                    raise IOError(f'{new.name} exists, set overwrite=True if desired.')
-            os.rename(old, new)
 
 
 def new_name(path, target='infer'):
@@ -179,3 +135,106 @@ def pathname_max(folder, glob_str):
     folder = Path(folder)
     paths = list(folder.glob(glob_str))
     return max(paths)
+
+
+hst2simbad_map = {
+    '-NU.02-LUP': 'nu.02 lup',
+    '-RHO-CNC': '55 Cnc',
+    '2M11301450+07351': '2MASS J11301450+0735180',
+    '2MASS-J23062928-': '2MASS J23062928-0502285',
+    'BD-17-588B': 'LTT 1445 A', # B is the planet in this case based on the observation abstracts
+    'DS-TUC-A': 'V* DS Tuc A',
+    'HD-209458B': 'hd 209458',
+    'HD-15082--WASP-3': 'hd 15082',
+    'HD-185603--KELT-': 'hd 185603',
+    'HD-201585--MASCA': 'hd 201585',
+    'LHS-1140-GAIA': 'lhs 1140',
+    'STKM-1-649-1': 'stkm 1-649',
+    'TRAPPIST-1': 'TRAPPIST-1',
+    'USCO-161014.75-1': 'K2-33',
+    'V-AU-MIC-1': 'AU MIC',
+    'V-AU-MIC2': 'AU MIC',
+    'V1298-TAU': 'V1298 TAU',
+    'BD-07-436A': 'WASP-77' # TIC ID is associated with the system not the star, so without this swap this one would get inaccurately filtered out
+}
+
+
+def groom_hst_names_for_simbad(hst_names):
+    simbad_names = []
+    for hn in hst_names:
+        if hn in hst2simbad_map:
+            sn = hst2simbad_map[hn]
+        elif hn.startswith('BD') or hn.startswith('CD'):
+            sn = re.sub(r'([BC])D', r'\1D ', hn)
+            sn = re.sub(r'(\d)[-D](\d)', r'\1 \2', sn)
+        elif hn.startswith('K2') or hn.startswith('HATS'):
+            sn = hn
+        elif hn.startswith('L-'):
+            sn = hn.replace('L-', 'L ')
+        elif hn.startswith('UCAC'):
+            sn = re.sub(r'(UCAC\d)-', r'\1 ', hn)
+        elif hn.startswith('V-'):
+            sn = hn.replace('V-', 'V* ')
+            sn = sn.replace('-', ' ')
+        else:
+            sn = re.sub(r'([A-Z])-([A-Z\d])', r'\1 \2', hn)
+            sn = sn.replace('-UPDATED', '')
+            sn = sn.replace('NEWCOORDS', '')
+            sn = sn.lower()
+        simbad_names.append(sn)
+    return simbad_names
+
+
+def hst2stela_names(hst_names, stela_merged_catalog)
+
+
+def rename_and_organize_files(source_dir, target_dir='same', overwrite=False):
+    src = Path(source_dir)
+    paths = list(src.glob('*.fits'))
+    if len(paths) == 0:
+        print('No fits files found.')
+
+    newpaths = []
+    unresolved_names = []
+    for path in paths:
+        target = get_target(path)
+        if target in ['wavehitm', 'waveline']:
+            target = find_visit_primary_target(path, src)
+        if target not in program_target_names:
+            try:
+                target = name_resolver[target].lower()
+            except KeyError:
+                unresolved_names.append(target)
+                newpaths.append(None)
+                continue
+        newname = new_name(path, target)
+
+        newpath = src / newname
+        if newpath != path:
+            newpaths.append(newpath)
+        else:
+            newpaths.append(None)
+
+    if unresolved_names:
+        print("These target names did not match to a program target. You will need to add an appropriate pair to"
+              "the database_utilities.name_resolver dictionary for their files to be renamed.")
+        for name in unresolved_names:
+            print(f'\t{name}')
+        print('')
+
+    print(f"You are about to execute this renaming of files in {src}:")
+    for old, new in zip(paths, newpaths):
+        newname = 'Will not be renamed.' if new is None else new.name
+        print(f"\t{old.name} --> {newname}")
+    proceed = input('Note that files will be renamed, not copied. Proceed (y/n)?\n')
+
+    if proceed == 'y':
+        for old, new in zip(paths, newpaths):
+            if new is None:
+                continue
+            if new.exists():
+                if overwrite:
+                    os.remove(new)
+                else:
+                    raise IOError(f'{new.name} exists, set overwrite=True if desired.')
+            os.rename(old, new)

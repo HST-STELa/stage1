@@ -16,9 +16,3 @@ i_footer, = np.nonzero(mdwarf_isr['Target'].values == 'EXAMPLES BELOW')
 mdwarf_isr = mdwarf_isr[1:i_footer[0]]
 mdwarf_isr = table.Table.from_pandas(mdwarf_isr)
 mdwarf_isr.add_index('Target')
-
-# name change map
-name_change_tbl = table.Table.read(paths.locked / 'name_change_map.csv', comment='#')
-locked2archive_name_map = dict(zip(name_change_tbl['locked_name'].tolist(),
-                                   name_change_tbl['archive_name'].tolist()))
-archive2locked_name_map = {v: k for k, v in locked2archive_name_map.items()}

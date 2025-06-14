@@ -21,7 +21,8 @@ print(', '.join(tids)) # can just copy and paste this into MAST form
 #%% check for stowaways
 pass
 
-# need to check and make sure there are no accidental matches in the position search, so better compare target names
+# need to check and make sure there are no accidental matches in the position search when the duplication matching,
+# was done, so better compare target names
 # I'll just put the list of targets from MAST into SIMBAD and get the TIC IDs, then compare
 
 mast_targets = """
