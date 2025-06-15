@@ -7,7 +7,6 @@ from astropy import table
 from astropy import coordinates as coord
 from astropy import units as u
 from tqdm import tqdm
-import xml.etree.ElementTree as ET
 
 import database_utilities as db
 from target_selection_tools import query
@@ -109,20 +108,8 @@ def flag_duplicates(planet_catalog, hst_observations, match_dist=match_dist_defa
     obs_names = obs['targname']
     unq_names, i_map2obstbl = np.unique(obs_names, return_inverse=True)
     simbad_names = db.groom_hst_names_for_simbad(unq_names)
-    simbad = query.get_simbad_from_names(simbad_names, extra_cols=['ids'])
-    if np.any(~simbad['simbad_match']):
-        names_not_found = unq_names[~simbad['simbad_match']]
-        raise ValueError(f'No SIMBAD matches for these names: \n\t{'\n\t'.join(names_not_found)}')
-    simbad.add_index('TYPED_ID')
-    tic_ids_lst = [] # some targets have multiple tic IDs, annoyingly, so need to account for that
-    for ids in simbad['IDS']:
-        result = re.findall(r'TIC (\d+)', ids)
-        if result:
-            tic_ids_lst.append(' '.join(result))
-        else:
-            tic_ids_lst.append('none')
-    tic_ids_lst = np.asarray(tic_ids_lst)
-    obs['tic_ids'] = tic_ids_lst[i_map2obstbl]
+    tic_ids = query.query_simbad_for_tic_ids(simbad_names)
+    obs['tic_ids'] = tic_ids[i_map2obstbl]
 
     # region search for observations
     name_template = 'n_{}_{}_obs'
@@ -272,17 +259,3 @@ def merge_verified(planet_catalog, verification_table):
         statuscol[unchecked] = 'unverified'
 
         planet_catalog[name] = statuscol
-
-
-def parse_visit_labels_from_xml_status(xml_path):
-    # parse the xml visit status export from STScI
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-
-    # Iterate over each visit element in the visit status, find the appropriate row, and update dates
-    labels = []
-    for visit in root.findall('visit'):
-        visit_label = visit.attrib.get('visit')
-        labels.append(visit_label)
-
-    return labels

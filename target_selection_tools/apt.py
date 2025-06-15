@@ -6,6 +6,7 @@ import numpy as np
 from scipy import interpolate
 
 import catalog_utilities as catutils
+import database_utilities as dbutils
 from lya_prediction_tools import etc
 from target_selection_tools import query
 from target_selection_tools import reference_tables as ref
@@ -211,18 +212,12 @@ def categorize_activity(catalog_with_mags):
     return active, justification, info
 
 
-def cat2apt_names(catalog_names):
-    names = np.char.upper(catalog_names)
-    names = np.char.replace(names, ' ', '')
-    return names
-
-
 def make_apt_target_table(catalog_with_mags, simbad):
     catalog = catalog_with_mags
     n = len(catalog)
 
     names = catalog['hostname'].astype(str).copy()
-    names = cat2apt_names(names)
+    names = dbutils.target_names_stela2hst(names)
     aptcat = table.Table([names], names=['Target Name'], masked=True)
 
     # APT sky coordinates

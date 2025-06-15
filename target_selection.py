@@ -17,6 +17,7 @@ from tqdm import tqdm
 import catalog_utilities
 import paths
 import catalog_utilities as catutils
+import progress_reviews.utilities
 from lya_prediction_tools import transit, lya
 from target_selection_tools import galex_query
 from target_selection_tools import duplication_checking as dc
@@ -954,9 +955,10 @@ catutils.flag_cut(cat, suspect_b, suspect_b_str)
 min_logg = 3.5
 max_logg = 5.5
 logg = cat['st_logg'].filled(4)
-spTs = cat['st_spectype'].filled('V').astype('str')
-off_MS = ((logg > max_logg) | (logg < min_logg)
-          | (np.char.count(spTs, 'I') > 0))
+# spTs = cat['st_spectype'].filled('V').astype('str')
+# off_MS = ((logg > max_logg) | (logg < min_logg)
+#           | (np.char.count(spTs, 'I') > 0))
+off_MS = (logg > max_logg) | (logg < min_logg)
 off_MS_str = (f'Cut because star assumed not on main sequence due to logg outside of [{min_logg}, {max_logg}] range or'
               f'SpT had an "I" in it.')
 catutils.flag_cut(cat, off_MS, off_MS_str)
@@ -1464,7 +1466,7 @@ else:
     # this is a mid-cycle update, in which case we need to track what visits have already been cemented
     # and what lemons have been identified
     latest_status_path = dbutils.pathname_max(paths.status_snapshots, 'HST-17804-visit-status*.xml')
-    labels_in_phase2 = dc.parse_visit_labels_from_xml_status(latest_status_path)
+    labels_in_phase2 = progress_reviews.utilities.parse_visit_labels_from_xml_status(latest_status_path)
 
     # eliminate redo orbits for failed observations
     # these can be identified by the fact that they start with a number
@@ -1480,36 +1482,34 @@ else:
     progress_tbl.add_index('Target')
     drop = progress_tbl['Pass to\nStage 1b?'] == False
     lemons = progress_tbl['Target'][drop]
-    lemons = [ref.locked2archive_name_map.get(name, name) for name in lemons] # update to the latest archive names
+    stela_names = ref.stela_names.copy()
+    stela_names.add_index('hostname')
+    lemon_ids = stela_names.loc[lemons]['tic_id'] # get the tic ids since some names will have changed
 
     # make sure every lemon has a match
-    assert np.all(np.in1d(lemons, cat['hostname']))
+    assert np.all(np.in1d(lemon_ids, cat['tic_id']))
 
     # load the visit label table
     labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
-    labeltbl.add_index('target')
 
     # list targets that are in the phase 2
     lya_planned = np.in1d(labeltbl['base'], labels_in_phase2)
     fuv_planned = np.in1d(labeltbl['pair'], labels_in_phase2)
 
-    # update to the latest archive names
-    _targnames = [ref.locked2archive_name_map.get(name, name) for name in labeltbl['target']]
-
     # make a table for accounting
-    plantbl = table.Table(data=(_targnames, lya_planned, fuv_planned),
-                          names='name lya fuv'.split())
+    plantbl = table.Table(data=(labeltbl['target'].copy(), labeltbl['tic_id'].copy(), lya_planned, fuv_planned),
+                          names='name tic_id lya fuv'.split())
     available_planned = lya_planned | fuv_planned
     plantbl = plantbl[available_planned]
     planned_targets = plantbl['name'].tolist()
-    plantbl.add_index('name')
+    plantbl.add_index('tic_id')
 
     # make sure all targets in phase 2 have a match
-    assert np.all(np.in1d(plantbl['name'], cat['hostname']))
+    assert np.all(np.in1d(plantbl['tic_id'], cat['tic_id']))
 
     # count how many freed-up orbits there are that we can allocate
     plantbl['lemon'] = False
-    lemons_in_plan = [l for l in lemons if l in plantbl['name']]
+    lemons_in_plan = lemon_ids[np.in1d(lemon_ids, plantbl['tic_id'])]
     ilmn = plantbl.loc_indices[lemons_in_plan]
     plantbl['lemon'][ilmn] = True
     available_planned = sum(plantbl['lya']) + sum(plantbl['fuv'] & ~plantbl['lemon'])

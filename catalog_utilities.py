@@ -132,7 +132,7 @@ def match_by_tic_id(catalog0, catalog1):
 
 
 def convert_simbad_coords(simbad):
-    radec = coord.SkyCoord(simbad['RA'], simbad['DEC'], unit=('hourangle', 'deg'))
+    radec = coord.SkyCoord(simbad['ra'], simbad['dec'], unit=('hourangle', 'deg'))
     return radec.ra, radec.dec
 
 

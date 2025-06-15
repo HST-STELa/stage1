@@ -4,7 +4,6 @@ from datetime import datetime
 import re
 
 import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
 import mpld3
 from mpld3 import plugins
@@ -23,13 +22,11 @@ from target_selection_tools import apt
 from lya_prediction_tools import lya, ism
 
 #%% paths and preloads
-data_folder = Path('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis')
+data_folder = Path('/Users/parke/Google Drive/Research/STELa/data/targets')
 
 target_table = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
 target_table = catutils.planets2hosts(target_table)
-aptnames = apt.cat2apt_names(target_table['hostname'].tolist())
-target_table['aptname'] = aptnames
-target_table.add_index('aptname')
+target_table.add_index('tic_id')
 
 # load up the latest export of the obs progress table
 path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
@@ -71,6 +68,16 @@ mask = (cat['stage1'].filled(False) # either selected for stage1
 roster = cat[mask]
 roster.sort('stage1_rank')
 
+# sum the number of transiting and gaseous planets
+unq_tids, i_inverse = np.unique(roster['tic_id'], return_inverse=True)
+roster.add_index('tic_id')
+roster['tran_flag'] = roster['tran_flag'].filled(0)
+roster['flag_gaseous'] = roster['flag_gaseous'].filled(0)
+n_tnst = [np.sum(roster.loc[tid]['tran_flag']) for tid in unq_tids]
+n_tnst_gas = [np.sum(roster.loc[tid]['flag_gaseous']) for tid in unq_tids]
+roster['n_tnst'] = np.array(n_tnst)[i_inverse]
+roster['n_tnst_gas'] = np.array(n_tnst_gas)[i_inverse]
+
 # pick the highest transit SNR of planets in system
 roster_picked_transit = roster.copy()
 catutils.pick_planet_parameters(roster_picked_transit, 'transit_snr_nominal', np.max, 'transit_snr_nominal')
@@ -87,7 +94,9 @@ pass
 
 target_info['Global\nRank'] = roster_hosts['stage1_rank']
 target_info['Target'] = roster_hosts['hostname']
-target_info['No. of\nPlanets'] = roster_hosts['sy_pnum']
+target_info['No.\nPlanets'] = roster_hosts['sy_pnum']
+target_info['No. Tnst\nPlanets'] = roster_hosts['n_tnst']
+target_info['No. Tnst\nGaseous'] = roster_hosts['n_tnst_gas']
 target_info["Nominal Lya\nTransit SNR"] = roster_hosts['transit_snr_nominal']
 target_info["Optimistic Lya\nTransit SNR"] = roster_hosts['transit_snr_optimistic']
 
@@ -102,6 +111,7 @@ target_info['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
 target_info['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
 target_info['Status'][selected_mask & ~lya_obs_mask] = '1a target'
 target_info['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
+target_info['Status'][~selected_mask & ~backup_mask & lya_obs_mask] = 'archival lya'
 target_info['External\nLya'] = roster_hosts['external_lya']
 target_info['External\nFUV'] = roster_hosts['external_fuv']
 
@@ -145,7 +155,7 @@ target_info['Optimistic\nLya Flux'] = lya_fluxes_earth[1]
 prog_update = table.join(prog_update, target_info, keys='TIC ID', join_type='outer')
 
 
-#%% parse STScI plan dates
+#%% setup for plan date updates
 pass
 
 # parse the xml visit status export from STScI
@@ -172,6 +182,8 @@ for name in cols_to_update:
     prog_update[name2] = ''
     prog_update[name2] = prog_update[name2].astype('object')
 
+#%%  parse xml to update plan dates
+
 # Iterate over each visit element in the visit status, find the appropriate row, and update dates
 # this can't be done with a standard table join given a row can be associated with multiple visits if there are redos
 records = []
@@ -179,6 +191,8 @@ prog_update[f'Lya Visit\nin Phase II_2'] = False
 prog_update[f'FUV Visit\nin Phase II_2'] = False
 for visit in root.findall('visit'):
     visit_label = visit.attrib.get('visit')
+    if visit_label in ['BH', 'OH']: # kludge FIXME delete after HD 118 is back in
+        continue
     lya_mask = np.char.count(prog_update['Lya Visit\nLabels_2'], visit_label)
     fuv_mask = np.char.count(prog_update['FUV Visit\nLabels_2'], visit_label)
     if sum(lya_mask) > 0:

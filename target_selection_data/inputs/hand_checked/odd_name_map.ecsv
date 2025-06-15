@@ -1,0 +1,37 @@
+# %ECSV 1.0
+# ---
+# datatype:
+# - {name: odd, datatype: string}
+# - {name: simbad, datatype: string}
+# - {name: notes, datatype: string, subtype: json}
+# schema: astropy-2.0
+odd simbad notes
+-NU.02-LUP "nu.02 lup" 0
+-RHO-CNC "55 Cnc" 0
+2M11301450+07351 "2MASS J11301450+0735180" 0
+2M11301450+0735180 "2MASS J11301450+0735180" 0
+2MASS-J23062928- "2MASS J23062928-0502285" 0
+2MASS-J23062928-0502285-COPY "2MASS J23062928-0502285" 0
+AUMIC "AU MIC" 0
+BD-07-436A WASP-77 """TIC ID is associated with the system not the star, so without this swap this one would get inaccurately filtered out"""
+BD-17-588B "LTT 1445 A" """B is the planet in this case based on the observation abstracts"""
+DSTUCA "V* DS Tuc A" 0
+DS-TUC-A "V* DS Tuc A" 0
+HD-209458B "hd 209458" 0
+HD-15082--WASP-3 "hd 15082" 0
+HD-185603--KELT- "hd 185603" 0
+HD-201585--MASCA "hd 201585" 0
+LHS-1140-GAIA "lhs 1140" 0
+STKM-1-649-1 "stkm 1-649" 0
+TRAPPIST-1 TRAPPIST-1 0
+TOI-2194 "tic 271478281" 0
+TOI-4307 "tic 141186075" 0
+TOI-4576 "tic 157667414" 0
+TOI-4632 "tic 336075472" 0
+TOI-5788 "tic 42883782" 0
+TOI-6078 "tic 119973835" 0
+USCO-161014.75-1 K2-33 0
+V-AU-MIC-1 "AU MIC" 0
+V-AU-MIC2 "AU MIC" 0
+V1298-TAU "V1298 TAU" 0
+WASP-77A WASP-77 0
