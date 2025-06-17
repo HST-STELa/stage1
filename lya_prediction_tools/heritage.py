@@ -214,9 +214,9 @@ def transit_snr_proposal(cat, case='nominal'):
         err[np.isnan(err)] = 0
 
         mask = (v > v_integrate[0]) & (v < v_integrate[1])
-        Fout = np.trapz(observed[mask], v[mask])
-        Fin = np.trapz(transit[mask], v[mask])
-        Eout = np.sqrt(np.trapz(err[mask]**2, v[mask]))
+        Fout = np.trapezoid(observed[mask], v[mask])
+        Fin = np.trapezoid(transit[mask], v[mask])
+        Eout = np.sqrt(np.trapezoid(err[mask]**2, v[mask]))
         dF = Fout - Fin
         dE = np.sqrt(2)*Eout
         SNR = dF/dE

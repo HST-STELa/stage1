@@ -23,18 +23,20 @@ import numpy as np
 import database_utilities as dbutils
 import utilities as utils
 from data_reduction_tools import stis_extraction as stx
+import paths
 
 
 #%% set the targets you want to extract, locate tag files
 # you will need to be in the directory for the files
 
-os.chdir('/Users/parke/Google Drive/Research/STELa/data/uv_observations/hst-stis')
+os.chdir(paths.data)
 # targets = ['hd17156', 'k2-9', 'toi-1434', 'toi-1696', 'wolf503', 'hd207496']
 # targets = ['toi-1696']
-targets = 'any'
+targets = ('hd207496 hd5278 toi-1224 toi-1434 toi-2015 toi-2079 toi-2134 toi-2194 toi-2285 '
+           'toi-4438 toi-4576 toi-6078 wolf503').split()
+# targets = 'any'
 
-# obs_filters = dict(targets=targets, after='2025-06-01')
-obs_filters = dict(targets=targets, before='2023-01-01')
+obs_filters = dict(targets=targets)
 
 tagfiles = dbutils.find_data_files('tag', **obs_filters)
 print("Spectra to be extracted from:")
@@ -154,10 +156,15 @@ for ff in fltfiles:
     plt.imshow(np.cbrt(img), aspect='auto')
 
     fx = dbutils.modify_file_label(ff, 'x1d')
-    hx = fits.open(fx)
-    y = hx[1].data['extrlocy']
-    x = np.arange(img.shape[1]) + 0.5
-    iln, = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')
+    if fx.exists():
+        hx = fits.open(fx)
+        y = hx[1].data['extrlocy']
+        x = np.arange(img.shape[1]) + 0.5
+        iln, = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')
+    else:
+        plt.annotate('calstis cross correlation to locate spectrum failed', xy=(0.05,0.99),
+                     xycoords='axes fraction', va='top', color='w')
+        print('Calstis did not create an x1d for this file. Maybe run this cell again to refine trace location.')
     
     y_predicted = stx.predicted_trace_location(h)
     pln, = plt.plot(512, y_predicted, 'y+', ms=10, label='predicted location')
@@ -166,19 +173,24 @@ for ff in fltfiles:
     xclick, yclick = xy[-1]
 
     if xclick < 100:
-        a2 = y_predicted
-        dy = hx[1].data['a2center'] - a2
+        xclick, yclick = hx[1].data['a2center'], y_predicted
         plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
-    else:
+    if fx.exists():
         # find offset to nearest trace
         yt = np.array([np.interp(xclick, x, yy) for yy in y])
         dist = np.abs(yt - yclick)
         imin = np.argmin(dist)
         dy = yclick - yt[imin]
         a2 = hx[1].data['a2center'] + dy
+    else:
+        a2 = yclick
 
-    nln, = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')
-    plt.legend(handles=(iln, pln, nln))
+    if fx.exists():
+        nln, = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')
+        plt.legend(handles=(iln, pln, nln))
+    else:
+        nln = plt.axhline(a2, color='w', alpha=0.5, label='manual selection')
+        plt.legend(handles=(pln, nln))
 
     locs.append(a2)
     h.close()
@@ -210,7 +222,8 @@ if _ == 'y':
 
 #%% extract traces without background
 
-fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', **obs_filters)
+# fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', **obs_filters)
+fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', targets=['hd5278'])
 
 # remove existing files
 labels = "x1dbk1 x1dtrace x1dbk2".split()

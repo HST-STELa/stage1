@@ -144,7 +144,7 @@ for lbl, pcntl in sets:
     n_H = ism.ism_n_H_percentile(50 - pcntl)
     lya_factor = lya.lya_factor_percentile(50 + pcntl)
     observed = lya.lya_at_earth_auto(roster_hosts, n_H, lya_factor=lya_factor, **params)
-    _fluxes = np.trapz(observed, wgrid[None, :], axis=1)
+    _fluxes = np.trapezoid(observed, wgrid[None, :], axis=1)
     lya_fluxes_earth.append(_fluxes)
 target_info['Nominal\nLya Flux'] = lya_fluxes_earth[0]
 target_info['Optimistic\nLya Flux'] = lya_fluxes_earth[1]
@@ -460,7 +460,7 @@ for xf in x1dfiles:
         # this neglects instrument braodening plus the line profile will be wrong, but it's close enough
         int_profile = profile.copy()
         int_profile[~int_mask_mod] = 0
-        predicted_flux = np.trapz(int_profile, lya.wgrid_std)
+        predicted_flux = np.trapezoid(int_profile, lya.wgrid_std)
         predicted_fluxes.append(predicted_flux.to_value('erg s-1 cm-2'))
 
     C = predicted_fluxes[1]

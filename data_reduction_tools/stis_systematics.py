@@ -339,7 +339,7 @@ class AirglowModel(object):
 import paths
 base_name = 'toi-1696.hst-stis-g140m.2025-04-01T035830.ofhjal010_x1d{}.fits'
 suffixes = ('bk1', 'bk2', 'trace')
-three_trace_files = [paths.observations / 'hst-stis' /  base_name.format(suffix) for suffix in suffixes]
+three_trace_files = [paths.data / 'hst-stis' / base_name.format(suffix) for suffix in suffixes]
 
 def test_airglow_models(three_trace_files):
     import emcee

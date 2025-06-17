@@ -70,7 +70,7 @@ for lbl, pcntl in sets:
     n_H = ism.ism_n_H_percentile(50 - pcntl)
     lya_factor = lya.lya_factor_percentile(50 + pcntl)
     observed = lya.lya_at_earth_auto(roster_hosts, n_H, lya_factor=lya_factor, **params)
-    _fluxes = np.trapz(observed, wgrid[None, :], axis=1)
+    _fluxes = np.trapezoid(observed, wgrid[None, :], axis=1)
     lya_fluxes_earth.append(_fluxes)
 export['Nominal Lya Flux'] = lya_fluxes_earth[0]
 export['Optimistic Lya Flux'] = lya_fluxes_earth[1]

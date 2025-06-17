@@ -16,6 +16,7 @@ hst2simbad_map = table.Table.read(paths.checked / 'odd_name_map.ecsv')
 hst2simbad_map.add_index('odd')
 stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
 stela_name_tbl.add_index('tic_id')
+stela_name_tbl.add_index('hostname')
 
 
 def resolve_stela_name_w_simbad(names_for_simbad):
@@ -96,12 +97,20 @@ def target_names_stela2hst(stela_names):
     return names
 
 
+def target_names_stela2tic(stela_names):
+    return stela_name_tbl.loc['hostname', stela_names]['tic_id']
+
+
+def target_names_tic2stela(tic_ids):
+    return stela_name_tbl.loc['tic_id', tic_ids]['hostname']
+
+
 def target_names_stela2file(stela_names):
     names = target_names_stela2hst(stela_names)
     return np.char.lower(names)
 
 
-def filename2stela(path, target='from_header'):
+def hst_filename2stela(path, target='from_header'):
     h = fits.open(path)
     h0, h1 = h[0].header, h[1].header
     if h0['telescop'] != 'HST':
@@ -109,17 +118,25 @@ def filename2stela(path, target='from_header'):
     if target in ['from_header', 'infer']: # keep 'infer' for backwards compatability
         target = h0['targname'].lower()
     instrument = h0['instrume'].lower()
-    grating = h0['opt_elem'].lower()
+    config = ['hst', instrument]
+    if 'opt_elem' in h0:
+        config.append(h0['opt_elem'].lower())
+    config = '-'.join(config)
     pid = h0['proposid']
-    if instrument == 'cos':
-        date = h1['date-obs']
-        time = h1['time-obs'].replace(':', '')
-    if instrument == 'stis':
-        date = h0['tdateobs']
-        time = h0['ttimeobs'].replace(':', '')
-    time = time[:6]
-    suffix, = re.findall(r'\w{9}_\w+\.[a-z]+', h0['filename'])
-    name = (f"{target}.hst-{instrument}-{grating}.{date}T{time}.pgm{pid}.{suffix}")
+    try:
+        if instrument == 'cos':
+            date = h1['date-obs']
+            time = h1['time-obs']
+        if instrument == 'stis':
+            date = h0['tdateobs']
+            time = h0['ttimeobs']
+        time = time.replace(':', '')
+        time = time[:6]
+        datetime = f'{date}T{time}'
+    except:
+        datetime = 'no-time'
+    suffix, = re.findall(r'\w{9}_\w+\.[a-z]+$', path.name)
+    name = (f"{target}.{config}.{datetime}.pgm{pid}.{suffix}")
     return name
 
 
@@ -127,12 +144,13 @@ def parse_filename(path):
     path = Path(path)
     name = path.name
     pieces = name.split('.')[:-1]
-    stsci_name = pieces[-1].split('_')
+    id, ftype = re.search(r'(\w{9})_(\w+_?[ab]?)', pieces[-1]).groups()
     parse_dict = dict(target=pieces[0],
                       config=pieces[1],
                       datetime=pieces[2],
-                      id=stsci_name[0],
-                      type=stsci_name[-1])
+                      program=pieces[3],
+                      id=id,
+                      type=ftype)
     return parse_dict
 
 
@@ -168,7 +186,7 @@ def find_data_files(extension='*', targets='any', instruments='any', after='0000
     ['hst-stis-g140m', 'hst_stis-e140m']
     """
     directory = Path(directory)
-    files = list(directory.glob(f'*_{extension}.fits'))
+    files = list(directory.rglob(f'*_{extension}.fits'))
 
     if targets != 'any':
         if utils.is_list_like(targets):
@@ -192,13 +210,24 @@ def find_data_files(extension='*', targets='any', instruments='any', after='0000
     return files
 
 
+def find_stela_files_from_hst_filenames(hst_filenames, directory='.'):
+    directory = Path(directory)
+    if len(hst_filenames[0]) == 1:
+        hst_filenames = hst_filenames,
+    files = [list(directory.rglob(f'*{f}')) for f in hst_filenames]
+    files = sum(files, [])
+    assert len(files) == len(hst_filenames)
+    return files
+
+
 def pathname_max(folder, glob_str):
     folder = Path(folder)
     paths = list(folder.glob(glob_str))
     return max(paths)
 
 
-def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_stela_name=False, overwrite=False):
+def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_stela_name=False, overwrite=False,
+                                  validate_names=True):
     # nicknames for directories
     src = Path(source_dir)
     if target_dir == 'source_dir':
@@ -210,6 +239,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
     fitspaths = sorted(fitspaths)
     if len(fitspaths) == 0:
         print('No fits files found.')
+        return
 
     # get the STELa-HST names for all targets
     # need to do this first because resolving names requires a SIMBAD query that I should only do once
@@ -218,12 +248,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
     for path in fitspaths:
         hdr = fits.getheader(path)
         targname = hdr['targname']
-        mode = hdr['obsmode'] # both STIS and COS have this kwd
-        mode += hdr['exptype'] if 'exptype' in hdr else '' # only COS has this kwd, and it is where ACQ is specified
-        exptype = fits.getval(path, 'exptype')
-        # these files might are part of the observations but didn't target the science target
-        if targname in ['WAVEHITM', 'WAVELINE'] : # FIXME remove
-        # if (targname in ['WAVEHITM', 'WAVELINE']) or ('ACQ' in exptype):
+        if targname in ['WAVEHITM', 'WAVELINE'] :
             targname = find_visit_primary_target(path)
         obs_names.append(targname)
     obs_names = np.asarray(obs_names)
@@ -237,20 +262,34 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
         stela_hst_names = np.char.lower(obs_names)
 
     # check that all names are what we want, throw error if not
-    all_stela_file_names = target_names_stela2file(stela_name_tbl['hostname'])
-    valid = np.in1d(stela_hst_names, all_stela_file_names)
-    if np.any(~valid):
-        temp_tbl = table.Table((obs_names[~valid], stela_hst_names[~valid]),
-                               names='name_in_file stela_name_guess'.split())
-        msg = "These names are in the STELa database. Something is wrong and you will have to dig, sorry.\n"
-        msg += '\n\t'.join(temp_tbl.pformat(-1,-1))
-        raise ValueError(msg)
+    if validate_names:
+        all_stela_file_names = target_names_stela2file(stela_name_tbl['hostname'])
+        valid = np.in1d(stela_hst_names, all_stela_file_names)
+        if np.any(~valid):
+            temp_tbl = table.Table((obs_names[~valid], stela_hst_names[~valid]),
+                                   names='name_in_file stela_name_guess'.split())
+            msg = "These names are not in the STELa database. Something is wrong and you will have to dig, sorry.\n"
+            msg += '\n\t'.join(temp_tbl.pformat(-1,-1))
+            raise ValueError(msg)
 
-    # generate new file paths
-    newpaths = []
+    # generate new file names
+    newnames = []
     for path, targname in zip(fitspaths, stela_hst_names):
-        newfilename = filename2stela(path, targname)
-        newpath = tgt / targname / newfilename
+        newname = hst_filename2stela(path, targname)
+        newnames.append(newname)
+
+    # for some files, replace path with the equivalent for the associated tag or raw file
+    replace_types = ['spt']
+    for i, name in enumerate(newnames):
+        id, suffix = re.search(r'(\w{9})_([_\w]+)\.fits', name).groups()
+        if suffix in replace_types:
+            pattern = r'_(tag|raw|rawtag_a|rawacq)\.fits'
+            alternate_name, = filter(lambda name: len(re.findall(id + pattern, name)) > 0, newnames)
+            newnames[i] = re.sub(pattern, f'_{suffix}.fits', alternate_name)
+
+    newpaths = []
+    for newname, targname in zip(newnames, stela_hst_names):
+        newpath = tgt / targname / newname
         if newpath != path:
             newpaths.append(newpath)
         else:
@@ -279,3 +318,17 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
             if not new.parent.exists():
                 os.mkdir(new.parent)
             os.rename(old, new)
+
+
+def delete_files_by_hst_id(ids, directory='.'):
+    directory = Path(directory)
+    files = [list(directory.rglob(f'*{id}*')) for id in ids]
+    files = sum(files, [])
+    files = np.unique(files)
+    msg = f'Proceed with the permanent deletion of these files? (y/n)'
+    for file in files:
+        msg += f'\t\n{file.name}'
+    answer = input(msg)
+    if answer == 'y':
+        for file in files:
+            os.remove(file)

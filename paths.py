@@ -1,6 +1,6 @@
 from pathlib import Path
 
-observations = Path('/Users/parke/Google Drive/Research/STELa/data/uv_observations')
+data = Path('/Users/parke/Google Drive/Research/STELa/data/targets')
 
 selection_inputs = Path('target_selection_data/inputs')
 selection_intermediates = Path('target_selection_data/intermediates')
@@ -14,7 +14,7 @@ reference_spectra = selection_inputs / 'reference_uv_spectra' / 'lya_added_intri
 etc = selection_inputs / 'etc_grids'
 other = selection_inputs / 'other'
 requested = selection_inputs / 'requested_targets'
-hst_observations = selection_inputs / 'hst_observations'
+hst_observations = selection_inputs / 'hst_observations' # should probably rename this "hst_database" or something
 locked = selection_inputs / 'locked_choices'
 
 reports = selection_outputs / 'target_request_reports'
