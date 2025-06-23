@@ -3,7 +3,6 @@ import shutil
 from pathlib import Path
 
 import numpy as np
-from astropy import table
 
 import catalog_utilities as catutils
 import database_utilities as dbutils
@@ -11,11 +10,14 @@ import paths
 
 #%% settings
 
-eval_no = 1
+eval_no = 1.1
 
 temp_dir = Path(f'/Users/parke/Downloads/stela_stage2_eval_pkg{eval_no}')
 if not temp_dir.exists():
     os.mkdir(temp_dir)
+temp_dir_lya = Path(f'/Users/parke/Downloads/stela_stage2_eval_pkg{eval_no}/lya_data')
+if not temp_dir_lya.exists():
+    os.mkdir(temp_dir_lya)
 
 
 #%% load up the latest export of the obs progress table
@@ -40,7 +42,7 @@ for name in targets_fnames:
     elif len(coadd) > 1:
         raise NotImplementedError
     else:
-        for suffix in ('x1dtrace', 'x1dbk1', 'x1dbk2'):
+        for suffix in ('x1dtrace', 'x1dbk1', 'x1dbk2', 'x1d'):
             file = list(targdir.glob(f'*stis-?140m*{suffix}.fits'))
             if len(file) != 1:
                 if (suffix == 'x1dtrace') or ('g140m' in anyx1d.name):
