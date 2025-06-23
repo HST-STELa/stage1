@@ -56,7 +56,7 @@ toggle_save_difftbl = True
 toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
-toggle_remake_filtered_hst_archive = True  # only needed if archive file redownloaded
+toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
 
 diff_label = 'target-backfill-2025-06'
 toggle_checkpoint_saves = True
@@ -403,7 +403,7 @@ alltargets = []
 def concatenate(targets):
     alltargets.extend(targets.tolist())
 _ = catutils.requested_target_lists_loop(concatenate)
-extra_cols = 'ids distance rv_value parallax'.split()
+extra_cols = 'ids rvz_radvel plx_value'.split()
 simbad = query.get_simbad_from_names(alltargets, extra_cols=extra_cols)
 # it seems like you should be able to add "measurements" to the query, but this returns an error
 # maybe try again in the future bc this could be a good way to get Teff
@@ -427,9 +427,9 @@ def check_and_mark(targets):
     flag_col_name = f'requested_{targets.name}'
     catutils.add_filled_masked_column(cat, flag_col_name, 0, dtype=int) # column to identify targets (and their order) present in given list
     tic_ids = []
-    for ids in simbad['IDS']:
+    for ids in simbad['ids']:
         # some targets have multiple tic ids in simbad, so gotta be careful
-        result = re.findall(r'\bTIC (\d+)\|', ids)
+        result = re.findall(r'\bTIC (\d+)', ids)
         host_tic_ids = np.array(list(map(int, result)))
         mask = np.isin(host_tic_ids, cat['tic_id'])
         if sum(mask) == 0:
@@ -453,9 +453,9 @@ def check_and_mark(targets):
             cat['ra'][-1] = simbad['ra'][i_simbad]
             cat['dec'][-1] = simbad['dec'][i_simbad]
             cat['tic_id'][-1] = simbad['tic_id'][i_simbad]
-            cat['st_radv'][-1] = simbad['RV_VALUE'][i_simbad]
-            cat['sy_dist'][-1] = simbad['Distance_distance'][i_simbad]
-            cat['sy_plx'][-1] = simbad['PLX_VALUE'][i_simbad]
+            cat['st_radv'][-1] = simbad['rvz_radvel'][i_simbad]
+            cat['sy_plx'][-1] = simbad['plx_value'][i_simbad]
+            cat['sy_dist'][-1] = (1000/simbad['plx_value'][i_simbad])
             needed_cols = set(columns.essential) - set(added_cols)
             print(f'{targets.name} request {targets[i]} not matched. '
                   f'Added {added_cols} from Simbad. '
@@ -612,7 +612,7 @@ _ = catutils.scrub_indices(cat) # these are slowing down table operations. I'll 
 
 with warnings.catch_warnings():
     warnings.simplefilter('ignore', query.BlankResponseWarning)
-    extra_cols = ['rv_value', 'flux(J)']
+    extra_cols = ['rvz_radvel', 'J']
     simbad = query.get_simbad_from_tic_id(cat['tic_id'], extra_cols=extra_cols)
     assert len(simbad) == len(cat)
     print(f"{np.sum(simbad['simbad_match'])}/{len(cat)} targets matched by TIC ID. "
@@ -632,7 +632,7 @@ with warnings.catch_warnings():
           f"{np.sum(~simbad['simbad_match'])} unmatched.")
 
 # keep only the columns we want to transfer later
-keepcols = ['MAIN_ID', 'RV_VALUE', 'FLUX_J', 'simbad_match']
+keepcols = ['main_id', 'rvz_radvel', 'J', 'simbad_match']
 simbad = simbad[keepcols]
 
 
@@ -664,8 +664,8 @@ match_cut_3d = 0.01
 good_match = dist_frac < match_cut_3d
 print(f"{np.sum(good_match)} additional targets matched based on 3D positions with {match_cut_3d*100}% tolerance.")
 i_transfer = i_query[good_match]
-simbad['MAIN_ID'][i_transfer] = simbad_3d['main_id'][good_match]
-simbad['RV_VALUE'][i_transfer] = simbad_3d['rvz_radvel'][good_match]
+simbad['main_id'][i_transfer] = simbad_3d['main_id'][good_match]
+simbad['rvz_radvel'][i_transfer] = simbad_3d['rvz_radvel'][good_match]
 simbad['simbad_match'][i_transfer] = True
 
 print(f"{np.sum(simbad['simbad_match'])}/{len(cat)} targets matched by identifier or 3D position. "
@@ -677,14 +677,14 @@ print(f"{np.sum(simbad['simbad_match'])}/{len(cat)} targets matched by identifie
 We will want ot use the simbad id for future queries. 
 """
 
-transfer_rv = cat['st_radv'].mask & ~simbad['RV_VALUE'].mask & np.isfinite(simbad['RV_VALUE'].filled(0))
-cat['st_radv'][transfer_rv] = simbad['RV_VALUE'][transfer_rv]
+transfer_rv = cat['st_radv'].mask & ~simbad['rvz_radvel'].mask & np.isfinite(simbad['rvz_radvel'].filled(0))
+cat['st_radv'][transfer_rv] = simbad['rvz_radvel'][transfer_rv]
 
-transfer_jmag = cat['sy_jmag'].mask & np.isfinite(simbad['FLUX_J'].filled(nan))
-cat['sy_jmag'][transfer_jmag] = simbad['FLUX_J'][transfer_jmag]
+transfer_jmag = cat['sy_jmag'].mask & np.isfinite(simbad['J'].filled(nan))
+cat['sy_jmag'][transfer_jmag] = simbad['J'][transfer_jmag]
 
 cat['simbad_match'] = simbad['simbad_match']
-cat['simbad_id'] = simbad['MAIN_ID']
+cat['simbad_id'] = simbad['main_id']
 
 assert np.all(np.isfinite(cat['st_radv'].filled(0)))
 
@@ -1250,6 +1250,8 @@ basis of our target selection.
 params = dict(expt_out=3500, expt_in=6000, default_rv=default_sys_rv, transit_range=assumed_transit_range, integrate_range='best', show_progress=True)
 SNR_optimistic = transit.blue_wing_occulting_tail_SNR(cat, n_H_percentile=16, lya_percentile=84, **params)
 assert np.all(SNR_optimistic > 0)
+# if this fails, check for valid values of sy_dist, Flya_at_1AU, pl_bmasse, st_rad
+# last failure happened becuase a community target didn't get a sy_dist
 cat['transit_snr_optimistic'] = table.MaskedColumn(SNR_optimistic)
 
 SNR_nominal = transit.blue_wing_occulting_tail_SNR(cat, n_H_percentile=50, lya_percentile=50, **params)
@@ -1953,10 +1955,11 @@ last_base_label = max(existing_base_labels)
 
 targets_selected = catutils.planets2hosts(selected)
 for row in targets_selected:
-    name = row['hostname']
-    if name not in labeltbl['target']:
+    tic_id = row['tic_id']
+    if tic_id not in labeltbl['tic_id']:
+        name = dbutils.target_names_tic2stela(tic_id)
         last_base_label, pair = last_base_label.next_pair()
-        new_row = [name, str(last_base_label), str(pair), new_batch_no, '', '']
+        new_row = [name, str(last_base_label), str(pair), new_batch_no, '', '', tic_id]
         labeltbl.add_row(new_row)
 
 catutils.set_index(labeltbl, 'target')
@@ -1974,7 +1977,7 @@ if toggle_save_outputs:
     apt_visit_info.write(paths.selection_outputs / 'info_for_apt_entry.csv', overwrite=True)
 
     catutils.set_index(apt_target_table, 'Target Name')
-    _labeltbl_apt_names = apt.cat2apt_names(labeltbl['target'])
+    _labeltbl_apt_names = dbutils.target_names_tic2stela(labeltbl['tic_id'])
     in_targets = np.isin(_labeltbl_apt_names, apt_target_table['Target Name'])
     names_in_targets = _labeltbl_apt_names[in_targets]
     apt_visit_info = apt_target_table.loc[names_in_targets]
@@ -2020,8 +2023,6 @@ for grating in ['g140m', 'g140l', 'e140m']:
 
 
 #%% table for ETC input
-
-
 active, _, _ = apt.categorize_activity(targets)
 targets['variable'] = active
 
@@ -2074,7 +2075,7 @@ spt_letters, spt_numbers = map(np.array, (spt_letters, spt_numbers))
 
 # identify targets with catalog or simbad type that is concerningly close to an ISR edge
 spt_from_lit = spt_flags <= 1
-spt_questionable = (simbad['SP_QUAL'].filled('F') >= 'C') | (simbad['SP_QUAL'].filled('') == '')
+spt_questionable = (simbad['sp_qual'].filled('F') >= 'C') | (simbad['sp_qual'].filled('') == '')
 KM_edge_spt = ((spt_letters == 'K') & (spt_numbers >= 7))
 midM_edge_spt = ((spt_letters == 'M') & ((spt_numbers >= 2) & (spt_numbers < 3)))
 lateM_edge_spt = ((spt_letters == 'M') & ((spt_numbers >= 5) & (spt_numbers < 6)))

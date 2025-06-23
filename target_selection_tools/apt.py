@@ -15,31 +15,33 @@ from target_selection_tools import galex_estimate
 
 
 def get_simbad_info(simbad_ids):
-    fields = 'coo_err_maja plx pmra pmdec flux(V) flux_error(V) flux(G) flux_error(G) flux(B) flux_error(B) flux(U) flux_error(U) sptype sp_qual'.split()
+    fields = 'coo_err_maja plx pmra pmdec V G B U sptype sp_qual'.split()
+    # getting flux errors is more complicated than it used to be
+    # see https://astroquery.readthedocs.io/en/stable/simbad/simbad_evolution.html#optical-filters
     simbad = query.get_simbad_from_names(simbad_ids, fields)
     return simbad
 
 
 def fill_optical_magnitudes(catalog, simbad):
     # use latest V mag from simbad wherever possible
-    transfer = np.isfinite(simbad['FLUX_V'].filled(nan))
-    catalog['sy_vmag'][transfer] = simbad['FLUX_V'][transfer]
-    catalog['sy_vmagerr1'][transfer] = catalog['sy_vmagerr2'][transfer] = simbad['FLUX_ERROR_V'][transfer]
+    transfer = np.isfinite(simbad['V'].filled(nan))
+    catalog['sy_vmag'][transfer] = simbad['V'][transfer]
+    # catalog['sy_vmagerr1'][transfer] = catalog['sy_vmagerr2'][transfer] = simbad['FLUX_ERROR_V'][transfer]
     print(f'{sum(transfer)} SIMBAD V mags available and adopted.')
 
     # copy over G mags from simbad
-    transfer = np.isfinite(simbad['FLUX_G'].filled(nan))
-    catalog['sy_gmag'][transfer] = simbad['FLUX_G'][transfer]
+    transfer = np.isfinite(simbad['G'].filled(nan))
+    catalog['sy_gmag'][transfer] = simbad['G'][transfer]
     print(f'{sum(transfer)} SIMBAD G mags available and adopted.')
 
     # copy over B mags from simbad
-    transfer = np.isfinite(simbad['FLUX_B'].filled(nan))
-    catalog['sy_bmag'][transfer] = simbad['FLUX_B'][transfer]
+    transfer = np.isfinite(simbad['B'].filled(nan))
+    catalog['sy_bmag'][transfer] = simbad['B'][transfer]
     print(f'{sum(transfer)} SIMBAD B mags available and adopted.')
 
     # copy over U mags from simbad
-    transfer = np.isfinite(simbad['FLUX_U'].filled(nan))
-    catalog['sy_umag'][transfer] = simbad['FLUX_U'][transfer]
+    transfer = np.isfinite(simbad['U'].filled(nan))
+    catalog['sy_umag'][transfer] = simbad['U'][transfer]
     print(f'{sum(transfer)} SIMBAD U mags available and adopted.')
 
     # use G mags to estimate V mag based on mamajek table where there isn't a V
@@ -66,9 +68,9 @@ def fill_spectral_types(catalog, simbad, return_flags=False):
 
     # use SIMBAD where it is good
     missing = catalog['st_spectype'].filled('') == ''
-    simbad_good = (simbad['SP_QUAL'] <= 'C') & (simbad['SP_TYPE'] != '')  # copy only if quality is better than C
+    simbad_good = (simbad['sp_qual'] <= 'C') & (simbad['sp_type'] != '')  # copy only if quality is better than C
     transfer = missing & simbad_good
-    catalog['st_spectype'][transfer] = simbad['SP_TYPE'][transfer]
+    catalog['st_spectype'][transfer] = simbad['sp_type'][transfer]
     flags[transfer] = 1
     print(f'{sum(transfer)} of {sum(missing)} missing SpTs filled from SIMBAD.')
 
@@ -221,19 +223,19 @@ def make_apt_target_table(catalog_with_mags, simbad):
     aptcat = table.Table([names], names=['Target Name'], masked=True)
 
     # APT sky coordinates
-    aptcat['RA'] = simbad['RA']
-    aptcat['RA Uncertainty'] = simbad['COO_ERR_MAJA']/1000 # this will be an upper limit, needs to be in arcsec
-    aptcat['DEC'] = simbad['DEC']
-    aptcat['DEC Uncertainty'] = simbad['COO_ERR_MAJA']/1000 # needs to be in arcsec
+    aptcat['RA'] = simbad['ra']
+    aptcat['RA Uncertainty'] = simbad['coo_err_maj']/1000 # this will be an upper limit, needs to be in arcsec
+    aptcat['DEC'] = simbad['dec']
+    aptcat['DEC Uncertainty'] = simbad['coo_err_maj']/1000 # needs to be in arcsec
     aptcat['Reference Frame'] = 'ICRS'
     aptcat['Epoch'] = 2000.0
 
     # APT proper motion and parallax
-    aptcat['RA PM'] = simbad['PMRA']
-    aptcat['RA PM units'] = str(simbad['PMRA'].unit).upper().replace(' ', '')
-    aptcat['DEC PM'] = simbad['PMDEC']
-    aptcat['DEC PM units'] = str(simbad['PMDEC'].unit).upper().replace(' ', '')
-    aptcat['Annual Parallax'] = simbad['PLX_VALUE']/1000 # needs to be in arcsec
+    aptcat['RA PM'] = simbad['pmra']
+    aptcat['RA PM units'] = str(simbad['pmra'].unit).upper().replace(' ', '')
+    aptcat['DEC PM'] = simbad['pmdec']
+    aptcat['DEC PM units'] = str(simbad['pmdec'].unit).upper().replace(' ', '')
+    aptcat['Annual Parallax'] = simbad['plx_value']/1000 # needs to be in arcsec
 
     # APT magnitudes
     aptcat['V-Magnitude'] = catalog['sy_vmag']
@@ -243,7 +245,7 @@ def make_apt_target_table(catalog_with_mags, simbad):
     ismasked = np.ma.is_masked
     for i in range(n):
         other_fluxes = []
-        G = simbad['FLUX_G'][i]
+        G = simbad['G'][i]
         if not ismasked(G):
             other_fluxes.append(f'G={G:.2f}')
         nuv, nuvlim = catalog['sy_nuvmag'][i], catalog['sy_nuvmaglim'][i]
@@ -261,7 +263,8 @@ def make_apt_target_table(catalog_with_mags, simbad):
     for i in range(n):
         SpT = catalog['st_spectype'][i]
         SpT = SpT.replace(' ', '')
-        assert 'I' not in SpT
+        # assert 'I' not in SpT FIXME after group decides on IV
+        assert SpT not in ['I', 'II', 'III']
         if '/' in SpT:
             SpT = SpT.split('/')[0]
         letter = SpT[0]

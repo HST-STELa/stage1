@@ -21,6 +21,7 @@ HD-209458B "hd 209458" 0
 HD-15082--WASP-3 "hd 15082" 0
 HD-185603--KELT- "hd 185603" 0
 HD-201585--MASCA "hd 201585" 0
+HD-222259A "HD 222259" """this one is tricky because hd 222259a works with the online simbad query, but not astroquery"""
 LHS-1140-GAIA "lhs 1140" 0
 STKM-1-649-1 "stkm 1-649" 0
 TRAPPIST-1 TRAPPIST-1 0
