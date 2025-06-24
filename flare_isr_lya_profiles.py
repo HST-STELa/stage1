@@ -12,7 +12,7 @@ from lya_prediction_tools import ism, lya
 
 #%% load and join parameter and ISR tables -- make sure to download a new csv export first!
 
-parameters = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__fill-basic_properties.ecsv')
+parameters = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt3__add-archival_obs_counts.ecsv')
 parameters = catutils.planets2hosts(parameters)
 isr_table = table.Table.read(paths.checked / 'mdwarf_isr_continuously_updated flux values export.csv', header_start=2, data_start=4)
 (i,), = np.nonzero(isr_table['Target'] == 'EXAMPLES BELOW')
@@ -82,15 +82,29 @@ w = np.arange(1100, 1800, 0.1)*u.AA
 Nh_cols = [6e16, 1e17] * u.cm**-2
 
 for target in target_parameters:
-    if np.ma.is_masked(target['st_radv']):
+    cat_rv = target['st_radv']
+    valid_cat_rv = not np.ma.is_masked(cat_rv)
+    xls_rv = target['Stellar RV']
+    valid_xls_rv = not (np.ma.is_masked(xls_rv) or (xls_rv in ['', '--']))
+    if valid_xls_rv:
+        xls_rv = float(xls_rv)
+    if not valid_cat_rv and not valid_xls_rv:
         print(f"No spectrum generated for {target['hostname']} because there is no stellar RV measurement in the catalog.")
         continue
+    elif valid_cat_rv and not valid_xls_rv:
+        rv = cat_rv
+    elif not valid_cat_rv and valid_xls_rv:
+        rv = xls_rv
+    else:
+        if not np.isclose(cat_rv, xls_rv, atol=5):
+            print(f'RVs in the exocat and ISR spreadsheet differ by > 5 km s-1 for {target['hostname']}')
+        rv = cat_rv
 
     fluxcols = ['f(C IV)6', 'f(Si IV)6', 'f(Ly a)6,7']
     Fc4, Fsi4, Flya = [target[key] * u.Unit('erg s-1 cm-2') for key in fluxcols]
     yc4 = flare_line(w, 1548.2*u.AA, Fc4, 0.2*u.AA)
     ysi4 = flare_line(w, 1393.8*u.AA, Fc4, 0.2*u.AA)
-    rv_offset = (target['st_radv'] - target['ism_radv']) * u.km/u.s
+    rv_offset = (rv - target['ism_radv']) * u.km/u.s
 
     ybb = normed_bb(w, target['U_flare'])
 
@@ -107,8 +121,8 @@ for target in target_parameters:
 
 #%% load and plot
 
-name = 'TOI-1231'
-Nh_load = 6e16
+name = 'TOI-4556'
+Nh_load = 1e17
 folder = paths.selection_outputs / 'isr_flare_spectra'
 file, = folder.glob(f'*{name}*{Nh_load:.0e}.dat')
 ww, ff = np.loadtxt(str(file)).T

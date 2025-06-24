@@ -50,16 +50,16 @@ backup_orbits = 5
 
 toggle_plots = True
 
-toggle_save_outputs = True
-toggle_save_galex = True
-toggle_save_difftbl = True
-toggle_save_visit_labels = True
+toggle_save_outputs = False
+toggle_save_galex = False
+toggle_save_difftbl = False
+toggle_save_visit_labels = False
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
 toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
 
 diff_label = 'target-backfill-2025-06'
-toggle_checkpoint_saves = True
+toggle_checkpoint_saves = False
 toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
 default_sys_rv = "ism"
