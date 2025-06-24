@@ -136,7 +136,7 @@ def boxcars_to_bins(midpoints, widths, heights, bin_edges):
 
 
 class AirglowModel(object):
-    parameter_order = ['midpts', 'widths', 'fluxes', 'fwhm_Gs', 'fwhm_Ls']
+    parameter_order = ['midpts', 'widths', 'fluxes', 'fwhm_Gs', 'fwhm_Ls', 'darkrates']
     n_params_per_trace = len(parameter_order)
     _1d_organization_string = (f"[param1_trace1, param1_trace2, ..., paramn_trace1, paramn_trace2] for an example with two "
                                f"traces.\nThe order of the grouped parmeters is {str(parameter_order)}.")
@@ -190,6 +190,7 @@ class AirglowModel(object):
         self.fluxes = None
         self.fwhm_Gs = None
         self.fwhm_Ls = None
+        self.darkrates = None
 
     def _wave_supersample(self, wavegrids, dw_sample):
         # supersample the wavelength grid
@@ -291,11 +292,12 @@ class AirglowModel(object):
         if nextra > 0: # in case the sampler tries out a voigt profile larger than the range being fit
             nclip = nextra // 2 + 1
             voigt_grid = voigt_grid[nclip:-nclip]
-        sets = zip(yboxes, amplitude_Ls, self.fwhm_Ls, self.fwhm_Gs)
+        sets = zip(yboxes, amplitude_Ls, self.fwhm_Ls, self.fwhm_Gs, self.darkrates)
         ys = []
-        for ybox, A, L, G in sets:
+        for ybox, A, L, G, darkrate in sets:
             yvoigt = voigt.evaluate(voigt_grid, x_0=x_0, amplitude_L=A, fwhm_L=L, fwhm_G=G)
             y = np.convolve(ybox, yvoigt, mode='same')
+            y += darkrate
             ys.append(y)
 
         # bin
@@ -336,29 +338,43 @@ class AirglowModel(object):
 
 
 # code snippet to get files for testing on Parke's machine
-import paths
-base_name = 'toi-1696.hst-stis-g140m.2025-04-01T035830.ofhjal010_x1d{}.fits'
+from pathlib import Path
+folder = Path('/Users/parke/Google Drive/Research/STELa/scratch/52x2 airglow fit test data')
+base_name = 'o46j010k0_x1d{}.fits'
 suffixes = ('bk1', 'bk2', 'trace')
-three_trace_files = [paths.data / 'hst-stis' / base_name.format(suffix) for suffix in suffixes]
+three_trace_files = [folder / base_name.format(suffix) for suffix in suffixes]
 
 def test_airglow_models(three_trace_files):
     import emcee
     import corner
+    from scipy.special import gamma
 
+    # load the data and put it into lists
     fit_range = [1213, 1218]
     waves = []
     wavegrids = []
     fluxes = []
     errors = []
+    counts = []
+    cts_per_flux_factors = []
     for file in three_trace_files:
-        data = fits.getdata(file, 1)
-        w, f, e = [data[s][0] for s in ['wavelength', 'flux', 'error']]
+        h = fits.open(file)
+        w, f, e, cps = [h[1].data[s][0] for s in ['wavelength', 'flux', 'error', 'gross']]
+        exptime = h[1].header['exptime']
         keep = (w > fit_range[0]) & (w < fit_range[1])
         fluxes.append(f[keep])
         errors.append(e[keep])
         waves.append(w[keep])
         wgrid = mids2edges(w[keep])
         wavegrids.append(wgrid)
+
+        # record factor to estimate counts for a given flux
+        cts = cps * exptime
+        counts.append(cts[keep])
+        cts_per_flux = cts / f
+        cts_per_flux_factors.append(cts_per_flux[keep])
+        assert np.allclose(cts_per_flux[keep], np.mean(cts_per_flux[keep]), rtol=0.2)
+        # if the assertion above fails, it probably means there are some nans or odd pixels that need filling
 
     # play with purposefully varying the fluxes to see how the fit handles it
     fluxes[0] *= 0.9
@@ -369,20 +385,27 @@ def test_airglow_models(three_trace_files):
     for tol_rel, tol_label in sets:
 
         # set up a model with tight tolerances
-        tolerances = np.array([0.1, 0.01, 5.5e-13, 0.2, 0.1]) * tol_rel
+        tolerances = np.array([0.1, 0.2, 4e-14, 0.2, 0.1, 1.0e-16]) * tol_rel
         model = AirglowModel(wavegrids, 0.01, 1.838,
-                             tolerances=tolerances, midpt_rng=[1215.4, 1215.7])
+                             tolerances=tolerances, midpt_rng=[1215.3, 1216.3])
 
-        fluxstack = np.hstack(fluxes)
+        ctstack = np.hstack(counts)
         errorstack = np.hstack(errors)
+        cts_per_flux_stack = np.hstack(cts_per_flux_factors)
         def loglike(params):
             physical_prior = model.loglike_physical_prior(params)
             if physical_prior == -np.inf:
                 return -np.inf
             ys = model.evaluate(params)
             ystack = np.hstack(ys)
-            terms = -(fluxstack - ystack)**2/2/errorstack**2
-            loglike_data = np.sum(terms)
+
+            # estimate poisson likelihoods based on the *expected* number of counts predicted from the model
+            expected_counts = ystack * cts_per_flux_stack
+            # continuous poisson likelihood
+            assert np.all(expected_counts > 0)
+            loglike_terms = ctstack * np.log(expected_counts) - expected_counts - np.log(gamma(ctstack + 1))
+
+            loglike_data = np.sum(loglike_terms)
             loglike_midpts = model.loglike_midpoint_prior(params)
             loglike_tolerance = model.loglike_tolerance_prior(params)
             return loglike_data + loglike_tolerance + loglike_midpts + physical_prior
@@ -393,11 +416,11 @@ def test_airglow_models(three_trace_files):
 
         np.random.seed(42)
 
-        p0_2d = np.array(((1215.54, 0.2, 5.5e-13, 0.2, 0.1),
-                          (1215.54, 0.2, 5.5e-13, 0.2, 0.1),
-                          (1215.54, 0.2, 5.5e-13, 0.2, 0.1)))
+        p0_2d = np.array(((1215.6, 2.0, 4e-14, 0.1, 0.3, 1.0e-16),
+                          (1215.6, 2.0, 4e-14, 0.1, 0.3, 1.0e-16),
+                          (1215.6, 2.0, 4e-14, 0.1, 0.3, 1.0e-16)))
         p0 = model.params_2d_to_1d(p0_2d)
-        jitter_amplitude = np.tile((0.01, 0.01, 1e-14, 0.01, 0.01), (3,1))
+        jitter_amplitude = np.tile((0.01, 0.01, 1e-15, 0.01, 0.01, 1e-18), (3,1))
         jitter_amplitude = model.params_2d_to_1d(jitter_amplitude)
         ndim = len(p0)
         nwalkers = ndim * 3
