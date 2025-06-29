@@ -48,7 +48,7 @@ HD 86226, K2-136, K2-233, L 168-9, L 98-59, LHS 1140, LHS 475, LTT 1445 A, LTT 9
 TOI-1201, TOI-1203, TOI-1685, TOI-1759, TOI-1774, TOI-178, TOI-260, TOI-270, TOI-421, TOI-431, 
 TOI-561, TOI-741, TOI-836, WASP-107, WASP-127, WASP-38, WASP-52, WASP-77 A
 """
-target = 'TOI-1231'
+target = 'L 168-9'
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
 data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{targname_file}')
@@ -92,46 +92,50 @@ files_science = np.array(files_raw_only_if_accum)[science_target]
 
 #%% setup for storing information on observations
 
-key_science_files = []
-files_science_copy = files_science.tolist()
-while files_science_copy:
-    file = files_science_copy.pop(0)
-    pieces = dbutils.parse_filename(file)
-    associated_files = [file.name]
-    ftp = pieces['type']
-    pairs = (('_a', '_b'), ('_b', '_a'))
-    for s1, s2 in pairs:
-        if ftp.endswith(s1):
-            file2 = file.parent / file.name.replace(f'{s1}.fits', f'{s2}.fits')
-            if file2 in files_science_copy:
-                files_science_copy.remove(file2)
-                associated_files.append(file.name)
-    key_science_files.append(associated_files)
+path_obs_tbl = data_dir / f'{targname_file}.observation-table.ecsv'
+if path_obs_tbl.exists():
+    obs_tbl = table.Table.read(path_obs_tbl)
+else:
+    key_science_files = []
+    files_science_copy = files_science.tolist()
+    while files_science_copy:
+        file = files_science_copy.pop(0)
+        pieces = dbutils.parse_filename(file)
+        associated_files = [file.name]
+        ftp = pieces['type']
+        pairs = (('_a', '_b'), ('_b', '_a'))
+        for s1, s2 in pairs:
+            if ftp.endswith(s1):
+                file2 = file.parent / file.name.replace(f'{s1}.fits', f'{s2}.fits')
+                if file2 in files_science_copy:
+                    files_science_copy.remove(file2)
+                    associated_files.append(file.name)
+        key_science_files.append(associated_files)
 
-n = len(key_science_files)
-columns = [
-    table.MaskedColumn(data=['hst']*n, name='observatory', dtype='object'),
-    table.MaskedColumn(length=n, name='science config', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='start', dtype='S20', mask=True),
-    table.MaskedColumn(length=n, name='program', dtype='int', mask=True),
-    table.MaskedColumn(length=n, name='pi', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='archive id', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='key science files', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='supporting files', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='usable', dtype='bool', mask=True),
-    table.MaskedColumn(length=n, name='reason unusable', dtype='object', mask=True),
-    table.MaskedColumn(length=n, name='notes', dtype='object', mask=True)
-]
-obs_tbl = table.Table(columns)
-for i, asc_files in enumerate(key_science_files):
-    pi = fits.getval(data_dir / asc_files[0], 'PR_INV_L')
-    pieces = dbutils.parse_filename(asc_files[0])
-    obs_tbl['archive id'][i] = pieces['id']
-    obs_tbl['science config'][i] = pieces['config']
-    obs_tbl['start'][i] = re.sub(r'([\d-]+T\d{2})(\d{2})(\d{2})', r'\1:\2:\3', pieces['datetime'])
-    obs_tbl['program'][i] = pieces['program'].replace('pgm', '')
-    obs_tbl['pi'][i] = pi
-    obs_tbl['key science files'][i] = ['.'.join(name.split('.')[-2:]) for name in asc_files]
+    n = len(key_science_files)
+    columns = [
+        table.MaskedColumn(data=['hst']*n, name='observatory', dtype='object'),
+        table.MaskedColumn(length=n, name='science config', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='start', dtype='S20', mask=True),
+        table.MaskedColumn(length=n, name='program', dtype='int', mask=True),
+        table.MaskedColumn(length=n, name='pi', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='archive id', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='key science files', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='supporting files', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='usable', dtype='bool', mask=True),
+        table.MaskedColumn(length=n, name='reason unusable', dtype='object', mask=True),
+        table.MaskedColumn(length=n, name='notes', dtype='object', mask=True)
+    ]
+    obs_tbl = table.Table(columns)
+    for i, asc_files in enumerate(key_science_files):
+        pi = fits.getval(data_dir / asc_files[0], 'PR_INV_L')
+        pieces = dbutils.parse_filename(asc_files[0])
+        obs_tbl['archive id'][i] = pieces['id']
+        obs_tbl['science config'][i] = pieces['config']
+        obs_tbl['start'][i] = re.sub(r'([\d-]+T\d{2})(\d{2})(\d{2})', r'\1:\2:\3', pieces['datetime'])
+        obs_tbl['program'][i] = pieces['program'].replace('pgm', '')
+        obs_tbl['pi'][i] = pi
+        obs_tbl['key science files'][i] = ['.'.join(name.split('.')[-2:]) for name in asc_files]
 
 
 #%% setup for MAST query
@@ -782,6 +786,6 @@ for xf in x1dfiles:
 #%% save observation manifest
 
 obs_tbl.sort('start')
-obs_tbl.write(data_dir / f'{targname_file}.observation-table.ecsv')
+obs_tbl.write(path_obs_tbl)
 
 
