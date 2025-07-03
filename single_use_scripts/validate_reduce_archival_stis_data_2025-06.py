@@ -48,7 +48,7 @@ HD 86226, K2-136, K2-233, L 168-9, L 98-59, LHS 1140, LHS 475, LTT 1445 A, LTT 9
 TOI-1201, TOI-1203, TOI-1685, TOI-1759, TOI-1774, TOI-178, TOI-260, TOI-270, TOI-421, TOI-431, 
 TOI-561, TOI-741, TOI-836, WASP-107, WASP-127, WASP-38, WASP-52, WASP-77 A
 """
-target = 'L 168-9'
+target = 'TOI-2134'
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
 data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{targname_file}')

@@ -252,13 +252,13 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
             if targname in ['WAVEHITM', 'WAVELINE'] :
                 targname = find_visit_primary_target(path)
             obs_names.append(targname)
-        targnames = np.asarray(obs_names)
+        obs_names = np.asarray(obs_names)
         if resolve_stela_name:
             simbad_names = groom_hst_names_for_simbad(obs_names)
             unq_names, i_mapback = np.unique(simbad_names, return_inverse=True)
             stela_names_unq = resolve_stela_name_w_simbad(unq_names)
             stela_hst_names_unq = target_names_stela2file(stela_names_unq)
-            stela_hst_names = stela_hst_names_unq[i_mapback]
+            targnames = stela_hst_names_unq[i_mapback]
         else:
             targnames = np.char.lower(obs_names)
     else:
@@ -270,7 +270,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
         valid = np.isin(targnames, all_stela_file_names)
         if np.any(~valid):
             if target_name == 'from files':
-                temp_tbl = table.Table((obs_names[~valid], targnames[~valid]),
+                temp_tbl = table.Table((np.array(obs_names)[~valid], targnames[~valid]),
                                        names='name_in_file name_to_be_used'.split())
                 msg = "These names are not in the STELa database. Something is wrong and you will have to dig, sorry.\n"
                 msg += '\n\t'.join(temp_tbl.pformat(-1,-1))
@@ -301,7 +301,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
 
     newpaths = []
     for newname, targname in zip(newnames, targnames):
-        newpath = tgt / targname / newname
+        newpath = tgt / newname
         if newpath != path:
             newpaths.append(newpath)
         else:
@@ -378,7 +378,7 @@ def filter_observations(obs_table, config_substrings=None, usable=None, usabilit
     if config_substrings:
         config_mask = np.zeros(len(tbl), dtype=bool)
         for substr in config_substrings:
-            config_mask |= [substr in cfg for cfg in tbl['config']]
+            config_mask |= [substr in cfg for cfg in tbl['science config']]
         tbl = tbl[config_mask]
 
     # Step 3: Filter by usability

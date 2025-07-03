@@ -5,6 +5,7 @@ from astroquery.mast import MastMissions
 from astropy.io import fits
 from astropy import time
 from astropy import units as u
+from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
 
@@ -15,6 +16,9 @@ def locate_associated_acquisitions(path, additional_files=()):
     h = fits.open(path)
     hdr = h[0].header + h[1].header
     pieces = dbutils.parse_filename(path)
+    ra = h[0].header['ra_targ']
+    dec = h[0].header['dec_targ']
+    coords = SkyCoord(ra*u.deg, dec*u.deg)
 
     # a gotcha is that sometimes the acquisitions are labeled as a separate visit
     # (see DS Tuc A visits OE8T01 and OE8TA1)
@@ -25,11 +29,13 @@ def locate_associated_acquisitions(path, additional_files=()):
 
     # make sure observations are from the same program
     id = pieces['id']
-    id_searchstr = id[:4] + '*' # all files with this root will be from the same visit
-    results = hst_database.query_criteria(sci_data_set_name=id_searchstr,
+    id_searchstr = id[:6] + '*' # all files with this root will be from the same observation set
+    results = hst_database.query_region(coords,
+                                        radius=0.1,
+                                        sci_data_set_name=id_searchstr,
                                           sci_start_time=date_search_str,
                                           sci_operating_mode='*ACQ*',
-                                          select_cols=['sci_operating_mode', 'sci_start_time'])
+                                          select_cols=['sci_operating_mode', 'sci_start_time', 'sci_targname'])
     if len(results) == 0:
         warnings.warn(f'No acquitions found for {path.name}')
         return []
