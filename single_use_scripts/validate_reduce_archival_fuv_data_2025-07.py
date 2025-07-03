@@ -47,40 +47,9 @@ pick a target from the obs progress table for stage 2 eval 1 -- drop those keigh
 target = 'GJ 486'
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
+targname_file = str(targname_file)
 data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{targname_file}')
 
-#%% find key science files
-
-"""
-for it to be a science file, 
-- the target must be the target
-- it must be tag or raw
-- if raw, mode must be accum
-"""
-files_tag_or_raw = (
-        list(data_dir.glob('*g140l*tag.fits'))
-        + list(data_dir.glob('*g140l*raw.fits'))
-        + list(data_dir.glob('*e140m*tag.fits'))
-        + list(data_dir.glob('*e140m*raw.fits'))
-        + list(data_dir.glob('*g140l*rawtag.fits'))
-        + list(data_dir.glob('*g140l*rawtag_[ab].fits'))
-        + list(data_dir.glob('*g130m*rawtag.fits'))
-        + list(data_dir.glob('*g130m*rawtag_[ab].fits'))
-        + list(data_dir.glob('*g160m*rawtag.fits'))
-        + list(data_dir.glob('*g160m*rawtag_[ab].fits'))
-        )
-files_acqs_removed = [f for f in files_tag_or_raw if 'ACQ' not in fits.getval(f, 'obsmode')]
-files_raw_only_if_accum = []
-for f in files_acqs_removed:
-    pieces = dbutils.parse_filename(f.name)
-    if pieces['type'] in ['raw', 'raw_a', 'raw_b']:
-        if 'ACCUM' in fits.getval(f, 'obsmode'):
-            files_raw_only_if_accum.append(f)
-    else:
-        files_raw_only_if_accum.append(f)
-
-files_science = np.array(files_raw_only_if_accum)
-ids_science = [dbutils.parse_filename(f)['id'].upper() for f in files_science]
 
 #%% load table of observation information
 
@@ -97,7 +66,7 @@ if not dnld_dir.exists():
     os.mkdir(dnld_dir)
 
 
-#%% download raw data
+#%% download science data
 
 results = hst_database.query_object(f'TIC {tic_id}',
                                     radius=3,
@@ -121,28 +90,35 @@ for mask, sfxs in mask_suffix_sets:
         file_tbls.append(filtered)
 files_in_archive = table.vstack(file_tbls)
 
-arhive_ids = [pk.split('_')[1] for pk in files_in_archive['product_key']]
-new_files_mask = [id.upper() not in ids_science for id in arhive_ids]
+new_files_mask = []
+for file_info in files_in_archive:
+    files = list(data_dir.glob(f'*{file_info['filename']}'))
+    new_files_mask.append(len(files) == 0)
 new_files = files_in_archive[new_files_mask]
+
 
 #%% download and rename new files
 
 manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', resolve_stela_name=True)
+# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', resolve_stela_name=True)
+dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', target_name=targname_file)
 
 
-#%% add a row to the obs table for each new file
+#%% make sure info on all files is in the obs tbl
 
+fits_files = list(data_dir.glob('*.fits'))
+sci_files = [file for file in fits_files if hstutils.is_raw_science(file)]
 catutils.set_index(obs_tbl, 'archive id')
-for file_info in new_files:
-    archive_filename = file_info['filename']
-    file, = data_dir.glob(f'*{archive_filename}')
+for file in sci_files:
     pieces = dbutils.parse_filename(file)
     id = pieces['id']
+    filename = f'{pieces['id']}_{pieces['type']}.fits'
     if id in obs_tbl['archive id']:
-        i, = obs_tbl.loc_indices[id]
-        assert archive_filename not in obs_tbl['key science files']
-        obs_tbl['key science files'][i].append(archive_filename)
+        i = obs_tbl.loc_indices[id]
+        assert not hasattr(i, '__iter__')
+        if filename in obs_tbl['key science files'][i]:
+            continue
+        obs_tbl['key science files'][i].append(filename)
     else:
         row = {}
         pi = fits.getval(file, 'PR_INV_L')
@@ -152,7 +128,7 @@ for file_info in new_files:
         row['science config'] = pieces['config']
         row['start'] = re.sub(r'([\d-]+T\d{2})(\d{2})(\d{2})', r'\1:\2:\3', pieces['datetime'])
         row['program'] = pieces['program'].replace('pgm', '')
-        row['key science files'] = [file_info['filename']]
+        row['key science files'] = [filename]
         row['supporting files'] = []
         row['usable'] = True
         row['reason unusable'] = ''
@@ -160,6 +136,20 @@ for file_info in new_files:
         for name in 'supporting files,usable,reason unusable'.split(','):
             obs_tbl[name].mask[-1] = True
 
+
+#%% find fuv stis files
+
+"""
+for it to be a science file, 
+- the target must be the target
+- it must be tag or raw
+- if raw, mode must be accum
+"""
+stis_fits_files = (
+        list(data_dir.glob('*stis-g140l*.fits'))
+        + list(data_dir.glob('*stise140m*.fits'))
+        )
+stis_sci_files = [f for f in stis_fits_files if hstutils.is_raw_science(f)]
 
 #%% download supporting acquisitions and wavecals
 

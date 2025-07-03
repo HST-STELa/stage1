@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 
 from astroquery.mast import MastMissions
 from astropy.io import fits
@@ -40,3 +41,20 @@ def locate_associated_acquisitions(path, additional_files=()):
     filtered['start'] = results.loc[filtered['dataset']]['sci_start_time']
 
     return filtered
+
+def is_raw_science(file):
+    file = Path(file)
+    pieces = dbutils.parse_filename(file.name)
+    if 'tag' in pieces['type']:
+        return True
+    if 'raw' in pieces['type']:
+        if 'hst-cos' in pieces['config']:
+            return False
+        mode = fits.getval(file, 'obsmode')
+        if mode == 'ACCUM':
+            return True
+        else:
+            return False
+    else:
+        return False
+

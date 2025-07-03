@@ -227,7 +227,7 @@ def pathname_max(folder, glob_str):
 
 
 def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_stela_name=False, overwrite=False,
-                                  validate_names=True):
+                                  validate_names=True, target_name='from files'):
     # nicknames for directories
     src = Path(source_dir)
     if target_dir == 'source_dir':
@@ -244,37 +244,43 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
     # get the STELa-HST names for all targets
     # need to do this first because resolving names requires a SIMBAD query that I should only do once
     # a loop will cause SIMBAD to lock me out
-    obs_names = []
-    for path in fitspaths:
-        hdr = fits.getheader(path)
-        targname = hdr['targname']
-        if targname in ['WAVEHITM', 'WAVELINE'] :
-            targname = find_visit_primary_target(path)
-        obs_names.append(targname)
-    obs_names = np.asarray(obs_names)
-    if resolve_stela_name:
-        simbad_names = groom_hst_names_for_simbad(obs_names)
-        unq_names, i_mapback = np.unique(simbad_names, return_inverse=True)
-        stela_names_unq = resolve_stela_name_w_simbad(unq_names)
-        stela_hst_names_unq = target_names_stela2file(stela_names_unq)
-        stela_hst_names = stela_hst_names_unq[i_mapback]
+    if target_name == 'from files':
+        obs_names = []
+        for path in fitspaths:
+            hdr = fits.getheader(path)
+            targname = hdr['targname']
+            if targname in ['WAVEHITM', 'WAVELINE'] :
+                targname = find_visit_primary_target(path)
+            obs_names.append(targname)
+        targnames = np.asarray(obs_names)
+        if resolve_stela_name:
+            simbad_names = groom_hst_names_for_simbad(obs_names)
+            unq_names, i_mapback = np.unique(simbad_names, return_inverse=True)
+            stela_names_unq = resolve_stela_name_w_simbad(unq_names)
+            stela_hst_names_unq = target_names_stela2file(stela_names_unq)
+            stela_hst_names = stela_hst_names_unq[i_mapback]
+        else:
+            targnames = np.char.lower(obs_names)
     else:
-        stela_hst_names = np.char.lower(obs_names)
+        targnames = [target_name]*len(fitspaths)
 
     # check that all names are what we want, throw error if not
     if validate_names:
         all_stela_file_names = target_names_stela2file(stela_name_tbl['hostname'])
-        valid = np.in1d(stela_hst_names, all_stela_file_names)
+        valid = np.isin(targnames, all_stela_file_names)
         if np.any(~valid):
-            temp_tbl = table.Table((obs_names[~valid], stela_hst_names[~valid]),
-                                   names='name_in_file stela_name_guess'.split())
-            msg = "These names are not in the STELa database. Something is wrong and you will have to dig, sorry.\n"
-            msg += '\n\t'.join(temp_tbl.pformat(-1,-1))
-            raise ValueError(msg)
+            if target_name == 'from files':
+                temp_tbl = table.Table((obs_names[~valid], targnames[~valid]),
+                                       names='name_in_file name_to_be_used'.split())
+                msg = "These names are not in the STELa database. Something is wrong and you will have to dig, sorry.\n"
+                msg += '\n\t'.join(temp_tbl.pformat(-1,-1))
+                raise ValueError(msg)
+            else:
+                raise ValueError(f'{target_name} is not in the STELa database.')
 
     # generate new file names
     newnames = []
-    for path, targname in zip(fitspaths, stela_hst_names):
+    for path, targname in zip(fitspaths, targnames):
         newname = hst_filename2stela(path, targname)
         newnames.append(newname)
 
@@ -288,7 +294,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
             newnames[i] = re.sub(pattern, f'_{suffix}.fits', alternate_name)
 
     newpaths = []
-    for newname, targname in zip(newnames, stela_hst_names):
+    for newname, targname in zip(newnames, targnames):
         newpath = tgt / targname / newname
         if newpath != path:
             newpaths.append(newpath)
