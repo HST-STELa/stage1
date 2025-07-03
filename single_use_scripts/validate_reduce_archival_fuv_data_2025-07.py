@@ -100,8 +100,8 @@ new_files = files_in_archive[new_files_mask]
 #%% download and rename new files
 
 manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', resolve_stela_name=True)
-dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', target_name=targname_file)
+# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
+dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_file)
 
 
 #%% make sure info on all files is in the obs tbl
@@ -136,65 +136,71 @@ for file in sci_files:
         for name in 'supporting files,usable,reason unusable'.split(','):
             obs_tbl[name].mask[-1] = True
 
+cleaned_sci_files = [np.unique(sfs).tolist() for sfs in obs_tbl['key science files']]
+obs_tbl['key science files'] = cleaned_sci_files
 
-#%% find fuv stis files
+#%% filter for just the broadband files
 
-"""
-for it to be a science file, 
-- the target must be the target
-- it must be tag or raw
-- if raw, mode must be accum
-"""
-stis_fits_files = (
-        list(data_dir.glob('*stis-g140l*.fits'))
-        + list(data_dir.glob('*stise140m*.fits'))
-        )
-stis_sci_files = [f for f in stis_fits_files if hstutils.is_raw_science(f)]
+bb_files = []
+for file in sci_files:
+    pieces = dbutils.parse_filename(file)
+    grating = pieces['config'].split('-')[2]
+    if grating in ['g140l', 'e140m', 'g130m', 'g160m']:
+        bb_files.append(file)
 
 #%% download supporting acquisitions and wavecals
 
-# look for acquisitions
-acq_tbl_w_spts = hstutils.locate_associated_acquisitions(path, additional_files=('SPT',))
-if len(acq_tbl_w_spts) == 0:
-    continue
-acq_tbl = hst_database.filter_products(acq_tbl_w_spts, file_suffix=['RAW', 'RAWACQ'])
-acq_tbl.add_index('obsmode')
+for path in bb_files:
+    pieces = dbutils.parse_filename(path)
+    id = pieces['id']
+    i = obs_tbl.loc_indices[id]
+    if obs_tbl['supporting files'].mask[i]:
+        supporting_files = {}
+    else:
+        continue
 
-# record these
-acq_types = np.unique(acq_tbl['obsmode'].tolist())
-# keep all non-peak acqs, but only keep the most recent peakups
-for atp in acq_types:
-    supporting_files[atp.lower()] = acq_tbl.loc[atp]['filename'].tolist()
+    # look for acquisitions
+    acq_tbl_w_spts = hstutils.locate_associated_acquisitions(path, additional_files=('SPT',))
+    if len(acq_tbl_w_spts) == 0:
+        continue
+    acq_tbl = hst_database.filter_products(acq_tbl_w_spts, file_suffix=['RAW', 'RAWACQ'])
+    acq_tbl.add_index('obsmode')
 
-# download missing ones
-not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
-if any(not_present):
-    manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
+    # record these
+    acq_types = np.unique(acq_tbl['obsmode'].tolist())
+    # keep all non-peak acqs, but only keep the most recent peakups
+    for atp in acq_types:
+        supporting_files[atp.lower()] = acq_tbl.loc[atp]['filename'].tolist()
 
-# record wavecal
-pieces = dbutils.parse_filename(path)
-if 'hst-stis' in pieces['config']:
-    wav_filename = pieces['id'] + '_wav.fits'
-    supporting_files['wavecal'] = wav_filename
-    wavfiles = list(data_dir.rglob(f'*{wav_filename}'))
-    if len(wavfiles) > 1:
-        raise ValueError('Uh oh.')
-    if len(wavfiles) == 0:
-        results = hst_database.query_criteria(sci_data_set_name=pieces['id'])
-        datasets = hst_database.get_unique_product_list(results)
-        filtered = hst_database.filter_products(datasets, file_suffix=['WAV'])
-        if len(filtered) == 0:
-            print(f'!! No WAV found in the HST database for {path.name}.')
-        if len(filtered) > 1:
+    # download missing ones
+    not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
+    if any(not_present):
+        manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
+
+    # record wavecal
+    if 'hst-stis' in pieces['config']:
+        wav_filename = pieces['id'] + '_wav.fits'
+        supporting_files['wavecal'] = wav_filename
+        wavfiles = list(data_dir.rglob(f'*{wav_filename}'))
+        if len(wavfiles) > 1:
             raise ValueError('Uh oh.')
-        manifest = hst_database.download_products(filtered, download_dir=dnld_dir, flat=True)
+        if len(wavfiles) == 0:
+            results = hst_database.query_criteria(sci_data_set_name=pieces['id'])
+            datasets = hst_database.get_unique_product_list(results)
+            filtered = hst_database.filter_products(datasets, file_suffix=['WAV'])
+            if len(filtered) == 0:
+                print(f'!! No WAV found in the HST database for {path.name}.')
+            if len(filtered) > 1:
+                raise ValueError('Uh oh.')
+            manifest = hst_database.download_products(filtered, download_dir=dnld_dir, flat=True)
 
-obs_tbl['supporting files'][i] = supporting_files
+    obs_tbl['supporting files'][i] = supporting_files
 
 
 #%% move and rename downloaded files
 
-dbutils.rename_and_organize_hst_files(dnld_dir, data_dir / '..', resolve_stela_name=True)
+dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_file)
+# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
 
 
 #%% file deletion tool
@@ -273,45 +279,65 @@ for i, row in enumerate(obs_tbl):
         delete_all_files(row)
 
 
-#%% from here on out, just handle stis files
+#%% identify rows with broadband data
 
-stis_mask = (np.char.count(obs_tbl['science config'].tolist(), 'hst-stis') > 0) & obs_tbl['usable'].filled(True)
-stis_indices, = np.nonzero(stis_mask)
-stis_tbl = obs_tbl[stis_mask]
-instruments = ['hst-stis-g140m','hst-stis-e140m']
-
+gratings = [config.split('-')[-1] for config in obs_tbl['science config']]
+bb_mask = [grating in ['g140l', 'e140m', 'g130m', 'g160m'] for grating in gratings]
+i_bb, = np.nonzero(bb_mask)
 
 #%% review ACQs. record and delete failures.
 
+acq_filenames = []
+for supfiles in obs_tbl[bb_mask]['supporting files']:
+    for type, file in supfiles.items():
+        if 'acq' in type.lower():
+            acq_filenames.append(file)
+acq_filenames = np.unique(acq_filenames)
+
 delete = []
-for i in stis_indices:
+for acq_name in acq_filenames:
     bad_acq = False
-    row = obs_tbl[i]
-    supporting_filenames = row['supporting files'].copy() # must copy, otherwise may be modified in the table
-    for key, val in supporting_filenames.items():
-        if 'acq' not in key:
-            continue
-        shortnames = val if len(val[0]) > 1 else [val]
-        acq_files = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
+    assoc_obs_mask = [acq_name in list(sfs.values()) for sfs in obs_tbl['supporting files']]
 
+    acq_file, = dbutils.find_stela_files_from_hst_filenames(acq_name, data_dir)
+    print(f'\n\nAcquistion file {acq_file.name} associated with:\n')
+    obs_tbl[assoc_obs_mask]['start,science config,key science files'.split(',')].pprint(-1,-1)
+    print('\n\n')
+    if 'hst-stis' in acq_file.name:
         stages = ['coarse', 'fine', '0.2x0.2']
-        for file_info in acq_files:
-            stis.tastis.tastis(str(file_info))
+        stis.tastis.tastis(str(acq_file))
+        h = fits.open(acq_file)
 
-            if 'mirvis' in file_info.name and 'peak' not in key:
-                h = fits.open(file_info)
-                fig, axs = plt.subplots(1, 3, figsize=[7,3])
-                for j, ax in enumerate(axs):
-                    data = h['sci', j+1].data
-                    ax.imshow(data)
-                    ax.set_title('')
-                fig.suptitle(file_info.name)
-                fig.supxlabel('dispersion')
-                fig.supylabel('spatial')
-                fig.tight_layout()
+        if 'mirvis' in acq_file.name:
+            fig, axs = plt.subplots(1, 3, figsize=[7,3])
+            for j, ax in enumerate(axs):
+                data = h['sci', j+1].data
+                ax.imshow(data)
+                ax.set_title(stages[j])
+            fig.suptitle(acq_file.name)
+            fig.supxlabel('dispersion')
+            fig.supylabel('spatial')
+            fig.tight_layout()
 
-                print('Click outside the plots to continue.')
-                xy = utils.click_coords(fig)
+            print('Click outside the plots to continue.')
+            xy = utils.click_coords(fig)
+    else:
+        print('\nCOS data, no automatic eval routine\n')
+        stages = ['initial', 'confirmation']
+        h = fits.open(acq_file)
+        if len(h) > 7:
+            raise NotImplementedError
+        if h[0].header['exptype'] == 'ACQ/IMAGE':
+            fig, axs = plt.subplots(1, 2, figsize=[5,3])
+            for j, ax in enumerate(axs):
+                data = h['sci', j+1].data
+                ax.imshow(np.cbrt(data))
+                ax.set_title(stages[j])
+            fig.suptitle(acq_file.name)
+            fig.tight_layout()
+
+            print('Click outside the plots to continue.')
+            xy = utils.click_coords(fig)
 
     answer = input('Mark acq as good? (y/n)')
     if answer == 'n':
@@ -319,21 +345,24 @@ for i in stis_indices:
     plt.close('all')
 
     if bad_acq:
-        obs_tbl['usable'][i] = False
-        obs_tbl['reason unusable'][i] = 'Target not acquired or other acquisition issue.'
-        delete.append(i)
+        obs_tbl['usable'][assoc_obs_mask] = False
+        obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
+        i_delete, = np.nonzero(assoc_obs_mask)
+        delete.extend(i_delete)
 
 for i in delete:
     delete_all_files(obs_tbl[i])
 
 
+#%% now reduce data for stis files
+
+
 #%% change to data directory and renew file list
 
 os.chdir(data_dir)
-shortname_list = [obs_tbl[i]['key science files'] for i in stis_indices if obs_tbl['usable'].filled(True)[i]]
-shortname_list = sum(shortname_list, [])
-scifiles = dbutils.find_stela_files_from_hst_filenames(shortname_list)
-scifiles = [str(f) for f in scifiles]
+instruments = ['hst-stis-g140l', 'hst-stis-e140m']
+scifiles = dbutils.find_data_files('tag', instruments=instruments)
+scifiles = list(map(str, scifiles))
 
 #%% point to calibration files
 
@@ -509,69 +538,61 @@ if _ == 'y':
         x1d_params = get_x1dparams(x1dfile)
         id = fits.getval(fltfile, 'asn_id').lower()
         traceloc = tracelocs[id]
-        if 'e140m' in fltfile.name:
-            traceloc = traceloc[-8]
         stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
 
 
+#%% flag anomalous spectra, if any
 
-#%% if only one STIS exposure, extract background traces
+"""Data could be good but look like crap, so spectra should only be flagged unusable
+if they clearly differ from the norm in a serious way, I think."""
 
-if len(fltfiles) == 1:
-    # remove existing files
-    labels = "x1dbk1 x1dtrace x1dbk2".split()
-    print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
-    print('\n'.join([f.name for f in fltfiles]))
-    _ = input('y/n? ')
-    if _ == 'y':
-        for fltfile in fltfiles:
-            id = fits.getval(fltfile, 'asn_id').lower()
-            x1d_params = get_x1dparams(fltfile)
+obs_tbl['flags'] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype='object')
 
-            x1dfile = dbutils.modify_file_label(fltfile, 'x1d')
-            tracelocs = fits.getdata(x1dfile, 1)['a2center']
-            if 'e140m' in fltfile.name:
-                traceloc = tracelocs[-8]
+bb_tbl = obs_tbl[bb_mask]
+configs = np.unique(bb_tbl['science config'])
+pwd = Path('.')
+for config in configs:
+    config_mask = bb_tbl['science config'] == config
+    ids = bb_tbl['archive id'][config_mask]
+    for id in ids:
+        fig = plt.figure()
+        file, = pwd.glob(f'*{id}_x1d.fits')
+        plt.title(file.name)
+        data = fits.getdata(file, 1)
+        plt.step(data['wavelength'].T, data['flux'].T, where='mid')
 
-                mod_params = copy(x1d_params)
-                mod_params['bk1size'] = mod_params['bk2size'] = 0
-                mod_params['bk1offst'] = mod_params['bk2offst'] = 0
-                del mod_params['extrsize']
+    print('Click outside the plots to continue.')
+    xy = utils.click_coords(fig)
 
-                yt = traceloc
-                szt = x1d_params['extrsize']
-                sets = ((yt, szt, labels[1]),)
-            else:
-                traceloc, = tracelocs
+    while True:
+        id_ending = input('Any spectra that should be flagged ? Give last few letters of the id.\n'
+                          'Hit enter if none. Prompt will loop until an empty answer is given.')
+        if id_ending == '':
+            break
+        mask = np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
+        i_mask, = np.nonzero(mask)
 
-                mod_params = copy(x1d_params)
-                mod_params['bk1size'] = mod_params['bk2size'] = 0
-                mod_params['bk1offst'] = mod_params['bk2offst'] = 0
-                del mod_params['extrsize']
+        usable_ans = input(f'Should {id_ending} be flagged unusable and files deleted (y/n)?')
+        usable = not (usable_ans == 'y')
+        if not usable:
+            obs_tbl['usable'][mask] = False
+            reason = input(f'Enter reason for flagging {id_ending} as unusable.')
+            obs_tbl['reason unusable'][mask] = reason
+            delete_all_files(i_delete)
+            continue
 
-                y1 = traceloc + x1d_params['bk1offst']
-                yt = traceloc
-                y2 = traceloc + x1d_params['bk2offst']
-                sz1 = x1d_params['bk1size']
-                szt = x1d_params['extrsize']
-                sz2 = x1d_params['bk2size']
-                sets = ((y1, sz1, labels[0]),
-                        (yt, szt, labels[1]),
-                        (y2, sz2, labels[2]))
+        flags_ans = input('What other flags should be recorded? Separate with commas, no spaces: ')
+        flags = flags_ans.split(',')
+        for i in i_mask:
+            obs_tbl['flags'][i_mask] = flags
 
-            for y, sz, lbl in sets:
-                x1dfile = dbutils.modify_file_label(fltfile, lbl)
-                if x1dfile.exists():
-                    os.remove(x1dfile)
+    plt.close('all')
 
-                stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=y, extrsize=sz, **mod_params)
+obs_tbl['usable'][obs_tbl['usable'].mask] = True
 
 
+#%% coadd multiple exposures
 
-
-
-
-#%% if multiple STIS exposures coadd
 
 x1dfiles = dbutils.find_data_files('x1d', instruments=instruments, directory=data_dir)
 if len(x1dfiles) > 1:
@@ -616,7 +637,8 @@ os.chdir(main_dir)
 warnings.filterwarnings("ignore", message="The converter")
 warnings.filterwarnings("ignore", message="line style")
 
-#%% plot extraction locations
+
+#%% plot extraction locations for stis
 
 saveplots = True
 fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
@@ -650,140 +672,9 @@ for ff in fltfiles:
         fig.set_dpi(dpi)
 
 
-#%% plot spectra, piggyback Lya flux (O-C)/sigma
-
-saveplots = True
-vstd = (lya.wgrid_std/1215.67/u.AA - 1)*const.c.to('km s-1')
-x1dfiles = dbutils.find_data_files('coadd', instruments='hst-stis', directory=data_dir)
-if len(x1dfiles) == 0:
-    x1dfiles = dbutils.find_data_files('x1d', instruments='hst-stis', directory=data_dir)
-
-for xf in x1dfiles:
-    h = fits.open(xf, ext=1)
-    data = h[1].data
-    order = 36 if 'e140m' in xf.name else 0
-    spec = {}
-    for name in data.names:
-        spec[name.lower()] = data[name][order]
-
-    # shift to velocity frame
-    rv = target_table.loc[tic_id]['st_radv'] * u.km/u.s
-    v = (spec['wavelength']/1215.67 - 1) * const.c - rv
-    v = v.to_value('km s-1')
-
-    fig = plt.figure()
-    plt.title(xf.name)
-    plt.step(v, spec['flux'], color='C0', where='mid')
-    plt.xlim(-500, 500)
-
-    # for plotting airglow
-    if 'coadd' not in xf.name:
-        size_scale = spec['extrsize'] / (spec['bk1size'] + spec['bk2size'])
-        flux_factor = spec['flux'] / spec['net']
-        z = spec['net'] == 0
-        if np.any(z):
-            raise NotImplementedError
-        bk_flux = spec['background'] * flux_factor * size_scale
-        plt.step(v, bk_flux, color='C2', where='mid')
-    else:
-        bk_flux = 0
-
-    # line integral and (O-C)/sigma
-    w, flux, error = spec['wavelength'], spec['flux'], spec['error']
-    if 'g140m' in xf.name:
-        above_bk = flux > bk_flux
-        neighbors_above_bk = (np.append(above_bk[1:], False)
-                                   & np.insert(above_bk[:-1], 0, False))
-        uncontaminated = ((bk_flux < 1e-15) | (above_bk & neighbors_above_bk))
-    elif 'e140m' in xf.name:
-        v_helio = h[1].header['V_HELIO']
-        w0 = 1215.67
-        dw = v_helio/3e5 * w0
-        wa, wb = w0 - dw + np.array((-0.07, 0.07))
-        uncontaminated = ~((w > wa) & (w < wb))
-    else:
-        raise NotImplementedError
-    flux[~uncontaminated], error[~uncontaminated] = 0, 0 # zero out high airglow range
-    int_rng = (v > -400) & (v < 400)
-    int_mask = int_rng & uncontaminated
-    if sum(int_mask) > 4:
-        pltflux = flux.copy()
-        pltflux[~int_mask] = np.nan
-        O, E = utils.flux_integral(w[int_rng], flux[int_rng], error[int_rng])
-        if 'coadd' in xf.name:
-            E *= np.sqrt(h[1].data['eff_exptime'].max()/2000)
-        snr = O/E
-        plt.fill_between(v, pltflux, step='mid', color='C0', alpha=0.3)
-    else:
-        O, E = 0, 0
-        snr = 0
-        int_mask[:] = 0
-
-    # kinda kloogy but simple way to get a mask that covers the same integration intervals as the data but for the
-    # model profile grid
-    int_mask_mod = np.interp(lya.wgrid_std.value, w, int_mask)
-    int_mask_mod[int_mask_mod < 0.5] = 0
-    int_mask_mod = int_mask_mod.astype(bool)
-
-    # predicted lines
-    ylim = plt.ylim()
-    itarget = target_table.loc_indices[tic_id]
-    predicted_fluxes = []
-    for pct in (-34, 0, +34):
-        n_H = ism.ism_n_H_percentile(50 + pct)
-        lya_factor = lya.lya_factor_percentile(50 - pct)
-        profile, = lya.lya_at_earth_auto(target_table[[itarget]], n_H, lya_factor=lya_factor, default_rv='ism')
-        plt.plot(vstd - rv, profile, color='0.5', lw=1)
-        # compute flux over same interval as it is computed from the observations
-        # this neglects instrument braodening plus the line profile will be wrong, but it's close enough
-        int_profile = profile.copy()
-        int_profile[~int_mask_mod] = 0
-        predicted_flux = np.trapezoid(int_profile, lya.wgrid_std)
-        predicted_fluxes.append(predicted_flux.to_value('erg s-1 cm-2'))
-
-    C = predicted_fluxes[1]
-    sigma_hi = max(predicted_fluxes) - predicted_fluxes[1]
-    sigma_lo = predicted_fluxes[1] - min(predicted_fluxes)
-    O_C_s = (O - C) / sigma_hi
-    disposition = 'PASS' if snr >= 3 else 'DROP'
-
-    print('')
-    print(f'{target}')
-    print(f'\tpredicted nominal: {C:.2e}')
-    print(f'\tpredicted optimistic: {max(predicted_fluxes):.2e}')
-    print(f'\tmeasured: {O:.2e} ± {E:.1e}')
-
-    flux_lbl = (f'{disposition}\n'
-                f'\n'
-                f'measured flux:\n'
-                f'  {O:.2e} ± {E:.1e} ({snr:.1f}σ)\n'
-                f'predicted flux:\n'
-                f'  {C:.1e} +{sigma_hi:.1e} / -{sigma_lo:.1e}\n' 
-                f'(O-C)/sigma:\n'
-                f'  {O_C_s:.1f}\n'
-                )
-    leg = plt.legend(('signal', 'background', '-1,0,+1 σ predictions'), loc='upper right')
-    plt.annotate(flux_lbl, xy=(0.02, 0.98), xycoords='axes fraction', va='top')
-
-    plt.ylim(ylim)
-    plt.xlabel('Velocity in System Frame (km s-1)')
-    plt.ylabel('Flux Density (cgs)')
-
-    if saveplots:
-        pngfile = str(xf).replace('.fits', '_plot.png')
-        fig.savefig(pngfile, dpi=300)
-
-        dpi = fig.get_dpi()
-        fig.set_dpi(150)
-        plugins.connect(fig, plugins.MousePosition(fontsize=14))
-        htmlfile = pngfile = str(xf).replace('.fits', '_plot.html')
-        mpld3.save_html(fig, htmlfile)
-        fig.set_dpi(dpi)
-
-
 #%% save observation manifest
 
 obs_tbl.sort('start')
-obs_tbl.write(path_obs_tbl)
+obs_tbl.write(path_obs_tbl, overwrite=True)
 
 

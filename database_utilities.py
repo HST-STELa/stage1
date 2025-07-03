@@ -290,7 +290,13 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
         id, suffix = re.search(r'(\w{9})_([_\w]+)\.fits', name).groups()
         if suffix in replace_types:
             pattern = r'_(tag|raw|rawtag_a|rawacq)\.fits'
-            alternate_name, = filter(lambda name: len(re.findall(id + pattern, name)) > 0, newnames)
+            alternate_names = (list(filter(lambda name: len(re.findall(id + pattern, name)) > 0, newnames))
+                               + list(tgt.glob(f'*{id}_*tag*.fits'))
+                               + list(tgt.glob(f'*{id}_raw.fits')))
+            if len(alternate_names) == 0:
+                raise ValueError(f'No matching file found for {newname}. You might need to downlaod it.')
+            alternate_name = alternate_names[0]
+            alternate_name = Path(alternate_name).name
             newnames[i] = re.sub(pattern, f'_{suffix}.fits', alternate_name)
 
     newpaths = []
@@ -338,3 +344,53 @@ def delete_files_by_hst_id(ids, directory='.'):
     if answer == 'y':
         for file in files:
             os.remove(file)
+
+
+def filter_observations(obs_table, config_substrings=None, usable=None, usability_fill_value=True, exclude_flags=None):
+    """
+    Filter an astropy table based on config substring matches, usability, and exclusion flags.
+
+    Parameters
+    ----------
+    obs_table : astropy.table.Table
+        The input table.
+    config_substrings : list of str, optional
+        Substrings to match in the 'config' column.
+    usable : bool, optional
+        Whether to keep rows marked usable (True) or not (False).
+    usability_fill_value : bool, optional
+        Value to fill in for masked usability entries.
+    exclude_flags : list of str, optional
+        Any row with one of these flags in the 'flags' column will be excluded.
+
+    Returns
+    -------
+    filtered_table : astropy.table.Table
+        The filtered table.
+    """
+    tbl = obs_table.copy()
+
+    # Step 1: Fill masked usability values
+    if isinstance(tbl['usable'], obs_table.MaskedColumn):
+        tbl['usable'] = tbl['usable'].filled(usability_fill_value)
+
+    # Step 2: Filter by config substrings
+    if config_substrings:
+        config_mask = np.zeros(len(tbl), dtype=bool)
+        for substr in config_substrings:
+            config_mask |= [substr in cfg for cfg in tbl['config']]
+        tbl = tbl[config_mask]
+
+    # Step 3: Filter by usability
+    if usable is not None:
+        tbl = tbl[tbl['usable'] == usable]
+
+    # Step 4: Filter out rows with any matching flag
+    if exclude_flags:
+        def has_excluded_flag(flag_list):
+            return any(flag in flag_list for flag in exclude_flags)
+
+        flag_mask = [not has_excluded_flag(flags) for flags in tbl['flags']]
+        tbl = tbl[flag_mask]
+
+    return tbl
