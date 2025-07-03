@@ -10,7 +10,7 @@ import paths
 
 #%% settings
 
-eval_no = 1.1
+eval_no = 1
 
 temp_dir = Path(f'/Users/parke/Downloads/stela_stage2_eval_pkg{eval_no}')
 if not temp_dir.exists():

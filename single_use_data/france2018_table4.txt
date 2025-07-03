@@ -1,0 +1,44 @@
+Table 4 
+Non-planet Host Flux Measurements
+
+
+Name	F_bol^a	N V	C II	Si III	Si IV	F(90-360 Aring)	
+	[10^-7	[10^-15	[10^-15	[10^-15	[10^-15	[10^-14	
+	erg s^-1 cm^-2]	erg s^-1 cm^-2 Aring^-1]	erg s^-1 cm^-2 Aring^-1]	erg s^-1 cm^-2 Aring^-1]	erg s^-1 cm^-2 Aring^-1]	erg s^-1 cm^-2 ]	
+HD 28568	0.6	23 +or- 5	120 +or- 4	82 +or- 8	65 +or- 5	189	
+HD 28033	0.3	cdots	4.8 +or- 0.9	1 +or- 3	7 +or- 2	cdots	
+HD 33262	2.8	47 +or- 2	287 +or- 2	319 +or- 4	307 +or- 3	380	
+HD 106516	1.2	4 +or- 3	22 +or- 2	4 +or- 5	1 +or- 4	32.6	
+HD 28205	0.3	8 +or- 2	27 +or- 2	22 +or- 4	17 +or- 3	67.8	
+HD 25825	0.2	10.6 +or- 0.5	36.7 +or- 0.7	40.9 +or- 0.8	47 +or- 1	86.2	
+HD 97334	0.7	15 +or- 2	86 +or- 2	48 +or- 4	82 +or- 2	121	
+HD 39587	4.3	cdots	454 +or- 2	cdots	385 +or- 2	680^b	
+HII 314	0.02	2.24 +or- 0.08	6.8 +or- 0.1	3.70 +or- 0.9	4.8 +or- 0.1	18.2	
+16 Cyg A	1.1	cdots	17.7 +or- 0.2	10.8 +or- 0.2	8.3 +or- 0.2	cdots	
+HD 72905	1.5	cdots	184 +or- 1	cdots	136 +or- 1	cdots	
+HD 129333	0.3	cdots	124 +or- 1	cdots	106 +or- 1	cdots	
+HD 199288	0.6	0.31 +or- 0.06	3.77 +or- 0.07	1.79 +or- 0.08	1.48 +or- 0.09	2.53	
+alpha Cen A	271	356 +or- 5	2690 +or- 8	1590 +or- 12	1220 +or- 7	2900^b	
+HD 59967	0.6	18 +or- 2	60 +or- 2	71 +or- 3	47 +or- 2	145	
+HD 20630	3.3	39 +or- 1	234 +or- 2	216 +or- 4	209 +or- 2	40^b	
+HD 43162	0.7	3 +or- 2	73 +or- 2	48 +or- 5	61 +or- 3	22.8	
+HD 131156	3.9	70 +or- 4	451 +or- 6	281 +or- 12	317 +or- 5	830^b	
+KIC 11560431	0.0002	4.6 +or- 1	16.4 +or- 0.2	5.7 +or- 0.1	6.9 +or- 0.1	37.0	
+HD 166	1.1	43 +or- 2	126 +or- 3	96 +or- 5	94 +or- 3	350	
+HD 165341	6.9	71 +or- 2	437 +or- 2	249 +or- 5	206 +or- 2	700^b	
+HD 103095	1.9	0.1 +or- 0.1	1.1 +or- 0.1	0.56 +or- 0.09	1.2 +or- 0.1	1.11	
+HR 1925	1.3	21 +or- 2	85 +or- 2	63 +or- 4	56 +or- 2	171	
+HD 22468	2.6	600 +or- 3	2550 +or- 5	1280 +or- 12	1200 +or- 4	4880	
+HD 155886	2.6	19 +or- 1	131 +or- 1	66 +or- 2	cdots	151	
+LTT 2050	0.06	1.7 +or- 0.1	2.0 +or- 0.2	0.58 +or- 0.09	1.4 +or- 0.2	13.6	
+HD 197481	0.2	70 +or- 1	206 +or- 2	788 +or- 2	864 +or- 1	720^b	
+Kapteyn's Star	0.3	0.2 +or- 0.1	0.9 +or- 0.1	0.8 +or- 0.1	0.9 +or- 0.3	1.98	
+LP 415-1619	0.006	cdots	2.97 +or- 0.07	0.77 +or- 0.04	cdots	cdots	
+AD Leo	0.2	136 +or- 1	219 +or- 1	142 +or- 1	159 +or- 1	1100^b	
+LHS-26	0.08	cdots	cdots	cdots	cdots	cdots	
+Procyon	170	1650 +or- 5	8720 +or- 9	4940 +or- 10	4160 +or- 20	3500^b	
+EV Lac	0.2	41 +or- 1	51 +or- 10	35 +or- 2	39 +or- 1	450^b	
+YY Gem	0.1	41.7 +or- 0.7	223 +or- 1	34 +or- 1	82 +or- 1	339	
+Notes.
+^a ${F}_{\mathrm{bol}}=\sigma {T}_{\mathrm{eff}}^{4}{({R}_{* }/d)}^{2}$.
+^b Direct measurement of the 90-360 Aring flux from EUVE, corrected for interstellar H I attenuation.
