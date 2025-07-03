@@ -51,7 +51,7 @@ targname_file = str(targname_file)
 data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{targname_file}')
 
 
-#%% find key science files
+#%% find key science files already downloaded
 
 """
 for it to be a science file, 
@@ -90,9 +90,13 @@ files_science = np.array(files_raw_only_if_accum)[science_target]
 
 #%% create or load table of observation information
 
+newcols = 'flags notes'.split()
 path_obs_tbl = data_dir / f'{targname_file}.observation-table.ecsv'
 if path_obs_tbl.exists():
-    obs_tbl = table.Table.read(path_obs_tbl)
+    obs_tbl = catutils.load_and_mask_ecsv(path_obs_tbl)
+    for col in newcols:
+        if col not in obs_tbl.colnames:
+            obs_tbl[col] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype='object')
 else:
     key_science_files = []
     files_science_copy = files_science.tolist()
@@ -152,6 +156,7 @@ results = hst_database.query_object(f'TIC {tic_id}',
                                     sci_instrume="COS,STIS",
                                     sci_spec_1234="G140M,G140L,E140M,G130M,G160M",
                                     sci_status='PUBLIC',
+                                    sci_aec='S', # science not calibration
                                     select_cols="sci_operating_mode sci_instrume".split())
 mode = results['sci_operating_mode'].filled('').tolist()
 inst = results['sci_instrume'].filled('').tolist()
@@ -175,10 +180,11 @@ unusable_ids = obs_tbl['archive id'][~obs_tbl['usable'].filled(True)]
 
 new_files_mask = []
 for file_info in files_in_archive:
-    if file_info['authz_primary_identifier'] in unusable_ids:
-        continue
-    files = list(data_dir.glob(f'*{file_info['filename']}'))
-    new_files_mask.append(len(files) == 0)
+    if file_info['authz_primary_identifier'].lower() in unusable_ids:
+        new_files_mask.append(False)
+    else:
+        files = list(data_dir.glob(f'*{file_info['filename']}'))
+        new_files_mask.append(len(files) == 0)
 new_files = files_in_archive[new_files_mask]
 
 
@@ -217,8 +223,10 @@ for file in sci_files:
         row['supporting files'] = []
         row['usable'] = True
         row['reason unusable'] = ''
+        row['flags'] = []
+        row['notes'] = ''
         obs_tbl.add_row(row)
-        for name in 'supporting files,usable,reason unusable'.split(','):
+        for name in 'supporting files,usable,reason unusable,notes,flags'.split(','):
             obs_tbl[name].mask[-1] = True
 
 cleaned_sci_files = [np.unique(sfs).tolist() for sfs in obs_tbl['key science files']]
@@ -228,6 +236,9 @@ obs_tbl['key science files'] = cleaned_sci_files
 #%% download supporting acquisitions and wavecals
 
 for row in obs_tbl:
+    usable = row['usable']
+    if not np.ma.is_masked(usable) and not usable:
+        continue
     path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
     pieces = dbutils.parse_filename(path)
     id = pieces['id']
@@ -235,7 +246,7 @@ for row in obs_tbl:
     if obs_tbl['supporting files'].mask[i]:
         supporting_files = {}
     else:
-        continue
+        supporting_files = obs_tbl['supporting files'][i]
 
     # look for acquisitions
     acq_tbl_w_spts = hstutils.locate_associated_acquisitions(path, additional_files=('SPT',))
@@ -248,7 +259,8 @@ for row in obs_tbl:
     acq_types = np.unique(acq_tbl['obsmode'].tolist())
     # keep all non-peak acqs, but only keep the most recent peakups
     for atp in acq_types:
-        supporting_files[atp.lower()] = acq_tbl.loc[atp]['filename'].tolist()
+        if atp.lower() not in supporting_files:
+            supporting_files[atp.lower()] = acq_tbl.loc[atp]['filename'].tolist()
 
     # download missing ones
     not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
@@ -286,11 +298,15 @@ pass
 def delete_all_files(obs_tbl_row):
     row = obs_tbl_row
     shortnames = row['key science files'][:]
-    for name in row['supporting files'].values():
-        if len(name[0]) > 1:
-            shortnames.extend(name)
-        else:
-            shortnames.append(name)
+    if isinstance(shortnames, np.ndarray):
+        shortnames = shortnames.tolist()
+    sfs = row['supporting files']
+    if not np.ma.is_masked(sfs):
+        for name in sfs.values():
+            if len(name[0]) > 1:
+                shortnames.extend(name)
+            else:
+                shortnames.append(name)
     ids = [re.search(r'(\w{9})_\w+.\w+$', name).groups()[0] for name in shortnames]
     dbutils.delete_files_by_hst_id(ids, data_dir)
 
@@ -300,6 +316,9 @@ def delete_all_files(obs_tbl_row):
 reasons = dict(nodata='No data taken.',
                no_gs_lock='Guide star tracking not locked.')
 for i, row in enumerate(obs_tbl):
+    usable = row['usable']
+    if not np.ma.is_masked(usable) and not usable:
+        continue
     reject = False
     shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
     scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
@@ -360,12 +379,16 @@ for i, row in enumerate(obs_tbl):
 #%% review ACQs. record and delete failures.
 
 acq_filenames = []
-for supfiles in obs_tbl['supporting files']:
+usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
+for supfiles in usbl_tbl['supporting files']:
     if np.ma.is_masked(supfiles):
         continue
     for type, file in supfiles.items():
         if 'acq' in type.lower():
-            acq_filenames.append(file)
+            if utils.is_list_like(file):
+                acq_filenames.extend(file)
+            else:
+                acq_filenames.append(file)
 acq_filenames = np.unique(acq_filenames)
 
 delete = []
@@ -384,7 +407,7 @@ for acq_name in acq_filenames:
         stis.tastis.tastis(str(acq_file))
         h = fits.open(acq_file)
 
-        if 'mirvis' in acq_file.name:
+        if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
             fig, axs = plt.subplots(1, 3, figsize=[7,3])
             for j, ax in enumerate(axs):
                 data = h['sci', j+1].data
@@ -401,8 +424,18 @@ for acq_name in acq_filenames:
         print('\nCOS data, no automatic eval routine\n')
         stages = ['initial', 'confirmation']
         h = fits.open(acq_file)
-        if len(h) > 7:
+        if h[0].header['exptype'] == 'ACQ/SEARCH':
             raise NotImplementedError
+        if h[0].header['exptype'] == 'ACQ/PEAKXD':
+            print('PEAKXD acq')
+            print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
+            print(f'\tcounts: {h[1].data['counts']}')
+            print(f'\tslew: {h[0].header['ACQSLEWY']}')
+        if h[0].header['exptype'] == 'ACQ/PEAKD':
+            print('PEAKD acq')
+            print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
+            print(f'\tcounts: {h[1].data['counts']}')
+            print(f'\tslew: {h[0].header['ACQSLEWX']}')
         if h[0].header['exptype'] == 'ACQ/IMAGE':
             fig, axs = plt.subplots(1, 2, figsize=[5,3])
             for j, ax in enumerate(axs):
@@ -430,13 +463,12 @@ for i in delete:
     delete_all_files(obs_tbl[i])
 
 
-#%% now reduce data for stis files
-
 
 #%% change to data directory and renew file list
 
 os.chdir(data_dir)
 instruments = ['hst-stis-g140l', 'hst-stis-e140m']
+# instruments = ['hst-stis-g140l', 'hst-stis-e140m', 'hst-stis-g140m']
 stis_tag_files = dbutils.find_data_files('tag', instruments=instruments)
 stis_tag_files = list(map(str, stis_tag_files))
 if not stis_tag_files:
@@ -555,7 +587,7 @@ for ff in fltfiles:
         hx = fits.open(fx)
         y = hx[1].data['extrlocy']
         x = np.arange(img.shape[1]) + 0.5
-        iln, = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')
+        iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
     else:
         plt.annotate('calstis cross correlation to locate spectrum failed', xy=(0.05,0.99),
                      xycoords='axes fraction', va='top', color='w')
@@ -586,7 +618,7 @@ for ff in fltfiles:
         a2 = yclick
 
     if fx.exists():
-        nln, = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')
+        nln = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')[0]
         plt.legend(handles=(iln, pln, nln))
     else:
         nln = plt.axhline(a2, color='w', alpha=0.5, label='manual selection')
@@ -625,12 +657,11 @@ if _ == 'y':
 """Data could be good but look like crap, so spectra should only be flagged unusable
 if they clearly differ from the norm in a serious way, I think."""
 
-obs_tbl['flags'] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype='object')
-
-configs = np.unique(obs_tbl['science config'])
+usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
+configs = np.unique(usbl_tbl['science config'])
 for config in configs:
-    config_mask = obs_tbl['science config'] == config
-    ids = obs_tbl['archive id'][config_mask]
+    config_mask = usbl_tbl['science config'] == config
+    ids = usbl_tbl['archive id'][config_mask]
     for id in ids:
         fig = plt.figure()
         file, = data_dir.glob(f'*{id}_x1d.fits')
@@ -655,7 +686,8 @@ for config in configs:
             obs_tbl['usable'][mask] = False
             reason = input(f'Enter reason for flagging {id_ending} as unusable.')
             obs_tbl['reason unusable'][mask] = reason
-            delete_all_files(i_delete)
+            for i in i_mask:
+                delete_all_files(obs_tbl[i])
             continue
 
         flags_ans = input('What other flags should be recorded? Separate with commas, no spaces: ')
@@ -680,7 +712,7 @@ configs = np.unique(use_tbl['science config'])
 
 for config in configs:
     config_tbl = dbutils.filter_observations(use_tbl, config_substrings=[config])
-    if len(config_tbl) == 1:
+    if (len(config_tbl) == 1) and 'e140m' not in config:
         continue
 
     shortnames = np.char.add(config_tbl['archive id'], '_x1d.fits')
@@ -731,7 +763,8 @@ warnings.filterwarnings("ignore", message="line style")
 
 saveplots = True
 
-for row in obs_tbl:
+usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
+for row in usbl_tbl:
     if 'stis' not in row['science config']:
         continue
     flt_name = row['archive id'] + '_flt.fits'
@@ -744,16 +777,17 @@ for row in obs_tbl:
     plt.title(ff.name)
 
     x = np.arange(img.shape[1]) + 0.5
-    i = 36 if 'e140m' in ff.name else 0
-    y = td['extrlocy'][i]
-    ysz = td['extrsize'][i]
+    y = td['extrlocy']
+    ysz = td['extrsize']
     plt.plot(x, y.T, color='w', lw=0.5, alpha=0.5)
-    plt.fill_between(x, y - ysz/2, y + ysz/2, color='w', lw=0, alpha=0.3)
+    for yy, yysz in zip(y, ysz):
+        plt.fill_between(x, yy - yysz/2, yy + yysz/2, color='w', lw=0, alpha=0.3)
     for ibk in (1,2):
-        off, sz = td[f'bk{ibk}offst'][i], td[f'bk{ibk}size'][i]
-        ym = y + off
-        y1, y2 = ym - sz/2, ym + sz/2
-        plt.fill_between(x, y1, y2, color='0.5', alpha=0.3, lw=0)
+        off, sz = td[f'bk{ibk}offst'], td[f'bk{ibk}size']
+        ym = y + off[:,None]
+        y1, y2 = ym - sz[:,None]/2, ym + sz[:,None]/2
+        for yy1, yy2 in zip(y1,y2):
+            plt.fill_between(x, yy1, yy2, color='0.5', alpha=0.3, lw=0)
 
     if saveplots:
         dpi = fig.get_dpi()

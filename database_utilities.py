@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import re
 import warnings
+from collections import defaultdict
 
 import numpy as np
 from astropy.io import fits
@@ -394,3 +395,55 @@ def filter_observations(obs_table, config_substrings=None, usable=None, usabilit
         tbl = tbl[flag_mask]
 
     return tbl
+
+
+def delete_files_for_unusable_observations(obs_table, usability_fill_value=True, dry_run=True, verbose=True):
+    """
+    Delete science and supporting files for unusable observations.
+
+    Science files are always deleted.
+    Supporting files are deleted only if they are not used in any usable observation.
+
+    Parameters
+    ----------
+    obs_table : astropy.table.Table
+        Table containing observation metadata with 'usable', 'key science files', and 'supporting files' columns.
+    usability_fill_value : bool, optional
+        Value to fill in for masked entries in the 'usable' column.
+    dry_run : bool, optional
+        If True, just print what would be deleted. If False, actually delete the files.
+    verbose : bool, optional
+        If True, print what is being deleted or kept.
+    """
+    from astropy.table import MaskedColumn
+
+    tbl = obs_table.copy()
+
+    # Fill in masked usability values if needed
+    if isinstance(tbl['usable'], MaskedColumn):
+        tbl['usable'] = tbl['usable'].filled(usability_fill_value)
+
+    # Collect all supporting files used by usable observations
+    supporting_usage = defaultdict(int)
+    for row in tbl[tbl['usable']]:
+        for f in row['supporting files'].values():
+            supporting_usage[f] += 1
+
+    # Go through unusable observations
+    for row in tbl[~tbl['usable']]:
+        # Delete science files
+        for f in row['key science files']:
+            if verbose or dry_run:
+                print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting science file: {f}")
+            if not dry_run and os.path.exists(f):
+                os.remove(f)
+
+        # Delete supporting files if no other usable obs uses them
+        for label, f in row['supporting files'].items():
+            if supporting_usage[f] == 0:
+                if verbose or dry_run:
+                    print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting unused supporting file: {f}")
+                if not dry_run and os.path.exists(f):
+                    os.remove(f)
+            elif verbose:
+                print(f"Keeping shared supporting file: {f}")
