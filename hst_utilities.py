@@ -30,12 +30,19 @@ def locate_associated_acquisitions(path, additional_files=()):
     # make sure observations are from the same program
     id = pieces['id']
     id_searchstr = id[:6] + '*' # all files with this root will be from the same observation set
-    results = hst_database.query_region(coords,
-                                        radius=0.1,
-                                        sci_data_set_name=id_searchstr,
-                                          sci_start_time=date_search_str,
-                                          sci_operating_mode='*ACQ*',
-                                          select_cols=['sci_operating_mode', 'sci_start_time', 'sci_targname'])
+    results = hst_database.query_region(
+        coords,
+        radius=0.1,
+        sci_data_set_name=id_searchstr,
+        sci_start_time=date_search_str,
+        sci_operating_mode='*ACQ*',
+        select_cols=[
+            'sci_operating_mode',
+            'sci_start_time',
+            'sci_targname',
+            'sci_instrume'
+        ]
+    )
     if len(results) == 0:
         warnings.warn(f'No acquitions found for {path.name}')
         return []
@@ -45,6 +52,7 @@ def locate_associated_acquisitions(path, additional_files=()):
     results.add_index('sci_data_set_name')
     filtered['obsmode'] = results.loc[filtered['dataset']]['sci_operating_mode']
     filtered['start'] = results.loc[filtered['dataset']]['sci_start_time']
+    filtered['inst'] = results.loc[filtered['dataset']]['sci_instrume']
 
     return filtered
 

@@ -74,18 +74,19 @@ for f in files_acqs_removed:
     else:
         files_raw_only_if_accum.append(f)
 
-# check that they are targeting the science target
-hdr_targets = [fits.getval(f, 'targname') for f in files_raw_only_if_accum]
-simbad_names = dbutils.groom_hst_names_for_simbad(hdr_targets)
-tids = query.query_simbad_for_tic_ids(simbad_names)
-tids = list(map(int, tids))
-stela_names = np.zeros(len(tids), 'object')
-in_stela = np.isin(tids, stela_name_tbl['tic_id'])
-stela_names[~in_stela] = 'not in stela'
-stela_names[in_stela] = stela_name_tbl.loc[tids]['hostname']
-science_target = stela_names == target
-
-files_science = np.array(files_raw_only_if_accum)[science_target]
+# # check that they are targeting the science target
+# hdr_targets = [fits.getval(f, 'targname') for f in files_raw_only_if_accum]
+# simbad_names = dbutils.groom_hst_names_for_simbad(hdr_targets)
+# tids = query.query_simbad_for_tic_ids(simbad_names)
+# tids = list(map(int, tids))
+# stela_names = np.zeros(len(tids), 'object')
+# in_stela = np.isin(tids, stela_name_tbl['tic_id'])
+# stela_names[~in_stela] = 'not in stela'
+# stela_names[in_stela] = stela_name_tbl.loc[tids]['hostname']
+# science_target = stela_names == target
+#
+# files_science = np.array(files_raw_only_if_accum)[science_target]
+files_science = files_raw_only_if_accum
 
 
 #%% create or load table of observation information
@@ -191,8 +192,8 @@ new_files = files_in_archive[new_files_mask]
 #%% download and rename new files
 
 manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
-# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_file)
+# dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
+dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_file)
 
 
 #%% make sure info on all files are in the obs tbl
@@ -256,11 +257,27 @@ for row in obs_tbl:
     acq_tbl.add_index('obsmode')
 
     # record these
-    acq_types = np.unique(acq_tbl['obsmode'].tolist())
-    # keep all non-peak acqs, but only keep the most recent peakups
-    for atp in acq_types:
-        if atp.lower() not in supporting_files:
-            supporting_files[atp.lower()] = acq_tbl.loc[atp]['filename'].tolist()
+    for acq_row in acq_tbl:
+        file = str(acq_row['filename'])
+        acq_type = acq_row['obsmode']
+        inst = acq_row['inst']
+        if 'COS' in inst:
+            aqt = acq_type.lower()
+        elif 'STIS' in inst:
+            if acq_type == 'ACQ/PEAK':
+                files = acq_tbl.loc[acq_type]['filename']
+                assert len(files) <= 2
+                aqt = 'acq/peakd' if min(files) == acq_row['filename'] else 'acq/peakxd'
+            else:
+                aqt = acq_type.lower()
+        else:
+            NotImplementedError
+
+        if aqt in supporting_files:
+            if file > supporting_files[aqt]:
+                supporting_files[aqt] = file
+        else:
+            supporting_files[aqt] = file
 
     # download missing ones
     not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
@@ -289,26 +306,10 @@ for row in obs_tbl:
 
 #%% move and rename downloaded files
 
+pass
 dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_file)
 # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
 pass
-
-#%% file deletion tool
-
-def delete_all_files(obs_tbl_row):
-    row = obs_tbl_row
-    shortnames = row['key science files'][:]
-    if isinstance(shortnames, np.ndarray):
-        shortnames = shortnames.tolist()
-    sfs = row['supporting files']
-    if not np.ma.is_masked(sfs):
-        for name in sfs.values():
-            if len(name[0]) > 1:
-                shortnames.extend(name)
-            else:
-                shortnames.append(name)
-    ids = [re.search(r'(\w{9})_\w+.\w+$', name).groups()[0] for name in shortnames]
-    dbutils.delete_files_by_hst_id(ids, data_dir)
 
 
 #%% identify, record, and delete files missing data
@@ -372,9 +373,6 @@ for i, row in enumerate(obs_tbl):
         obs_tbl['usable'][i] = False
         obs_tbl['reason unusable'][i] = reason
 
-        # delete all files
-        delete_all_files(row)
-
 
 #%% review ACQs. record and delete failures.
 
@@ -385,13 +383,9 @@ for supfiles in usbl_tbl['supporting files']:
         continue
     for type, file in supfiles.items():
         if 'acq' in type.lower():
-            if utils.is_list_like(file):
-                acq_filenames.extend(file)
-            else:
-                acq_filenames.append(file)
+            acq_filenames.append(file)
 acq_filenames = np.unique(acq_filenames)
 
-delete = []
 for acq_name in acq_filenames:
     bad_acq = False
     def associated(sfs):
@@ -456,12 +450,14 @@ for acq_name in acq_filenames:
     if bad_acq:
         obs_tbl['usable'][assoc_obs_mask] = False
         obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
-        i_delete, = np.nonzero(assoc_obs_mask)
-        delete.extend(i_delete)
 
-for i in delete:
-    delete_all_files(obs_tbl[i])
 
+#%% clean up unusable files
+
+dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=True, verbose=True, directory=data_dir)
+answer = input('Proceed with file deletion? y/n')
+if answer == 'y':
+    dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
 
 
 #%% change to data directory and renew file list
@@ -686,8 +682,6 @@ for config in configs:
             obs_tbl['usable'][mask] = False
             reason = input(f'Enter reason for flagging {id_ending} as unusable.')
             obs_tbl['reason unusable'][mask] = reason
-            for i in i_mask:
-                delete_all_files(obs_tbl[i])
             continue
 
         flags_ans = input('What other flags should be recorded? Separate with commas, no spaces: ')
@@ -698,6 +692,14 @@ for config in configs:
     plt.close('all')
 
 obs_tbl['usable'][obs_tbl['usable'].mask] = True
+
+
+#%% clean up unusable files
+
+dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=True, verbose=True, directory=data_dir)
+answer = input('Proceed with file deletion? y/n')
+if answer == 'y':
+    dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
 
 
 #%% coadd multiple exposures

@@ -159,14 +159,16 @@ def get_target_name(path):
     return fits.getval(path, 'targname')
 
 
-def find_visit_primary_target(path):
+def find_visit_primary_target(path, target_dir):
     id = fits.getval(path, 'asn_id').lower()
-    files = (list(path.parent.rglob(f'*{id}*_tag*'))
-             + list(path.parent.rglob(f'*{id}*_rawtag.fits'))
-             + list(path.parent.rglob(f'*{id}*_rawtag_a.fits')))
+    files = []
+    for folder in (path.parent, target_dir):
+        files += list(folder.rglob(f'*{id}*_tag*'))
+        files += list(folder.rglob(f'*{id}*_rawtag.fits'))
+        files += list(folder.rglob(f'*{id}*_rawtag_a.fits'))
     if len(files) == 0:
         raise ValueError('There must be a [raw]tag file from the same visit as the file below in the same directory '
-                         'in order to infer the primary visit target'
+                         'or the target directory in order to infer the primary visit target'
                          f'\n{path.name}')
     file, = files
     return get_target_name(file)
@@ -179,7 +181,15 @@ def modify_file_label(file, new_label):
     return Path(file.parent) / newname
 
 
-def find_data_files(extension='*', targets='any', instruments='any', after='0000-00-00', before='9999-99-99', directory='.'):
+def find_data_files(
+        extension='*',
+        targets='any',
+        instruments='any',
+        after='0000-00-00',
+        before='9999-99-99',
+        ids='any',
+        directory='.'
+):
     """
     targets needs to be 'any' or a list of targets like ['k2-9', 'toi-1204']
     instruments can be 'any'; a single string capturing just observatory, isntrument, or spectrograph
@@ -198,10 +208,23 @@ def find_data_files(extension='*', targets='any', instruments='any', after='0000
 
     if instruments != 'any':
         if isinstance(instruments, str):
-            files = [f for f in files if instruments in f.name]
+            instrument = instruments
+            files = [f for f in files if instrument in f.name]
         elif utils.is_list_like(instruments):
-            file_insts = [f.name.split('.')[1] for f in files]
-            files = [f for f,inst in zip(files, file_insts) if inst in instruments]
+            file_insts = [parse_filename(f)['config'] for f in files]
+            inst_match_str = rf'{'|'.join(instruments)}'
+            files = [f for f,inst in zip(files, file_insts) if re.findall(inst_match_str, inst)]
+        else:
+            raise ValueError('Targets must be "any", a string, or a list of target names.')
+
+    if ids != 'any':
+        if isinstance(ids, str):
+            id = ids
+            files = [f for f in files if id in f.name]
+        elif utils.is_list_like(ids):
+            file_ids = [parse_filename(f)['id'] for f in files]
+            id_match_str = rf'{'|'.join(ids)}'
+            files = [f for f, id in zip(files, file_ids) if re.findall(id_match_str, id)]
         else:
             raise ValueError('Targets must be "any", a string, or a list of target names.')
 
@@ -227,8 +250,14 @@ def pathname_max(folder, glob_str):
     return max(paths)
 
 
-def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_stela_name=False, overwrite=False,
-                                  validate_names=True, target_name='from files'):
+def rename_and_organize_hst_files(
+        source_dir,
+        target_dir='source_dir',
+        resolve_stela_name=False,
+        overwrite=False,
+        validate_names=True,
+        target_name='from files'
+):
     # nicknames for directories
     src = Path(source_dir)
     if target_dir == 'source_dir':
@@ -251,7 +280,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
             hdr = fits.getheader(path)
             targname = hdr['targname']
             if targname in ['WAVEHITM', 'WAVELINE'] :
-                targname = find_visit_primary_target(path)
+                targname = find_visit_primary_target(path, tgt)
             obs_names.append(targname)
         obs_names = np.asarray(obs_names)
         if resolve_stela_name:
@@ -293,9 +322,9 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
             pattern = r'_(tag|raw|rawtag_a|rawacq)\.fits'
             alternate_names = (list(filter(lambda name: len(re.findall(id + pattern, name)) > 0, newnames))
                                + list(tgt.glob(f'*{id}_*tag*.fits'))
-                               + list(tgt.glob(f'*{id}_raw.fits')))
+                               + list(tgt.glob(f'*{id}_raw*.fits')))
             if len(alternate_names) == 0:
-                raise ValueError(f'No matching file found for {newname}. You might need to downlaod it.')
+                raise ValueError(f'No matching file found for {name}. You might need to downlaod it.')
             alternate_name = alternate_names[0]
             alternate_name = Path(alternate_name).name
             newnames[i] = re.sub(pattern, f'_{suffix}.fits', alternate_name)
@@ -334,10 +363,7 @@ def rename_and_organize_hst_files(source_dir, target_dir='source_dir', resolve_s
 
 
 def delete_files_by_hst_id(ids, directory='.'):
-    directory = Path(directory)
-    files = [list(directory.rglob(f'*{id}*')) for id in ids]
-    files = sum(files, [])
-    files = np.unique(files)
+    files = find_data_files('*', ids=ids, directory=directory)
     msg = f'Proceed with the permanent deletion of these files? (y/n)'
     for file in files:
         msg += f'\t\n{file.name}'
@@ -347,7 +373,13 @@ def delete_files_by_hst_id(ids, directory='.'):
             os.remove(file)
 
 
-def filter_observations(obs_table, config_substrings=None, usable=None, usability_fill_value=True, exclude_flags=None):
+def filter_observations(
+        obs_table,
+        config_substrings=None,
+        usable=None,
+        usability_fill_value=True,
+        exclude_flags=None
+):
     """
     Filter an astropy table based on config substring matches, usability, and exclusion flags.
 
@@ -397,7 +429,13 @@ def filter_observations(obs_table, config_substrings=None, usable=None, usabilit
     return tbl
 
 
-def delete_files_for_unusable_observations(obs_table, usability_fill_value=True, dry_run=True, verbose=True):
+def delete_files_for_unusable_observations(
+        obs_table,
+        usability_fill_value=True,
+        dry_run=True,
+        verbose=True,
+        directory='.'
+):
     """
     Delete science and supporting files for unusable observations.
 
@@ -417,6 +455,8 @@ def delete_files_for_unusable_observations(obs_table, usability_fill_value=True,
     """
     from astropy.table import MaskedColumn
 
+    directory = Path(directory)
+
     tbl = obs_table.copy()
 
     # Fill in masked usability values if needed
@@ -432,18 +472,23 @@ def delete_files_for_unusable_observations(obs_table, usability_fill_value=True,
     # Go through unusable observations
     for row in tbl[~tbl['usable']]:
         # Delete science files
-        for f in row['key science files']:
+        id = row['archive id']
+        fpaths = find_data_files('*', ids=id, directory=directory)
+        for fpath in fpaths:
             if verbose or dry_run:
-                print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting science file: {f}")
-            if not dry_run and os.path.exists(f):
-                os.remove(f)
+                print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting science file: {fpath.name}")
+            if not dry_run and os.path.exists(fpath):
+                os.remove(fpath)
 
         # Delete supporting files if no other usable obs uses them
         for label, f in row['supporting files'].items():
             if supporting_usage[f] == 0:
-                if verbose or dry_run:
-                    print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting unused supporting file: {f}")
-                if not dry_run and os.path.exists(f):
-                    os.remove(f)
+                fpaths = list(directory.glob(f'*{f}'))
+                if fpaths:
+                    fpath, = fpaths
+                    if verbose or dry_run:
+                        print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting unused supporting file: {fpath.name}")
+                    if not dry_run and os.path.exists(fpath):
+                        os.remove(fpath)
             elif verbose:
                 print(f"Keeping shared supporting file: {f}")

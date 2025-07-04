@@ -1,0 +1,11 @@
+# %ECSV 1.0
+# ---
+# datatype:
+# - {name: key, datatype: string, subtype: json}
+# - {name: name, datatype: string, subtype: json}
+# - {name: wave, datatype: float64}
+# - {name: Tform, datatype: float64}
+# schema: astropy-2.0
+key name wave Tform
+"""c4""" """C IV""" 1548.2043 4.95
+"""c4""" """C IV""" 1550.784 4.95
