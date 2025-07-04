@@ -25,10 +25,10 @@ si4 "Si IV" Si 4 1393.744 4.85 False
 si4 "Si IV" Si 4 1402.747 4.80 False
 si2 "Si II" Si 2 1526.687 4.5 False
 si2 "Si II" Si 2 1533.406 4.5 False
-c1 "C I" C 1 1560.85 "" True
-he2 "He II" He 2 1640.397 "" True
 c4 "C IV" C 4 1548.204 4.95 False
 c4 "C IV" C 4 1550.784 4.95 False
+c1 "C I" C 1 1560.85 "" True
+he2 "He II" He 2 1640.397 "" True
 c1 "C I" C 1 1657.15 4.95 False
 al2 "Al II" Al 2 1670.787 4.5 False
 si2 "Si II" Si 2 1808.0129 4.5 False

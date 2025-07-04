@@ -1,10 +1,7 @@
-import matplotlib.pyplot as plt
 import numpy as np
 from astropy import table
 from astropy.io import fits
 from matplotlib import pyplot as plt
-import mpld3
-from mpld3 import plugins
 
 import database_utilities as dbutils
 import paths
@@ -53,7 +50,7 @@ def interactive_click_loop(fig, plot_fn):
             x, artists = xnew, newartists
         else:
             break
-    return x
+    return np.sort(x)
 
 #%% target specific
 target = 'GJ 486'
@@ -68,9 +65,7 @@ pass
 
 #%% next config
 
-pass
-# config = next(iterconfigs)
-config = 'cos-g130m'
+config = next(iterconfigs)
 
 
 #%% find files
@@ -89,7 +84,7 @@ iterfiles = iter(files)
 file = next(iterfiles)
 
 
-#%% pick integration/fitting ranges
+#%% plot
 
 spec = fits.getdata(file, 1)
 spec.w = spec['wavelength'].T
@@ -111,22 +106,6 @@ def gohome():
     plt.ylim(yhome)
     plt.draw()
 
-# gather viable edges for fitting
-print('Intervals of viable data:')
-edgeplot = lambda x: [plt.axvline(xx, color='0.5', lw=2) for xx in x]
-edges = interactive_click_loop(fig, edgeplot)
-edges = np.reshape(edges, (-1,2))
-
-# plot the lines that are within
-within = (linewaves[:,None] >= edges[:,0]) & (linewaves[:,None] <= edges[:,1])
-within = within.any(axis=1)
-obslines = linecat[within].copy()
-n = len(obslines)
-for line in obslines:
-    plt.axvline(line['wave'], color='0.5', lw=0.5)
-    plt.annotate(line['name'], xy=(line['wave'], 0.99), xycoords=('data', 'axes fraction'),
-                 rotation='vertical', ha='center', va='top')
-
 def plotspans(x, **kws):
     if len(x) % 2 == 1:
         print('Odd number of clicks. Even number required. Try again.')
@@ -138,25 +117,49 @@ def plotspans(x, **kws):
         artists.append(artist)
     return artists
 
-# pick bands for the lines
+
+#%% ranges of viable data
+
+print('Intervals of viable data:')
+edgeplot = lambda x: [plt.axvline(xx, color='0.5', lw=2) for xx in x]
+edges = interactive_click_loop(fig, edgeplot)
+edges = np.reshape(edges, (-1,2))
+
+
+#%% plot the lines that are within
+
+within = (linewaves[:,None] >= edges[:,0]) & (linewaves[:,None] <= edges[:,1])
+within = within.any(axis=1)
+obslines = linecat[within].copy()
+for line in obslines:
+    plt.axvline(line['wave'], color='0.5', lw=0.5)
+    plt.annotate(line['name'], xy=(line['wave'], 0.99), xycoords=('data', 'axes fraction'),
+                 rotation='vertical', ha='center', va='top')
+
+#%% pick bands for the lines
 print('Line bands:')
+wbuf = 2 if config.endswith('m') else 15
 bandplot = lambda x: plotspans(x, color='C2', alpha=0.3, lw=0)
-obslines['wa'] = 0
-obslines['wb'] = 0
+obslines['wa'] = 0.
+obslines['wa'].format = '.2f'
+obslines['wb'] = 0.
+obslines['wb'].format = '.2f'
 for i, line in enumerate(obslines):
     print(f'{line['name']} {line['wave']}')
-    xlim = line['wave'] - 2, line['wave'] + 2
+    xlim = line['wave'] - wbuf, line['wave'] + wbuf
     plt.xlim(xlim)
     inplt = (spec.w > xlim[0]) & (spec.w < xlim[1])
     ymx = spec.f[inplt].max()
     plt.ylim(-0.05*ymx, 1.5*ymx)
     plt.draw()
     band = interactive_click_loop(fig, bandplot)
+    if np.diff(band) < np.diff(spec.w[0]):
+        continue
     obslines['wa'][i] = band[0]
     obslines['wb'][i] = band[1]
 gohome()
 
-# pick continuum ranges
+#%% pick continuum ranges
 print('Continuum bands:')
 cplot = lambda x: plotspans(x, color='C9', alpha=0.3, lw=0)
 cbands = interactive_click_loop(fig, cplot)
@@ -166,7 +169,7 @@ gohome()
 
 # pick fitting intervals
 print('Fitting intervals:')
-vplot = lambda x: plotspans(x, color='C2', alpha=0.05, lw=1)
+vplot = lambda x: plotspans(x, color='0.5', alpha=0.1, lw=1)
 intvls = interactive_click_loop(fig, vplot)
 intvls = np.reshape(intvls, (-1,2))
 obslines.meta['continuum fitting intervals'] = intvls
@@ -211,12 +214,17 @@ obslines.meta['polynomial covariances'] = covs
 
 #%% compute line fluxes
 
-MCfloat = lambda: table.MaskedColumn(length=n, dtype=float, mask=True)
+MCfloat = lambda: table.MaskedColumn(length=len(obslines), dtype=float, mask=True, format='.2e')
 obslines['flux'] = MCfloat()
 obslines['error'] = MCfloat()
 obslines['contflux'] = MCfloat()
-obslines['conterr'] = MCfloat()
+obslines['conterror'] = MCfloat()
 for i, line in enumerate(obslines):
+    if np.ma.is_masked(line['wa']):
+        obslines['contflux'][i] = 0
+        obslines['conterror'][i] = 0
+        obslines['flux'][i] = 0
+        obslines['error'][i] = 0
     dw = line['wb'] - line['wa']
     wmid = np.array([(line['wa'] + line['wb']) / 2])
 
@@ -230,8 +238,8 @@ for i, line in enumerate(obslines):
     cerr = np.sqrt(np.sum(J @ cov * J, axis=1))  # shape (N,)
     cF = cflux * dw
     cE = cerr * dw
-    obslines['contflux'] = cF
-    obslines['conterr'] = cE
+    obslines['contflux'][i] = cF
+    obslines['conterror'][i] = cE
 
     # line + cont flux and uncty
     m = (spec.w > line['wa']) & (spec.w < line['wb'])
@@ -242,22 +250,22 @@ for i, line in enumerate(obslines):
     # line only flux and uncty
     lF = F - cF
     lE = np.sqrt(E**2 + cE**2)
-    obslines['flux'] = lF
-    obslines['err'] = lE
+    obslines['flux'][i] = lF
+    obslines['error'][i] = lE
 
 
 #%% save the table and the plot
 
-# save plot with mpl3
-dpi = fig.get_dpi()
-fig.set_dpi(150)
-plugins.connect(fig, plugins.MousePosition(fontsize=14))
-htmlfile = str(file).replace('.fits', 'line_band_plot.html')
-mpld3.save_html(fig, htmlfile)
-fig.set_dpi(dpi)
+# as of 2025-07 using mpld3 didn't work well becuase it can't hand the axes transforms that go into the
+# annotations and axvspans of vlines
+pdffile = str(file).replace('.fits', 'line_bands.pdf')
+fig.savefig(pdffile)
+pngfile = str(file).replace('.fits', 'line_bands.png')
+fig.savefig(pngfile, dpi=100)
 
 # save table
 linefile = str(file).replace('.fits', 'line_fluxes.ecsv')
+obslines.sort('wave')
 obslines.write(linefile, overwrite=True)
 
 
