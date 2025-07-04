@@ -1,7 +1,12 @@
+import warnings
+
 import numpy as np
 from astropy import table
 from astropy.io import fits
 from matplotlib import pyplot as plt
+from matplotlib import patches
+from mpld3 import plugins
+import mpld3
 
 import database_utilities as dbutils
 import paths
@@ -84,18 +89,19 @@ iterfiles = iter(files)
 file = next(iterfiles)
 
 
-#%% plot
+#%% load and plot data
 
 spec = fits.getdata(file, 1)
 spec.w = spec['wavelength'].T
 spec.f = spec['flux'].T
 spec.e= spec['error'].T
 
-fig = plt.figure(figsize=(15,5))
+fig = plt.figure(figsize=(14,5))
 plt.title(file.name)
 plt.step(spec.w, spec.f, where='mid')
-plt.step(spec.w, spec.f, where='mid', lw=0.5, color='C0', alpha=0.5)
+plt.step(spec.w, spec.e, where='mid', lw=0.5, color='C0', alpha=0.5)
 plt.tight_layout()
+ax, = fig.get_axes()
 
 print('Zoom to a good range, then click off the plot.')
 _ = utils.click_coords(fig)
@@ -113,7 +119,8 @@ def plotspans(x, **kws):
     bands = np.reshape(x, (-1,2))
     artists = []
     for a, b in bands:
-        artist = plt.axvspan(a, b, **kws)
+        artist = patches.Rectangle((a, 0), (b-a), yhome[1], **kws)
+        ax.add_patch(artist)
         artists.append(artist)
     return artists
 
@@ -121,7 +128,7 @@ def plotspans(x, **kws):
 #%% ranges of viable data
 
 print('Intervals of viable data:')
-edgeplot = lambda x: [plt.axvline(xx, color='0.5', lw=2) for xx in x]
+edgeplot = lambda x: [plt.plot([xx]*2, yhome, color='0.5', lw=2) for xx in x]
 edges = interactive_click_loop(fig, edgeplot)
 edges = np.reshape(edges, (-1,2))
 
@@ -132,18 +139,17 @@ within = (linewaves[:,None] >= edges[:,0]) & (linewaves[:,None] <= edges[:,1])
 within = within.any(axis=1)
 obslines = linecat[within].copy()
 for line in obslines:
-    plt.axvline(line['wave'], color='0.5', lw=0.5)
-    plt.annotate(line['name'], xy=(line['wave'], 0.99), xycoords=('data', 'axes fraction'),
+    plt.plot([line['wave']]*2, yhome, color='0.5', lw=0.5)
+    plt.annotate(line['name'] + ' ', xy=(line['wave'], 0),
                  rotation='vertical', ha='center', va='top')
 
 #%% pick bands for the lines
 print('Line bands:')
 wbuf = 2 if config.endswith('m') else 15
 bandplot = lambda x: plotspans(x, color='C2', alpha=0.3, lw=0)
-obslines['wa'] = 0.
-obslines['wa'].format = '.2f'
-obslines['wb'] = 0.
-obslines['wb'].format = '.2f'
+MCfloat = lambda: table.MaskedColumn(length=len(obslines), dtype=float, mask=True, format='.2f')
+obslines['wa'] = MCfloat()
+obslines['wb'] = MCfloat()
 for i, line in enumerate(obslines):
     print(f'{line['name']} {line['wave']}')
     xlim = line['wave'] - wbuf, line['wave'] + wbuf
@@ -153,7 +159,7 @@ for i, line in enumerate(obslines):
     plt.ylim(-0.05*ymx, 1.5*ymx)
     plt.draw()
     band = interactive_click_loop(fig, bandplot)
-    if np.diff(band) < np.diff(spec.w[0]):
+    if np.diff(band) < np.diff(spec.w, axis=0)[0]:
         continue
     obslines['wa'][i] = band[0]
     obslines['wb'][i] = band[1]
@@ -167,7 +173,8 @@ cbands = np.reshape(cbands, (-1,2))
 obslines.meta['continuum bands'] = cbands
 gohome()
 
-# pick fitting intervals
+
+#%% pick fitting intervals
 print('Fitting intervals:')
 vplot = lambda x: plotspans(x, color='0.5', alpha=0.1, lw=1)
 intvls = interactive_click_loop(fig, vplot)
@@ -176,40 +183,35 @@ obslines.meta['continuum fitting intervals'] = intvls
 gohome()
 
 
-#%% continuum fits
+#%% continuum estimates
 
-ps, covs = [], []
+cfluxes, cerrors = [], []
+clns = []
 for intvl in intvls:
-    cmask = (cbands[:,0] > intvl[0]) & (cbands[:,1] < intvl[1])
+    cmask = (cbands[:,0] > intvl[0]) & (cbands[:,0] < intvl[1])
     fitbands = cbands[cmask]
 
-    if 1220 in intvl:
-        order = 3
-    elif intvl[1] - intvl[0] < 20:
-        order = 0
-    else:
-        order = 1
-
-    waves, fluxes, errors = [], [], []
+    Fs, Es, dws = [], [], []
     for band in fitbands:
         wave = np.sum(band)/2
+        dw = np.diff(band)[0]
         m = (spec.w > band[0]) & (spec.w < band[1])
-        flux, err = utils.flux_integral(spec.w[m], spec.f[m], spec.e[m])
-        waves.append(wave)
-        fluxes.append(flux)
-        errors.append(err)
-    errors = np.asarray(errors)
+        F, E = utils.flux_integral(spec.w[m], spec.f[m], spec.e[m])
+        Fs.append(F)
+        Es.append(E)
+        dws.append(dw)
+    Es = np.array(Es)
+    dw_sum = np.sum(dws)
+    cflux = np.sum(Fs)/dw_sum
+    cerr = np.sqrt(np.sum(Es**2))/dw_sum
+    cfluxes.append(cflux)
+    cerrors.append(cerr)
 
-    p, cov = np.polyfit(waves, fluxes, order, w=1/errors, cov='unscaled')
-    ps.append(p)
-    covs.append(cov)
-
-    n = 2 if order <= 1 else 100
-    wplt = np.linspace(fitbands.min(), fitbands.max(), num=n)
-    fplt = np.polyval(p, wplt)
-    plt.plot(wplt, fplt, '-', color='C1', alpha=0.5)
-obslines.meta['polynomial fits'] = ps
-obslines.meta['polynomial covariances'] = covs
+    wplt = np.array((fitbands.min(), fitbands.max()))
+    cln, = plt.plot(wplt, [cflux]*2, '-', color='C1', alpha=0.5)
+    clns.append(cln)
+obslines.meta['continuum fluxes'] = cfluxes
+obslines.meta['continuum flux errors'] = cerrors
 
 
 #%% compute line fluxes
@@ -225,17 +227,14 @@ for i, line in enumerate(obslines):
         obslines['conterror'][i] = 0
         obslines['flux'][i] = 0
         obslines['error'][i] = 0
+        continue
     dw = line['wb'] - line['wa']
     wmid = np.array([(line['wa'] + line['wb']) / 2])
 
     # continuum flux and uncty
-    (ifit,), = np.where((wmid > intvls[:,0]) & (wmid < intvls[:,1]))
-    p = ps[ifit]
-    cov = covs[ifit]
-    deg = len(p) - 1
-    cflux = np.polyval(p, wmid)
-    J = np.vstack([wmid ** i for i in range(deg, -1, -1)]).T  # shape (N, deg+1)
-    cerr = np.sqrt(np.sum(J @ cov * J, axis=1))  # shape (N,)
+    (icont,), = np.where((wmid > intvls[:,0]) & (wmid < intvls[:,1]))
+    cflux = cfluxes[icont]
+    cerr = cerrors[icont]
     cF = cflux * dw
     cE = cerr * dw
     obslines['contflux'][i] = cF
@@ -253,18 +252,31 @@ for i, line in enumerate(obslines):
     obslines['flux'][i] = lF
     obslines['error'][i] = lE
 
+with np.errstate(divide='ignore'):
+    obslines['snr'] = obslines['flux']/obslines['error']
+    obslines['snr'][obslines['error'] == 0] = 0
+    obslines['snr'].format = '.1f'
+
+#%% take a gander
+
+obslines.pprint(-1,-1)
+
 
 #%% save the table and the plot
 
-# as of 2025-07 using mpld3 didn't work well becuase it can't hand the axes transforms that go into the
-# annotations and axvspans of vlines
-pdffile = str(file).replace('.fits', 'line_bands.pdf')
-fig.savefig(pdffile)
-pngfile = str(file).replace('.fits', 'line_bands.png')
-fig.savefig(pngfile, dpi=100)
+# save plot with mpl3
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', 'The converter')
+    warnings.filterwarnings('ignore', 'Blended')
+    dpi = fig.get_dpi()
+    fig.set_dpi(150)
+    plugins.connect(fig, plugins.MousePosition(fontsize=14))
+    htmlfile = str(file).replace('.fits', '.line_band_plot.html')
+    mpld3.save_html(fig, htmlfile)
+    fig.set_dpi(dpi)
 
 # save table
-linefile = str(file).replace('.fits', 'line_fluxes.ecsv')
+linefile = str(file).replace('.fits', '.line_fluxes.ecsv')
 obslines.sort('wave')
 obslines.write(linefile, overwrite=True)
 

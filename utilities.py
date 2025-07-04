@@ -144,3 +144,12 @@ def flux_integral(w, f, e=None):
     flux_var = np.sum((dw*e)**2)
     flux_err = np.sqrt(flux_var)
     return flux, flux_err
+
+
+def sliding_center_slice(x, window_size):
+    w = window_size
+    n = len(x)
+    out_len = n - w + 1
+    start = w // 2
+    end = start + out_len
+    return slice(start, None if end == 0 else end)
