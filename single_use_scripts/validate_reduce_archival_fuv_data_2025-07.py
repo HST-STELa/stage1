@@ -44,7 +44,7 @@ target_table.add_index('tic_id')
 """
 pick a target from the obs progress table for stage 2 eval 1 -- drop those keighley flagged tho
 """
-# target = 'L 98-59'
+target = 'GJ 357'
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
 targname_file = str(targname_file)
@@ -714,7 +714,7 @@ configs = np.unique(use_tbl['science config'])
 
 for config in configs:
     config_tbl = dbutils.filter_observations(use_tbl, config_substrings=[config])
-    if (len(config_tbl) == 1) and 'e140m' not in config:
+    if (len(config_tbl) == 1) and (len(re.findall('e140m|g130m|g160m', config)) == 0):
         continue
 
     shortnames = np.char.add(config_tbl['archive id'], '_x1d.fits')
@@ -739,7 +739,8 @@ for config in configs:
     pieces_list = [dbutils.parse_filename(f) for f in x1dfiles]
     pieces_tbl = table.Table(rows=pieces_list)
     target, = np.unique(pieces_tbl['target'])
-    config = '+'.join(np.unique(np.char.replace(pieces_tbl['config'], 'hst-stis-', '')))
+    assert len(np.unique(pieces_tbl['config'])) == 1
+    config =  pieces_tbl['config'][0]
     date = f'{min(pieces_tbl['datetime'])}..{max(pieces_tbl['datetime'])}'
     program = 'pgm' + '+'.join(np.unique(np.char.replace(pieces_tbl['program'], 'pgm', '')))
     id = f'{len(x1dfiles)}exposure'
