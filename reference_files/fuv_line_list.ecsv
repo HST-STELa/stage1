@@ -1,11 +1,36 @@
 # %ECSV 1.0
 # ---
 # datatype:
-# - {name: key, datatype: string, subtype: json}
-# - {name: name, datatype: string, subtype: json}
+# - {name: key, datatype: string}
+# - {name: name, datatype: string}
+# - {name: atom, datatype: string}
+# - {name: ionztn, datatype: int32}
 # - {name: wave, datatype: float64}
 # - {name: Tform, datatype: float64}
+# - {name: blend, datatype: bool}
 # schema: astropy-2.0
-key name wave Tform
-"""c4""" """C IV""" 1548.2043 4.95
-"""c4""" """C IV""" 1550.784 4.95
+key name atom ionztn wave Tform blend
+c3 "C III" C 3 1175.647 4.7 True
+si3 "Si III" Si 3 1206.500 4.6 False
+o5 "O V" O 5 1218.344 5.25 False
+n5 "N V" O 5 1238.8210 5.2 False
+n5 "N V" O 5 1242.8040 5.2 False
+si2 "Si II" Si 2 1264.85 4.5 True
+o1 "O I" O 1 1302.190 3.8 False
+o1 "O I" O 1 1304.833 3.8 False
+o1 "O I" O 1 1306.001 3.8 False
+c2 "C II" C 2 1334.535 4.5 False
+c2 "C II" C 2 1335.692 4.5 False
+o1 "O I" O 1 1355.572 "" True
+si4 "Si IV" Si 4 1393.744 4.85 False
+si4 "Si IV" Si 4 1402.747 4.80 False
+si2 "Si II" Si 2 1526.687 4.5 False
+si2 "Si II" Si 2 1533.406 4.5 False
+c1 "C I" C 1 1560.85 "" True
+he2 "He II" He 2 1640.397 "" True
+c4 "C IV" C 4 1548.204 4.95 False
+c4 "C IV" C 4 1550.784 4.95 False
+c1 "C I" C 1 1657.15 4.95 False
+al2 "Al II" Al 2 1670.787 4.5 False
+si2 "Si II" Si 2 1808.0129 4.5 False
+si2 "Si II" Si 2 1816.9280 4.5 False
