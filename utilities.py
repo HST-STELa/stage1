@@ -153,3 +153,27 @@ def sliding_center_slice(x, window_size):
     start = w // 2
     end = start + out_len
     return slice(start, None if end == 0 else end)
+
+
+def shift_floor_to_zero(x, window_size=50):
+    """
+    Shifts arrya so that the floor is zero based on a sliding window.
+    The ends of the array will be masked where a full sliding window won't fit.
+
+    Parameters
+    ----------
+    x
+    window_size
+
+    Returns
+    -------
+
+    """
+    from numpy.lib.stride_tricks import sliding_window_view
+    windows = sliding_window_view(x, window_shape=(window_size, 1))
+    windows = windows[:, :, :, 0]
+    min_error = np.min(windows, axis=-1)
+    center_slc = sliding_center_slice(x, window_size)
+    shifted_error = np.ma.masked_all_like(x)
+    shifted_error[center_slc, ...] = x[center_slc, ...] - min_error
+    return shifted_error

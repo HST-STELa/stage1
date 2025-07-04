@@ -76,6 +76,9 @@ def is_raw_science(file):
 
 
 
+
+
+
 def infer_count2flux_factor(flux, window_size=50, fuzz_factor=0.1):
     """
     Uses the quantization of the fluxes to estimate what the scaling factor is over a sliding window.
@@ -83,8 +86,6 @@ def infer_count2flux_factor(flux, window_size=50, fuzz_factor=0.1):
     A gotcha is that cos shifts the floor down to give zero average background, so this will give negative counts
     in many spots. I'm still not sure it really works.
     """
-    estimated_counts = np.zeros_like(flux)
-
     from numpy.lib.stride_tricks import sliding_window_view
 
     # get sets of differences in sorted flux values along sliding windows

@@ -12,6 +12,7 @@ import database_utilities as dbutils
 import paths
 import utilities as utils
 
+
 #%% general setup
 
 linecat = table.Table.read('reference_files/fuv_line_list.ecsv')
@@ -25,7 +26,6 @@ configs = (
     'cos-g160m',
     'cos-g140l'
 )
-iterconfigs = iter(configs)
 
 stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
 stela_name_tbl.add_index('tic_id')
@@ -55,14 +55,15 @@ def interactive_click_loop(fig, plot_fn):
             x, artists = xnew, newartists
         else:
             break
-    return np.sort(x)
+    return x
 
 #%% target specific
-target = 'GJ 486'
+target = 'LHS 1140'
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
 targname_file = str(targname_file)
 data_folder = paths.data / targname_file
+iterconfigs = iter(configs)
 
 #%% custom coadds?
 
@@ -89,17 +90,29 @@ iterfiles = iter(files)
 file = next(iterfiles)
 
 
-#%% load and plot data
+#%% load data
 
 spec = fits.getdata(file, 1)
 spec.w = spec['wavelength'].T
 spec.f = spec['flux'].T
-spec.e= spec['error'].T
+spec.e = spec['error'].T
 
+
+#%% shift errors -- may not be necessary for a really bright spectrum
+"""Also hopefully in the future I will fix coadd script so that it uses poisson errors and avoids the annoying error
+inflation issue."""
+
+if ('coadd' in str(file)) or ('cos' in str(file)):
+    spec.emod = utils.shift_floor_to_zero(spec.e, window_size=50)
+else:
+    spec.emod = spec.e
+
+
+#%% plot data
 fig = plt.figure(figsize=(14,5))
 plt.title(file.name)
 plt.step(spec.w, spec.f, where='mid')
-plt.step(spec.w, spec.e, where='mid', lw=0.5, color='C0', alpha=0.5)
+plt.step(spec.w, spec.emod, where='mid', lw=0.5, color='C0', alpha=0.5)
 plt.tight_layout()
 ax, = fig.get_axes()
 
@@ -196,7 +209,7 @@ for intvl in intvls:
         wave = np.sum(band)/2
         dw = np.diff(band)[0]
         m = (spec.w > band[0]) & (spec.w < band[1])
-        F, E = utils.flux_integral(spec.w[m], spec.f[m], spec.e[m])
+        F, E = utils.flux_integral(spec.w[m], spec.f[m], spec.emod[m])
         Fs.append(F)
         Es.append(E)
         dws.append(dw)
@@ -242,7 +255,7 @@ for i, line in enumerate(obslines):
 
     # line + cont flux and uncty
     m = (spec.w > line['wa']) & (spec.w < line['wb'])
-    flux, err = utils.flux_integral(spec.w[m], spec.f[m], spec.e[m])
+    flux, err = utils.flux_integral(spec.w[m], spec.f[m], spec.emod[m])
     F = flux * dw
     E = err * dw
 
@@ -262,8 +275,9 @@ with np.errstate(divide='ignore'):
 obslines.pprint(-1,-1)
 
 
-#%% save the table and the plot
+#%% save the table and plot
 
+pass
 # save plot with mpl3
 with warnings.catch_warnings():
     warnings.filterwarnings('ignore', 'The converter')
