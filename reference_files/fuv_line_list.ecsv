@@ -21,7 +21,6 @@ o1 "O I" O 1 1304.833 3.8 False
 o1 "O I" O 1 1306.001 3.8 False
 c2 "C II" C 2 1334.535 4.5 False
 c2 "C II" C 2 1335.692 4.5 False
-o1 "O I" O 1 1355.572 "" True
 si4 "Si IV" Si 4 1393.744 4.85 False
 si4 "Si IV" Si 4 1402.747 4.80 False
 si2 "Si II" Si 2 1526.687 4.5 False
