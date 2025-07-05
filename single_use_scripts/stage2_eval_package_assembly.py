@@ -120,5 +120,22 @@ for file in xray_files:
 
 
 
-#%% add x-ray spectra and line catalog to package
+#%% add x-ray spectra to package
 
+xray_files = list(paths.data.rglob('*xray_recon.fits'))
+tgt_folder = paths.data / '../packages/2025-06-16.stela_stage2_eval_pkg1/xray_reconstructions'
+for file in xray_files:
+    newpath = tgt_folder / file.name
+    shutil.copy(file, newpath)
+
+
+#%% add line fluxes to package
+
+line_files = list(paths.data.rglob('*line-flux-table.ecsv'))
+tgt_folder = paths.data / '../packages/2025-06-16.stela_stage2_eval_pkg1/fuv_line_fluxes'
+for file in line_files:
+    tbl = table.Table.read(file)
+    tbl.sort('wave')
+    tbl.write(file, overwrite=True)
+    newpath = tgt_folder / file.name
+    shutil.copy(file, newpath)
