@@ -1,9 +1,10 @@
 import os
 import shutil
 from pathlib import Path
-import re
+import copy
 
 import numpy as np
+from astropy import table
 
 import catalog_utilities as catutils
 import database_utilities as dbutils
@@ -116,10 +117,6 @@ for file in xray_files:
     newname = f'{targname_file}.apec.na.na.na.xray_recon.fits'
     tgt_path = recon_folder / newname
     shutil.copy(file, tgt_path)
-
-
-#%% make fuv line catalog
-
 
 
 

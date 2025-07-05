@@ -11,6 +11,7 @@ import mpld3
 import database_utilities as dbutils
 import paths
 import utilities as utils
+import catalog_utilities as catutils
 
 
 #%% general setup
@@ -355,8 +356,124 @@ for config in configs:
     ans = prompt_nextfile()
     if ans != '':
         break
-    
-#%% notes
+
+
+#%% load all the line flux tables, merge cos ones
+
+line_flux_files = list(data_folder.rglob('*line_fluxes.ecsv'))
+
+used = []
+fluxtbls = []
+for file in line_flux_files:
+    if file in used:
+        continue
+    used.append(file)
+    line_fluxes = table.Table.read(file)
+    line_fluxes.add_index('wave')
+
+    # look for a corresponding g160m/g130m file
+    pairs = (('g130m', 'g160m'),
+             ('g160m', 'g130m'))
+    otherfile = None
+    for this, other in pairs:
+        if this in file.name:
+            of = [f for f in line_flux_files if other in f.name]
+            if of:
+                otherfile, = of
+                break
+
+    if otherfile:
+        # merge values from other table into the current table
+        used.append(otherfile)
+        other_fluxes = table.Table.read(otherfile)
+        for otherrow in other_fluxes:
+            if otherrow['wave'] not in line_fluxes['wave']:
+                line_fluxes.add_row(otherrow)
+            else:
+                thisrow = line_fluxes.loc[otherrow['wave']]
+                if (thisrow['flux'] == 0) and (otherrow['flux'] != 0):
+                    for key in line_fluxes.colnames[7:]:
+                        thisrow[key] = otherrow[key]
+
+    line_fluxes.sort('wave')
+    fluxtbls.append(line_fluxes)
+
+
+#%% pick the best
+
+snr_threshold = 5
+scores = []
+for fluxtbl in fluxtbls:
+    mask = fluxtbl['snr'] > snr_threshold
+    unq_temps = np.unique(fluxtbl['Tform'][mask])
+    score = len(unq_temps)
+    scores.append(score)
+scores = np.asarray(scores)
+
+if sum(scores == np.max(scores)) > 1:
+    raise NotImplementedError # should write some code in this case to pick the one with higher snrs
+ibest = np.argmax(scores)
+
+bestfluxes = fluxtbls[ibest]
+
+#%% augment with line-line correlations as needed
+
+basecat = table.Table.read('reference_files/fuv_line_list.ecsv')
+basecat.add_index('name')
+
+min_snr = 3
+
+bestfluxes.add_index('name')
+bestfluxes['source'] = 'msrd'
+catutils.add_masks(bestfluxes)
+
+corrtbl = table.Table.read('reference_files/line-line_correlations.ecsv')
+corrlines = np.unique(corrtbl['name1']).tolist()
+corrlines.remove('Lya')
+corrtemps = [np.mean(basecat.loc[name]['Tform']) for name in corrlines]
+
+# identify lines with usable measurements
+usable = []
+for line in corrlines:
+    if line in bestfluxes['name']:
+        linetbl = bestfluxes.loc['name', line]
+        assert np.max(linetbl['wave']) - np.min(linetbl['wave']) < 10
+        F = np.sum(linetbl['flux'])
+        E = np.sqrt(np.sum(linetbl['error']**2))
+        if F/E > snr_threshold:
+            continue
+
+# fill lines that don't
+    # add rows if not present
+    if line not in bestfluxes['name']:
+        missing_rows = basecat.loc[line].copy()
+        n = len(missing_rows)
+        add_cols = set(bestfluxes.colnames) - set(missing_rows.colnames)
+        for col in add_cols:
+            missing_rows[col] = table.MaskedColumn(length=n, dtype=bestfluxes[col].dtype, mask=True)
+
+    # find the closest line out of those in the corrlines
+
+
+#%% groom for outside use
+
+# make sure all tables have the same set of rows
+
+
+
+# mask any zero flux rows that don't correspond with a line that has flux
+
+
+# get rid of extra or confusing columns, like contflux
+
+
+# add some info on provenance to the header
+aggcat.meta['hostname'] = target
+aggcat.meta['tic_id'] = tic_id
+
+
+
+#%% notes for possible future automation
 """
 thoughts for possible automation in the future
   account for instrument lsf in bandpass
