@@ -1,15 +1,15 @@
 # %ECSV 1.0
 # ---
 # datatype:
-# - {name: name1, datatype: string}
-# - {name: name2, datatype: string}
+# - {name: x, datatype: string}
+# - {name: y, datatype: string}
 # - {name: slope, datatype: float64, format: .2f}
 # - {name: intercept, datatype: float64, format: .2f}
 # - {name: scatter, datatype: float64, format: .2f}
 # meta: !!omap
 # - {notes: Fluxes assumed to be at 1 au in log10(erg s-1 cm-2). Scatter is in dex.}
 # schema: astropy-2.0
-name1 name2 slope intercept scatter
+x y slope intercept scatter
 Lya "C II" 1.2940798865045793 -2.1784934361739197 0.39866393090498087
 Lya "Si III" 1.2348445205530238 -2.309147615197095 0.5028337743317217
 Lya "Si IV" 1.2912999755499168 -2.341838065185764 0.47720219444384315

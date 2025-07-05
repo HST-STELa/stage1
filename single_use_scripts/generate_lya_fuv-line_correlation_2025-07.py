@@ -97,8 +97,8 @@ line_names = 'Flya,C II,Si III,Si IV,N V'.split(',')
 
 MC = table.MaskedColumn
 corrtbl = table.Table()
-corrtbl['name1'] = MC(dtype='str', mask=[])
-corrtbl['name2'] = MC(dtype='str', mask=[])
+corrtbl['x'] = MC(dtype='str', mask=[])
+corrtbl['y'] = MC(dtype='str', mask=[])
 corrtbl['slope'] = MC(dtype=float, mask=[], format='.2f')
 corrtbl['intercept'] = MC(dtype=float, mask=[], format='.2f')
 corrtbl['scatter'] = MC(dtype=float, mask=[], format='.2f')
@@ -138,15 +138,15 @@ for line_a in line_names:
         y_predicted = np.polyval(p, x)
         scatter = np.std(y - y_predicted)
         plt.plot(10**x, 10**y_predicted, 'k-')
-        eqn = f'log10(F-{line_a}) = {p[0]:.3f}*log10(F-{line_b}) + {p[1]:.3f}\n[{scatter:.2f} dex scatter]'
+        eqn = f'log10(F-{line_b}) = {p[0]:.3f}*log10(F-{line_a}) + {p[1]:.3f}\n[{scatter:.2f} dex scatter]'
 
         plt.annotate(eqn, xy=(0.98,0.02), xycoords='axes fraction', ha='right')
         plt.legend()
         plt.savefig(f'../../scratch/lya_fuv-line_correlations_2025-07/{line_a} - {line_b}.pdf')
 
         row = dict(
-            name1='Lya' if line_a == 'Flya' else line_a,
-            name2='Lya' if line_b == 'Flya' else line_b,
+            x='Lya' if line_a == 'Flya' else line_a,
+            y='Lya' if line_b == 'Flya' else line_b,
             slope=p[0],
             intercept=p[1],
             scatter=scatter

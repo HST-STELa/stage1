@@ -294,10 +294,14 @@ def read_excel(path):
     return tbl
 
 
-def add_masks(catalog):
-    for name in catalog.colnames:
-        if not hasattr(catalog[name], 'mask'):
-            catalog[name] = table.MaskedColumn(catalog[name])
+def add_masks(catalog, inplace=True):
+    if inplace:
+        for name in catalog.colnames:
+            if not hasattr(catalog[name], 'mask'):
+                catalog[name] = table.MaskedColumn(catalog[name])
+    else:
+        cols = [table.MaskedColumn(catalog[name]) for name in catalog.colnames]
+        return table.Table(cols, meta=catalog.meta)
 
 
 def loc_indices_and_unmatched(catalog, values):

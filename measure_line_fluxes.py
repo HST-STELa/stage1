@@ -1,8 +1,10 @@
 import warnings
+from pprint import pprint
 
 import numpy as np
 from astropy import table
 from astropy.io import fits
+from astropy import units as u
 from matplotlib import pyplot as plt
 from matplotlib import patches
 from mpld3 import plugins
@@ -23,6 +25,9 @@ stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
 stela_name_tbl.add_index('tic_id')
 stela_name_tbl.add_index('hostname')
 
+target_table = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
+target_table = catutils.planets2hosts(target_table)
+target_table.add_index('tic_id')
 
 def interactive_click_loop(fig, plot_fn):
     def get_and_plot():
@@ -51,7 +56,8 @@ def interactive_click_loop(fig, plot_fn):
 
 #%% target specific
 
-target = 'GJ 357'
+# target = 'TOI-1759'
+target = 'HD 149026'
 shift_errors = True
 
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
@@ -365,6 +371,8 @@ line_flux_files = list(data_folder.rglob('*line_fluxes.ecsv'))
 used = []
 fluxtbls = []
 for file in line_flux_files:
+    source_files = [file.name]
+    config = dbutils.parse_filename(file)['config']
     if file in used:
         continue
     used.append(file)
@@ -385,6 +393,8 @@ for file in line_flux_files:
     if otherfile:
         # merge values from other table into the current table
         used.append(otherfile)
+        source_files.append(otherfile.name)
+        config += '+' + dbutils.parse_filename(otherfile)['config'][-5:]
         other_fluxes = table.Table.read(otherfile)
         for otherrow in other_fluxes:
             if otherrow['wave'] not in line_fluxes['wave']:
@@ -396,6 +406,8 @@ for file in line_flux_files:
                         thisrow[key] = otherrow[key]
 
     line_fluxes.sort('wave')
+    line_fluxes.meta['config'] = config
+    line_fluxes.meta['source files'] = source_files
     fluxtbls.append(line_fluxes)
 
 
@@ -410,40 +422,88 @@ for fluxtbl in fluxtbls:
     scores.append(score)
 scores = np.asarray(scores)
 
-if sum(scores == np.max(scores)) > 1:
+if (sum(scores == np.max(scores)) > 1) and (np.max(scores) > 0):
     raise NotImplementedError # should write some code in this case to pick the one with higher snrs
 ibest = np.argmax(scores)
 
-bestfluxes = fluxtbls[ibest]
+bestfluxes = catutils.add_masks(fluxtbls[ibest], inplace=False)
+
+bestfluxes.add_index('name')
+bestfluxes['source'] = table.MaskedColumn(dtype=object, length=len(bestfluxes))
+bestfluxes['source'] = bestfluxes.meta['config']
+del bestfluxes.meta['config']
+
+
+#%% add in Lya
+
+lyarecon_file, = data_folder.rglob('*lya_recon.csv')
+lyarecon = table.Table.read(lyarecon_file)
+Fs = []
+for suffix in ['low_1sig', 'median', 'high_1sig']:
+    F = np.trapz(lyarecon[f'lya_intrinsic unconvolved_{suffix}'], lyarecon['wave_lya'])
+    Fs.append(F)
+catutils.scrub_indices(bestfluxes)
+catutils.add_masked_row(bestfluxes)
+bestfluxes['key'][-1] = 'lya'
+bestfluxes['name'][-1] = 'Lya'
+bestfluxes['atom'][-1] = 'H'
+bestfluxes['ionztn'][-1] = 0
+bestfluxes['wave'][-1] = 1215.67
+bestfluxes['blend'][-1] = False
+bestfluxes['flux'][-1] = Fs[1]
+bestfluxes['error'][-1] = (Fs[2] - Fs[0])/2
+bestfluxes['source'][-1] = 'reconstruction'
+bestfluxes.meta['Lya source file'] = lyarecon_file.name
+
 
 #%% augment with line-line correlations as needed
 
 basecat = table.Table.read('reference_files/fuv_line_list.ecsv')
 basecat.add_index('name')
 
+dist = target_table.loc[tic_id]['sy_dist'] * u.pc
+
 min_snr = 3
 
-bestfluxes.add_index('name')
-bestfluxes['source'] = 'msrd'
-catutils.add_masks(bestfluxes)
-
 corrtbl = table.Table.read('reference_files/line-line_correlations.ecsv')
-corrlines = np.unique(corrtbl['name1']).tolist()
+corrtbl.add_index('x')
+corrtbl.add_index('y')
+corrlines = np.unique(corrtbl['x']).tolist()
 corrlines.remove('Lya')
 corrtemps = [np.mean(basecat.loc[name]['Tform']) for name in corrlines]
+corrlines.append('Lya')
+corrtemps.append(3.5)
+
+corrlines = np.asarray(corrlines)
+corrtemps = np.asarray(corrtemps)
+tempdict = dict(zip(corrlines, corrtemps))
+
+bestfluxes.add_index('name')
+def fluxsum(line):
+    linetbl = bestfluxes.loc['name', line]
+    assert np.max(linetbl['wave']) - np.min(linetbl['wave']) < 10
+    F = np.sum(linetbl['flux'])
+    E = np.sqrt(np.sum(linetbl['error'] ** 2))
+    return F, E
 
 # identify lines with usable measurements
 usable = []
 for line in corrlines:
+    if line == 'Lya':
+        usable.append(True)
+        continue
+    result = False
     if line in bestfluxes['name']:
-        linetbl = bestfluxes.loc['name', line]
-        assert np.max(linetbl['wave']) - np.min(linetbl['wave']) < 10
-        F = np.sum(linetbl['flux'])
-        E = np.sqrt(np.sum(linetbl['error']**2))
+        F, E = fluxsum(line)
         if F/E > snr_threshold:
-            continue
+            result = True
+    usable.append(result)
+usable = np.asarray(usable)
 
 # fill lines that don't
+usable_lines = corrlines[usable]
+usable_temps = corrtemps[usable]
+for line in corrlines[~usable]:
     # add rows if not present
     if line not in bestfluxes['name']:
         missing_rows = basecat.loc[line].copy()
@@ -451,26 +511,95 @@ for line in corrlines:
         add_cols = set(bestfluxes.colnames) - set(missing_rows.colnames)
         for col in add_cols:
             missing_rows[col] = table.MaskedColumn(length=n, dtype=bestfluxes[col].dtype, mask=True)
+        bestfluxes = table.vstack((bestfluxes, missing_rows))
+        bestfluxes.add_index('name')
 
-    # find the closest line out of those in the corrlines
+    # find the usable line with the nearest temp
+    dT = np.abs(tempdict[line] - usable_temps)
+    iproxy = np.argmin(dT)
+    proxy = usable_lines[iproxy]
+
+    # get flux of proxy line
+    proxyflux, _ = fluxsum(proxy)
+    proxyflux_1au = proxyflux * (dist/u.au)**2
+    proxyflux_1au = proxyflux_1au.to_value('')
+
+    # estimate flux
+    corr = corrtbl.loc['x', proxy].loc['y', line]
+    log10_proxyflux_1au = np.log10(proxyflux_1au)
+    log10_estflux_1au = corr['slope'] * log10_proxyflux_1au + corr['intercept']
+    estflux_1au = 10**log10_estflux_1au
+    estflux = estflux_1au * (u.au/dist)**2
+    estflux = estflux.to_value('')
+
+    # put into table
+    bestfluxes.sort('wave')
+    iline = bestfluxes.loc_indices['name', line]
+    for key in bestfluxes.colnames[7:]:
+        bestfluxes[key].mask[iline] = True
+    bestfluxes['flux'][iline] = 0
+    iflux = min(iline) if hasattr(iline, '__iter__') else iline
+    bestfluxes['flux'][iflux] = estflux
+    bestfluxes['source'][iline] = f'{proxy} correlation'
 
 
 #%% groom for outside use
 
+pass
+# need to scrub indices first
+catutils.scrub_indices(bestfluxes)
+
 # make sure all tables have the same set of rows
-
-
+for row in basecat.copy():
+    if row['wave'] not in bestfluxes['wave']:
+        catutils.add_masked_row(bestfluxes)
+        for col in basecat.colnames:
+            bestfluxes[col][-1] = row[col]
 
 # mask any zero flux rows that don't correspond with a line that has flux
-
+for row in bestfluxes:
+    if row['flux'] == 0:
+        likelines = ((bestfluxes['name'] == row['name'])
+                     & (np.abs(bestfluxes['wave'] - row['wave']) <= 10))
+        if all(bestfluxes['flux'][likelines] == 0):
+            for key in bestfluxes.colnames[7:]:
+                bestfluxes[key].mask[likelines] = True
 
 # get rid of extra or confusing columns, like contflux
-
+bestfluxes.remove_columns(('contflux', 'conterror', 'Tform', 'key', 'atom', 'ionztn'))
+for key in list(bestfluxes.meta.keys()):
+    if key not in ['source files', 'Lya source file']:
+        del bestfluxes.meta[key]
 
 # add some info on provenance to the header
-aggcat.meta['hostname'] = target
-aggcat.meta['tic_id'] = tic_id
+props = target_table.loc[tic_id]
+def get_prop(key, default):
+    val = props[key]
+    if np.ma.is_masked(val):
+        return default
+    else:
+        return val
+from math import nan
+bestfluxes.meta['hostname'] = target
+bestfluxes.meta['tic_id'] = tic_id
+bestfluxes.meta['dist'] = dist.to_value('pc')
+bestfluxes.meta['radius'] = get_prop('st_rad', nan)
+bestfluxes.meta['Teff'] = get_prop('st_teff', nan)
+bestfluxes.meta['SpT'] = get_prop('st_spectype', '?')
+bestfluxes.meta['logg'] = get_prop('st_logg', nan)
+bestfluxes.meta['mass'] = get_prop('st_mass', nan)
 
+
+#%% take a gander
+
+bestfluxes.sort('wave')
+pprint(bestfluxes.meta)
+bestfluxes.pprint(-1,-1)
+
+
+#%% save
+
+bestfluxes.write(data_folder / f'{targname_file}.line-flux-table.ecsv', overwrite=True)
 
 
 #%% notes for possible future automation
