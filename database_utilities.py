@@ -145,13 +145,17 @@ def parse_filename(path):
     path = Path(path)
     name = path.name
     pieces = name.split('.')[:-1]
-    id, ftype = re.search(r'(\w{9})_(\w+_?[ab]?)', pieces[-1]).groups()
+    id, ftype = re.search(r'(\w{9})_(\w+_?[ab]?)', pieces[4]).groups()
     parse_dict = dict(target=pieces[0],
                       config=pieces[1],
                       datetime=pieces[2],
                       program=pieces[3],
-                      id=id,
-                      type=ftype)
+                      locator=pieces[4])
+    if 'hst-' in pieces[1]:
+        parse_dict['id'] = id
+        parse_dict['type'] = ftype
+    if len(pieces) > 5:
+        parse_dict['derivative'] = pieces[5]
     return parse_dict
 
 

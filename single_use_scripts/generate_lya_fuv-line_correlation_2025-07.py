@@ -93,40 +93,68 @@ for name in col_names:
 
 #%% create correlations for the lines
 
-line_names = 'C II,Si III,Si IV,N V'.split(',')
-# some shenanigans to combine fluxes from different sources without duplicates
-Flya = cat['Flya']
-Flya[Flya.mask] = cat['F-Lya'][Flya.mask]
+line_names = 'Flya,C II,Si III,Si IV,N V'.split(',')
 
-for line in line_names:
+MC = table.MaskedColumn
+corrtbl = table.Table()
+corrtbl['name1'] = MC(dtype='str', mask=[])
+corrtbl['name2'] = MC(dtype='str', mask=[])
+corrtbl['slope'] = MC(dtype=float, mask=[], format='.2f')
+corrtbl['intercept'] = MC(dtype=float, mask=[], format='.2f')
+corrtbl['scatter'] = MC(dtype=float, mask=[], format='.2f')
+corrtbl.meta['notes'] = 'Fluxes assumed to be at 1 au in log10(erg s-1 cm-2). Scatter is in dex.'
+
+def get_fluxes(name):
     # some shenanigans to combine fluxes from different sources without duplicates
-    fcol = line
-    mcol = 'F-' + line.replace(' ', '')
+    fcol = name
+    if name == 'Flya':
+        mcol = 'F-Lya'
+    else:
+        mcol = 'F-' + name.replace(' ', '')
     Fline = cat[fcol]
     if mcol in cat.colnames:
         Fline[Fline.mask] = cat[mcol][Fline.mask]
+    return Fline
 
-    plt.figure()
-    plt.ylabel(line)
-    plt.xlabel('Lya')
-    for SpT in 'FGKM':
-        mask = ((np.char.count(cat['SpT'].filled(''), SpT) > 0)
-                | (np.char.count(cat['SpType'].filled(''), SpT) > 0))
-        plt.loglog(Flya[mask], Fline[mask], 'o', label=SpT)
+for line_a in line_names:
+    Fa = get_fluxes(line_a)
+    for line_b in line_names:
+        if line_b == line_a:
+            continue
+        Fb = get_fluxes(line_b)
 
-    plt.title(line)
+        plt.figure()
+        plt.xlabel(line_a)
+        plt.ylabel(line_b)
+        for SpT in 'FGKM':
+            mask = ((np.char.count(cat['SpT'].filled(''), SpT) > 0)
+                    | (np.char.count(cat['SpType'].filled(''), SpT) > 0))
+            plt.loglog(Fa[mask], Fb[mask], 'o', label=SpT)
 
-    usable = ~Fline.mask & ~Flya.mask
-    x = np.log10(Flya[usable])
-    y = np.log10(Fline[usable])
-    p = np.polyfit(x, y, 1)
-    y_predicted = np.polyval(p, x)
-    scatter = np.std(y - y_predicted)
-    plt.plot(10**x, 10**y_predicted, 'k-')
-    eqn = f'log10(F-{line}) = {p[0]:.3f}*log10(F-Lya) + {p[1]:.3f} [{scatter:.2f} dex scatter]'
-    print(eqn)
+        usable = ~Fa.mask & ~Fb.mask
+        x = np.log10(Fa[usable])
+        y = np.log10(Fb[usable])
+        p = np.polyfit(x, y, 1)
+        y_predicted = np.polyval(p, x)
+        scatter = np.std(y - y_predicted)
+        plt.plot(10**x, 10**y_predicted, 'k-')
+        eqn = f'log10(F-{line_a}) = {p[0]:.3f}*log10(F-{line_b}) + {p[1]:.3f}\n[{scatter:.2f} dex scatter]'
 
-    plt.annotate(eqn, xy=(0.98,0.02), xycoords='axes fraction', ha='right')
-    plt.legend()
-    plt.savefig(f'../../scratch/lya_fuv-line_correlations_2025-07/{line}.pdf')
+        plt.annotate(eqn, xy=(0.98,0.02), xycoords='axes fraction', ha='right')
+        plt.legend()
+        plt.savefig(f'../../scratch/lya_fuv-line_correlations_2025-07/{line_a} - {line_b}.pdf')
 
+        row = dict(
+            name1='Lya' if line_a == 'Flya' else line_a,
+            name2='Lya' if line_b == 'Flya' else line_b,
+            slope=p[0],
+            intercept=p[1],
+            scatter=scatter
+            )
+
+        corrtbl.add_row(row)
+
+
+#%% save table
+
+corrtbl.write('reference_files/line-line_correlations.ecsv')

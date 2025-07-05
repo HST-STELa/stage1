@@ -1,6 +1,7 @@
 import os
 import shutil
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -78,3 +79,49 @@ targets_from_files = np.unique(targets_from_files)
 mask = ~np.isin(targets_fnames, targets_from_files)
 print('No files copied over for:')
 print(targets[mask])
+
+
+#%% --------------------------------- AFTER LYA & XRAY DELIVERY ---------------------------------
+"""
+    --------------------------------- AFTER LYA & XRAY DELIVERY ---------------------------------
+"""
+
+
+#%% distribute lya reconstructions
+
+lya_inbox_folder = Path('/Users/parke/Google Drive/Research/STELa/data/packages/inbox/2025-07-01 Lya reconstructions')
+lya_recon_files = list(lya_inbox_folder.rglob('*lya_recon.csv'))
+for file in lya_recon_files:
+    pieces = dbutils.parse_filename(file)
+    tgt_folder = paths.data / pieces['target'] / 'reconstructions'
+    if not tgt_folder.exists():
+        os.mkdir(tgt_folder)
+    tgt_path = tgt_folder / file.name
+    shutil.copy(file, tgt_path)
+
+
+#%% distribute x-ray spectra
+
+xray_inbox_folder = Path('/Users/parke/Google Drive/Research/STELa/data/packages/inbox/2025-06-30 X-ray')
+xray_files = list(xray_inbox_folder.glob('*.fits'))
+nodir = []
+for file in xray_files:
+    targname = file.name[:-10]
+    targname = targname.replace('_', ' ')
+    if targname not in dbutils.stela_name_tbl['hostname']:
+        targname, = dbutils.resolve_stela_name_w_simbad([targname])
+    targname_file, = dbutils.target_names_stela2file([targname])
+
+    recon_folder = paths.data / targname_file / 'reconstructions'
+    newname = f'{targname_file}.apec.na.na.na.xray_recon.fits'
+    tgt_path = recon_folder / newname
+    shutil.copy(file, tgt_path)
+
+
+#%% make fuv line catalog
+
+
+
+
+#%% add x-ray spectra and line catalog to package
+
