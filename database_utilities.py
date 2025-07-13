@@ -260,7 +260,8 @@ def rename_and_organize_hst_files(
         resolve_stela_name=False,
         overwrite=False,
         validate_names=True,
-        target_name='from files'
+        target_name='from files',
+        into_target_folders=True,
 ):
     # nicknames for directories
     src = Path(source_dir)
@@ -335,7 +336,7 @@ def rename_and_organize_hst_files(
 
     newpaths = []
     for newname, targname in zip(newnames, targnames):
-        newpath = tgt / newname
+        newpath = tgt / targname / newname / 'hst' if into_target_folders else tgt / newname
         if newpath != path:
             newpaths.append(newpath)
         else:

@@ -82,4 +82,4 @@ cols_in_order = ('Rank', 'Target', 'No. of Planets', 'Status', '1a Visit Label',
                  'Optimistic Lya Flux', 'Nominal Transit SNR', 'Optimistic Transit SNR', '1b Visit Label',
                  '1b External Data')
 export = export[cols_in_order]
-export.write('progress_reviews/progress_table_columns_from_selection_process.csv', overwrite=True)
+export.write('stage1_processing/progress_table_columns_from_selection_process.csv', overwrite=True)

@@ -177,3 +177,36 @@ def shift_floor_to_zero(x, window_size=50):
     shifted_error = np.ma.masked_all_like(x)
     shifted_error[center_slc, ...] = x[center_slc, ...] - min_error
     return shifted_error
+
+
+def click_n_plot(fig, plot_fn):
+    def get_and_plot():
+        xy = click_coords(fig)
+        if len(xy):
+            x, y = zip(*xy)
+            plotted_artists = plot_fn(x)
+            plt.draw()
+            return x, y, plotted_artists
+        else:
+            return [], [], []
+
+    print('Collecting points. Click off the plot when done.')
+    x, y, artists = get_and_plot()
+    while True:
+        print('Click off the plot if satisfied. Click new points if not.')
+        xnew, ynew, newartists = get_and_plot()
+        if xnew:
+            # Remove plotted artists before repeating
+            for artist in artists:
+                artist.remove()
+            x, y, artists = xnew, ynew, newartists
+        else:
+            break
+    return x, y
+
+
+def query_next_step(batch_mode=True):
+    if batch_mode:
+        answer = input('Continue?')
+        if answer != '':
+            raise StopIteration

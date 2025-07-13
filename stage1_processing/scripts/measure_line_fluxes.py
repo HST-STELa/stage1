@@ -29,30 +29,7 @@ target_table = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkp
 target_table = catutils.planets2hosts(target_table)
 target_table.add_index('tic_id')
 
-def interactive_click_loop(fig, plot_fn):
-    def get_and_plot():
-        xy = utils.click_coords(fig)
-        if len(xy):
-            x, y = zip(*xy)
-            plotted_artists = plot_fn(x)
-            plt.draw()
-            return x, plotted_artists
-        else:
-            return [], []
 
-    print('Collecting points. Click off the plot when done.')
-    x, artists = get_and_plot()
-    while True:
-        print('Click off the plot if satisfied. Click new points if not.')
-        xnew, newartists = get_and_plot()
-        if xnew:
-            # Remove plotted artists before repeating
-            for artist in artists:
-                artist.remove()
-            x, artists = xnew, newartists
-        else:
-            break
-    return x
 
 #%% target specific
 
@@ -155,7 +132,7 @@ for config in configs:
 
         print('Intervals of viable data:')
         edgeplot = lambda x: [plt.plot([xx]*2, yhome, color='0.5', lw=2)[0] for xx in x]
-        edges = interactive_click_loop(fig, edgeplot)
+        edges, _ = utils.interactive_click_loop(fig, edgeplot)
         edges = np.reshape(edges, (-1,2))
 
         ans = prompt_nextstep()
@@ -189,7 +166,7 @@ for config in configs:
             ymx = spec.f[inplt].max()
             plt.ylim(-0.05*ymx, 1.5*ymx)
             plt.draw()
-            band = interactive_click_loop(fig, bandplot)
+            band, _ = utils.interactive_click_loop(fig, bandplot)
             if np.diff(band) < np.diff(spec.w, axis=0)[0]:
                 continue
             obslines['wa'][i] = band[0]
@@ -212,7 +189,7 @@ for config in configs:
             wb = wa + chunksize
             plt.xlim(wa, wb)
             plt.draw()
-            cbands = interactive_click_loop(fig, cplot)
+            cbands, _ = utils.interactive_click_loop(fig, cplot)
             cbands = np.reshape(cbands, (-1,2))
             cband_list.append(cbands)
             wa += chunksize - overlap
@@ -237,7 +214,7 @@ for config in configs:
             wb = wa + chunksize
             plt.xlim(wa, wb)
             plt.draw()
-            intvls = interactive_click_loop(fig, vplot)
+            intvls, _ = utils.interactive_click_loop(fig, vplot)
             intvls = np.reshape(intvls, (-1,2))
             intvls_list.append(intvls)
             wa += chunksize - overlap

@@ -29,7 +29,7 @@ target_table = catutils.planets2hosts(target_table)
 target_table.add_index('tic_id')
 
 # load up the latest export of the obs progress table
-path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
+path_main_table = dbutils.pathname_max(paths.status_input, 'Observation Progress*.xlsx')
 progress_table = catutils.read_excel(path_main_table)
 progress_table.add_index('Target')
 
@@ -159,7 +159,7 @@ prog_update = table.join(prog_update, target_info, keys='TIC ID', join_type='out
 pass
 
 # parse the xml visit status export from STScI
-latest_status_path = dbutils.pathname_max(paths.status_snapshots, 'HST-17804-visit-status*.xml')
+latest_status_path = dbutils.pathname_max(paths.status_input, 'HST-17804-visit-status*.xml')
 tree = ET.parse(latest_status_path)
 root = tree.getroot()
 
@@ -266,7 +266,7 @@ isort = idx + i_new.tolist()
 prog_update = prog_update[isort]
 
 today = datetime.today().strftime("%Y-%m-%d")
-prog_update.write(paths.status_snapshots / f'progress_table_updates_{today}.csv', overwrite=True)
+prog_update.write(paths.status_input / f'progress_table_updates_{today}.csv', overwrite=True)
 
 
 #%% --- PROGRESS PLOTS ---
@@ -307,8 +307,8 @@ for stage in ['Lya', 'FUV']:
     plt.xlabel('Date')
     plt.ylabel(f'{stage.upper()} Observations Executed')
     plt.tight_layout()
-    plt.savefig(paths.progress_reviews / f'{stage} progress chart.pdf')
-    plt.savefig(paths.progress_reviews / f'{stage} progress chart.png', dpi=300)
+    plt.savefig(paths.stage1_processing / f'{stage} progress chart.pdf')
+    plt.savefig(paths.stage1_processing / f'{stage} progress chart.png', dpi=300)
 
 
 #%% --- OBSERVATION CHECKS ---
@@ -539,7 +539,7 @@ for name in numerical_cols:
 
 
 today = datetime.today().isoformat()[:10]
-diagnostic_table.write(paths.status_snapshots / f'target properties and lya fluxes {today}.ecsv')
+diagnostic_table.write(paths.status_input / f'target properties and lya fluxes {today}.ecsv')
 
 #%% plot coordinates of observed targets
 

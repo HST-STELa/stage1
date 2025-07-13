@@ -17,7 +17,7 @@ from tqdm import tqdm
 import catalog_utilities
 import paths
 import catalog_utilities as catutils
-import progress_reviews.utilities
+from stage1_processing import visit_status_xml_parser
 from lya_prediction_tools import transit, lya
 from target_selection_tools import galex_query
 from target_selection_tools import duplication_checking as dc
@@ -1467,8 +1467,9 @@ if not toggle_mid_cycle_update:
 else:
     # this is a mid-cycle update, in which case we need to track what visits have already been cemented
     # and what lemons have been identified
-    latest_status_path = dbutils.pathname_max(paths.status_snapshots, 'HST-17804-visit-status*.xml')
-    labels_in_phase2 = progress_reviews.utilities.parse_visit_labels_from_xml_status(latest_status_path)
+    latest_status_path = dbutils.pathname_max(paths.status_input, 'HST-17804-visit-status*.xml')
+    label_parser = visit_status_xml_parser.parse_visit_labels_from_xml_status
+    labels_in_phase2 = label_parser(latest_status_path)
 
     # eliminate redo orbits for failed observations
     # these can be identified by the fact that they start with a number
@@ -1479,7 +1480,7 @@ else:
     [labels_in_phase2.remove(_lbl) for _lbl in hand_remove_visits]
 
     # load the hand updated observing status sheet to ID lemons
-    path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
+    path_main_table = dbutils.pathname_max(paths.status_input, 'Observation Progress*.xlsx')
     progress_tbl = catutils.read_excel(path_main_table)
     progress_tbl.add_index('Target')
     drop = progress_tbl['Pass to\nStage 1b?'] == False

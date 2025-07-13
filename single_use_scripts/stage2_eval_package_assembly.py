@@ -23,7 +23,7 @@ if not temp_dir_lya.exists():
 
 
 #%% load up the latest export of the obs progress table
-path_main_table = dbutils.pathname_max(paths.status_snapshots, 'Observation Progress*.xlsx')
+path_main_table = dbutils.pathname_max(paths.status_input, 'Observation Progress*.xlsx')
 progress_table = catutils.read_excel(path_main_table)
 
 
