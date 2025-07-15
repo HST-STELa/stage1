@@ -262,6 +262,7 @@ def rename_and_organize_hst_files(
         validate_names=True,
         target_name='from files',
         into_target_folders=True,
+        confirm=True,
 ):
     # nicknames for directories
     src = Path(source_dir)
@@ -284,8 +285,10 @@ def rename_and_organize_hst_files(
         for path in fitspaths:
             hdr = fits.getheader(path)
             targname = hdr['targname']
-            if targname in ['WAVEHITM', 'WAVELINE'] :
-                targname = find_visit_primary_target(path, tgt)
+            if targname in ['WAVEHITM', 'WAVELINE']:
+                if hdr['instrume'] == 'STIS':
+                    targname = find_visit_primary_target(path, tgt)
+
             obs_names.append(targname)
         obs_names = np.asarray(obs_names)
         if resolve_stela_name:
@@ -343,15 +346,18 @@ def rename_and_organize_hst_files(
             newpaths.append(None)
 
     # show moves and renames are about to happen and ask user to confirm
-    print(f"You are about to execute this moving and renaming of these files from the directory"
-          f"\n\t{src}"
-          f"\nto the directory"
-          f"\n\t{tgt}\n")
-    for old, new in zip(fitspaths, newpaths):
-        oldstr = str(old).replace(str(src), '')
-        newstr = 'No change.' if new is None else str(new).replace(str(tgt), '')
-        print(f"\t{oldstr} --> {newstr}")
-    proceed = input('Note that files will be moved and renamed, not copied. Proceed (y/n)?\n')
+    if confirm:
+        print(f"You are about to execute this moving and renaming of these files from the directory"
+              f"\n\t{src}"
+              f"\nto the directory"
+              f"\n\t{tgt}\n")
+        for old, new in zip(fitspaths, newpaths):
+            oldstr = str(old).replace(str(src), '')
+            newstr = 'No change.' if new is None else str(new).replace(str(tgt), '')
+            print(f"\t{oldstr} --> {newstr}")
+        proceed = input('Note that files will be moved and renamed, not copied. Proceed (y/n)?\n')
+    else:
+        proceed = 'y'
 
     if proceed == 'y':
         for old, new in zip(fitspaths, newpaths):
@@ -471,14 +477,17 @@ def delete_files_for_unusable_observations(
     # Collect all supporting files used by usable observations
     supporting_usage = defaultdict(int)
     for row in tbl[tbl['usable']]:
-        for f in row['supporting files'].values():
-            supporting_usage[f] += 1
+        if row['supporting files']:
+            for f in row['supporting files'].values():
+                supporting_usage[f] += 1
 
     # Go through unusable observations
+    to_be_deleted = []
     for row in tbl[~tbl['usable']]:
         # Delete science files
         id = row['archive id']
         fpaths = find_data_files('*', ids=id, directory=directory)
+        to_be_deleted.extend(fpaths)
         for fpath in fpaths:
             if verbose or dry_run:
                 print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting science file: {fpath.name}")
@@ -486,14 +495,18 @@ def delete_files_for_unusable_observations(
                 os.remove(fpath)
 
         # Delete supporting files if no other usable obs uses them
-        for label, f in row['supporting files'].items():
-            if supporting_usage[f] == 0:
-                fpaths = list(directory.glob(f'*{f}'))
-                if fpaths:
-                    fpath, = fpaths
-                    if verbose or dry_run:
-                        print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting unused supporting file: {fpath.name}")
-                    if not dry_run and os.path.exists(fpath):
-                        os.remove(fpath)
-            elif verbose:
-                print(f"Keeping shared supporting file: {f}")
+        if row['supporting files']:
+            for label, f in row['supporting files'].items():
+                if supporting_usage[f] == 0:
+                    fpaths = list(directory.glob(f'*{f}'))
+                    to_be_deleted.extend(fpaths)
+                    if fpaths:
+                        fpath, = fpaths
+                        if verbose or dry_run:
+                            print(f"{'[DRY-RUN] ' if dry_run else ''}Deleting unused supporting file: {fpath.name}")
+                        if not dry_run and os.path.exists(fpath):
+                            os.remove(fpath)
+                elif verbose:
+                    print(f"Keeping shared supporting file: {f}")
+
+    return to_be_deleted

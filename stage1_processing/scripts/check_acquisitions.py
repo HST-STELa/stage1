@@ -1,79 +1,258 @@
+import warnings
+from pathlib import Path
+from datetime import datetime
 
+import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord, Distance
+from astropy import units as u
+from astropy.time import Time
+
+import matplotlib
+matplotlib.use('Qt5Agg')
+from matplotlib import pyplot as plt
+plt.ion()
+
+import stistools as stis
+
+import database_utilities as dbutils
+import utilities as utils
+
+from stage1_processing import target_lists
+from stage1_processing import preloads
+from stage1_processing import observation_table as obs_tbl_tools
+
+
+#%% batch mode or single runs?
+
+batch_mode = False
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+
+
+#%% get targets
+
+targets = target_lists.observed_since('2025-06-05')
+itertargets = iter(targets)
+
+
+#%% properties table
+
+targprops = preloads.hosts.copy()
+targprops.add_index('tic_id')
+
+
+#%% ra, dec plotting
+
+def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region=None):
+    h = fits_handle
+
+    newobstime = Time(h.header['expstart'], format='mjd')
+    coords_at_obs = object_coords.apply_space_motion(newobstime)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message="'datfix'")
+        wcs = WCS(h.header)
+    ax = figure.add_subplot(*subplot_spec, projection=wcs)
+
+    ax.imshow(hh.data, origin='lower')
+    ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
+               transform=ax.get_transform('icrs'),
+               marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
+    ax.coords.grid(True, color='white', ls=':', lw=0.5)
+
+    # ax.coords[0].set_ticklabel_visible(False)  # RA
+    # ax.coords[1].set_ticklabel_visible(False)  # Dec
+    # ax.coords[0].set_axislabel('')  # RA label
+    # ax.coords[1].set_axislabel('')  # Dec label
+
+    if zoom_region is not None:
+        ra, dec = coords_at_obs.ra, coords_at_obs.dec
+        coord1 = SkyCoord(ra - zoom_region, dec - zoom_region)
+        coord2 = SkyCoord(ra + zoom_region, dec + zoom_region)
+
+        # Convert to pixel coordinates
+        (x1, y1) = wcs.world_to_pixel(coord1)
+        (x2, y2) = wcs.world_to_pixel(coord2)
+
+        # Set the limits using pixel coordinates
+        ax.set_xlim(min(x1, x2), max(x1, x2))
+        ax.set_ylim(min(y1, y2), max(y1, y2))
+
+    return ax
+
+
+#%% SKIP? set up batch processing (skip if not in batch mode)
+
+if batch_mode:
+    print("When 'Continue?' prompts appear, hit enter to continue, anything else to break out of the loop.")
+
+while True:
+  # I'm being sneaky with 2-space indents here because I want to avoid 8 space indents on the cells
+  if not batch_mode:
+    break
+
+  try:
+
+
+#%% move to next target
+
+    target = next(itertargets)
+
+
+#%% prep for target processing
+
+    print(
+      f"""
+      {'=' * len(target)}
+      {target.upper()}
+      {'=' * len(target)}
+      """
+    )
+
+    tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
+    data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
+
+    obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+    print(f'\n{target} observation table:\n')
+    obs_tbl.pprint(-1,-1)
+
+#%% target coordinates
+
+    """note the exoplanet catalog gives coordinates from gaia dr2, which uses a 2015.5 epoch
+    I figured this out just by comparing coordinates for hd95338"""
+    props = targprops.loc[tic_id]
+    coords = SkyCoord(
+        props['ra'] * u.deg,
+        props['dec'] * u.deg,
+        pm_ra_cosdec=props['sy_pmra'] * u.mas / u.yr,
+        pm_dec=props['sy_pmdec'] * u.mas / u.yr,
+        distance=Distance(parallax=1/props['sy_dist'] * u.arcsec),
+        obstime=Time(2015.5, format='jyear')
+    )
 
 
 #%% actual checking
 
-acq_filenames = []
-usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
-for supfiles in usbl_tbl['supporting files']:
-    if np.ma.is_masked(supfiles):
-        continue
-    for type, file in supfiles.items():
-        if 'acq' in type.lower():
-            acq_filenames.append(file)
-acq_filenames = np.unique(acq_filenames)
+    acq_filenames = []
+    usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
+    for supfiles in usbl_tbl['supporting files']:
+        if np.ma.is_masked(supfiles):
+            continue
+        for type, file in supfiles.items():
+            if 'acq' in type.lower():
+                acq_filenames.append(file)
+    acq_filenames = np.unique(acq_filenames)
 
-for acq_name in acq_filenames:
-    bad_acq = False
-    def associated(sfs):
-        return not np.ma.is_masked(sfs) and acq_name in list(sfs.values())
-    assoc_obs_mask = [associated(sfs) for sfs in obs_tbl['supporting files']]
+    for acq_name in acq_filenames:
+        bad_acq = False
 
-    acq_file, = dbutils.find_stela_files_from_hst_filenames(acq_name, data_dir)
-    print(f'\n\nAcquistion file {acq_file.name} associated with:')
-    obs_tbl[assoc_obs_mask]['start,science config,program,key science files'.split(',')].pprint(-1,-1)
-    print('\n\n')
-    if 'hst-stis' in acq_file.name:
-        stages = ['coarse', 'fine', '0.2x0.2']
-        stis.tastis.tastis(str(acq_file))
-        h = fits.open(acq_file)
+        # find associated science files, print info
+        def associated(sfs):
+            return not np.ma.is_masked(sfs) and acq_name in list(sfs.values())
+        assoc_obs_mask = [associated(sfs) for sfs in obs_tbl['supporting files']]
+        acq_file, = dbutils.find_stela_files_from_hst_filenames(acq_name, data_dir)
+        print(f'\n\nAcquistion file {acq_file.name} associated with:')
+        obs_tbl[assoc_obs_mask]['start,science config,program,key science files'.split(',')].pprint(-1,-1)
+        print('\n\n')
 
-        if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
-            fig, axs = plt.subplots(1, 3, figsize=[7,3])
-            for j, ax in enumerate(axs):
-                data = h['sci', j+1].data
-                ax.imshow(data)
-                ax.set_title(stages[j])
-            fig.suptitle(acq_file.name)
-            fig.supxlabel('dispersion')
-            fig.supylabel('spatial')
-            fig.tight_layout()
+        # check if the acquisition is an offset acquisition
+        sci_name = obs_tbl[assoc_obs_mask]['key science files'][0]
+        sci_file, = dbutils.find_stela_files_from_hst_filenames(sci_name, data_dir)
+        targname_acq = fits.getval(acq_file, 'targname')
+        targname_sci = fits.getval(sci_file, 'targname')
+        if targname_sci != targname_acq:
+            msg = ("Target names in the FITS headers for the science file and acq data differ. "
+                   "This is likely an offset acquisition."
+                   f"\n\tscience target:     {targname_sci}"
+                   f"\n\tacquisition target: {targname_acq}")
+            warnings.warn(msg)
 
-            print('Click outside the plots to continue.')
-            xy = utils.click_coords(fig)
-    else:
-        print('\nCOS data, no automatic eval routine\n')
-        stages = ['initial', 'confirmation']
-        h = fits.open(acq_file)
-        if h[0].header['exptype'] == 'ACQ/SEARCH':
-            raise NotImplementedError
-        if h[0].header['exptype'] == 'ACQ/PEAKXD':
-            print('PEAKXD acq')
-            print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
-            print(f'\tcounts: {h[1].data['counts']}')
-            print(f'\tslew: {h[0].header['ACQSLEWY']}')
-        if h[0].header['exptype'] == 'ACQ/PEAKD':
-            print('PEAKD acq')
-            print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
-            print(f'\tcounts: {h[1].data['counts']}')
-            print(f'\tslew: {h[0].header['ACQSLEWX']}')
-        if h[0].header['exptype'] == 'ACQ/IMAGE':
-            fig, axs = plt.subplots(1, 2, figsize=[5,3])
-            for j, ax in enumerate(axs):
-                data = h['sci', j+1].data
-                ax.imshow(np.cbrt(data))
-                ax.set_title(stages[j])
-            fig.suptitle(acq_file.name)
-            fig.tight_layout()
+        if 'hst-stis' in acq_file.name:
+            # run builtin STIS tool for acq diagnosis
+            stis.tastis.tastis(str(acq_file))
 
-            print('Click outside the plots to continue.')
-            xy = utils.click_coords(fig)
+            # now plot the acq images
+            stages = ['coarse', 'fine']
+            h = fits.open(acq_file)
+            if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
+                fig = plt.figure(figsize=[7,3])
+                for j in range(2):
+                    hh = h['sci', j+1]
+                    ax = plot_acq_image(hh, coords, fig, (1, 2, j+1))
+                    ax.set_title(stages[j])
+                fig.suptitle(acq_file.name)
+                fig.tight_layout()
 
-    answer = input('Mark acq as good? (y/n)')
-    if answer == 'n':
-        bad_acq = True
-    plt.close('all')
+                print('Click outside the plots to continue.')
+                xy = utils.click_coords(fig)
+        else:
+            print('\nCOS data, no automatic eval routine\n')
+            stages = ['initial', 'confirmation']
+            h = fits.open(acq_file)
+            if h[0].header['exptype'] == 'ACQ/SEARCH':
+                raise NotImplementedError
+            if h[0].header['exptype'] == 'ACQ/PEAKXD':
+                print('PEAKXD acq')
+                print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data['counts']}')
+                print(f'\tslew: {h[0].header['ACQSLEWY']}')
+            if h[0].header['exptype'] == 'ACQ/PEAKD':
+                print('PEAKD acq')
+                print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data['counts']}')
+                print(f'\tslew: {h[0].header['ACQSLEWX']}')
+            if h[0].header['exptype'] == 'ACQ/IMAGE':
+                fig = plt.figure(figsize=[5,3])
+                for j in range(2):
+                    hh = h['sci', j+1]
+                    ax = plot_acq_image(hh, coords, fig, (1, 2, j+1),
+                                        zoom_region=1.5*u.arcsec)
+                    ax.set_title(stages[j])
+                fig.suptitle(acq_file.name)
+                fig.tight_layout()
 
-    if bad_acq:
-        obs_tbl['usable'][assoc_obs_mask] = False
-        obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
+                print('Click outside the plots to continue.')
+                xy = utils.click_coords(fig)
+
+        answer = input('Mark acq as good? (enter for yes or n for no)')
+        if answer == 'n':
+            bad_acq = True
+        plt.close('all')
+
+        if bad_acq:
+            obs_tbl['usable'][assoc_obs_mask] = False
+            obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
+
+
+#%% delete files associated with bad obs
+
+    if np.any(~obs_tbl['usable'].filled(True)):
+        dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=True, verbose=True, directory=data_dir)
+        answer = input('Proceed with file deletion? y/n')
+        if answer == 'y':
+            dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
+
+        utils.query_next_step(batch_mode, care_level, 1)
+
+
+#%% take a gander
+
+    print(f'\n{target} observation table after checks:\n')
+    obs_tbl.pprint(-1,-1)
+
+
+#%% save obs_tbl
+
+    print(f'\nSaving obs_tbl for {target}.\n')
+    obs_tbl.sort('start')
+    obs_tbl.meta['last acq check'] = datetime.now().isoformat()
+    obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
+
+    utils.query_next_step(batch_mode, care_level, 1)
+
+
+#%% loop close
+
+  except StopIteration:
+    break

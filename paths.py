@@ -1,6 +1,9 @@
 from pathlib import Path
 
+stage1_code = Path('/Users/parke/Google Drive/Research/STELa/public github repo/stage1')
 data = Path('/Users/parke/Google Drive/Research/STELa/data/targets')
+def target_hst_data(target):
+    return data / target / 'hst'
 
 selection_inputs = Path('target_selection_data/inputs')
 selection_intermediates = Path('target_selection_data/intermediates')

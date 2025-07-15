@@ -1,6 +1,7 @@
 import re
 import os
 from pathlib import Path
+from datetime import datetime
 
 from astropy.io import fits
 from astropy import table
@@ -14,11 +15,14 @@ import catalog_utilities as catutils
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
+from stage1_processing import observation_table as obs_tbl_tools
 
 
 #%% batch mode or single runs?
 
 batch_mode = False
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+confirm_file_moves = True
 
 
 #%% get targets
@@ -87,68 +91,22 @@ while True:
 
 #%% create or load table of observation information
 
-    newcols = 'flags notes'.split()
-    path_obs_tbl = data_dir / f'{target}.observation-table.ecsv'
-    if path_obs_tbl.exists():
-        obs_tbl = catutils.load_and_mask_ecsv(path_obs_tbl)
-        for col in newcols:
-            if col not in obs_tbl.colnames:
-                obs_tbl[col] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype='object')
-    else:
-        key_science_files = []
-        files_science_copy = files_science
-        while files_science_copy:
-            file = files_science_copy.pop(0)
-            pieces = dbutils.parse_filename(file)
-            associated_files = [file.name]
-            ftp = pieces['type']
-            pairs = (('_a', '_b'), ('_b', '_a'))
-            for s1, s2 in pairs:
-                if ftp.endswith(s1):
-                    file2 = file.parent / file.name.replace(f'{s1}.fits', f'{s2}.fits')
-                    if file2 in files_science_copy:
-                        files_science_copy.remove(file2)
-                        associated_files.append(file.name)
-            key_science_files.append(associated_files)
-
-        n = len(key_science_files)
-        columns = [
-            table.MaskedColumn(data=['hst']*n, name='observatory', dtype='object'),
-            table.MaskedColumn(length=n, name='science config', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='start', dtype='S20', mask=True),
-            table.MaskedColumn(length=n, name='program', dtype='int', mask=True),
-            table.MaskedColumn(length=n, name='pi', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='archive id', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='key science files', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='supporting files', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='usable', dtype='bool', mask=True),
-            table.MaskedColumn(length=n, name='reason unusable', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='flags', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='notes', dtype='object', mask=True)
-        ]
-        obs_tbl = table.Table(columns)
-        for i, asc_files in enumerate(key_science_files):
-            pi = fits.getval(data_dir / asc_files[0], 'PR_INV_L')
-            pieces = dbutils.parse_filename(asc_files[0])
-            obs_tbl['archive id'][i] = pieces['id']
-            obs_tbl['science config'][i] = pieces['config']
-            obs_tbl['start'][i] = re.sub(r'([\d-]+T\d{2})(\d{2})(\d{2})', r'\1:\2:\3', pieces['datetime'])
-            obs_tbl['program'][i] = pieces['program'].replace('pgm', '')
-            obs_tbl['pi'][i] = pi
-            obs_tbl['key science files'][i] = ['.'.join(name.split('.')[-2:]) for name in asc_files]
-
-    print(f'\nExisting or just-initialized observations table for {target}:\n')
+    try:
+        obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+        print(f'\nExisting observation table loaded for {target}:\n')
+    except FileNotFoundError:
+        obs_tbl = obs_tbl_tools.initialize(files_science)
+        print(f'\nObservation table initialized for {target}:\n')
     obs_tbl.pprint(-1,-1)
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% setup for MAST query
 
     hst_database = MastMissions(mission='hst')
     dnld_dir = data_dir / 'downloads'
-    if not dnld_dir.exists():
-        os.mkdir(dnld_dir)
+    os.makedirs(dnld_dir, exist_ok=True)
 
 
 #%% find new science data
@@ -194,23 +152,23 @@ while True:
     if new_files:
         print()
         print('Attempting download of:')
-        for f in new_files:
-            print(f'\t{f}')
+        new_files['instrument_name filters filename access'.split()].pprint(-1)
         print()
     else:
         print('\nNo new science files found in the archive.\n')
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% download and rename new files
 
     if new_files:
-        # manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
-        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False)
+        manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
+        # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True,
+        #                                       into_target_folders=False, confirm=confirm_file_moves)
+        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False, confirm=confirm_file_moves)
 
-        utils.query_next_step(batch_mode)
+        utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% make sure info on all files are in the obs tbl
@@ -225,9 +183,15 @@ while True:
         if id in obs_tbl['archive id']:
             i = obs_tbl.loc_indices[id]
             assert not hasattr(i, '__iter__')
-            if filename in obs_tbl['key science files'][i]:
+            ksf = obs_tbl['key science files'][i]
+            if isinstance(ksf, np.ndarray):
+                ksf = ksf.tolist()
+            if np.ma.is_masked(ksf):
+                ksf = []
+            if filename in ksf:
                 continue
-            obs_tbl['key science files'][i].append(filename)
+            ksf.append(filename)
+            obs_tbl['key science files'][i] = ksf
         else:
             row = {}
             pi = fits.getval(file, 'PR_INV_L')
@@ -236,7 +200,7 @@ while True:
             row['archive id'] = pieces['id']
             row['science config'] = pieces['config']
             row['start'] = re.sub(r'([\d-]+T\d{2})(\d{2})(\d{2})', r'\1:\2:\3', pieces['datetime'])
-            row['program'] = pieces['program'].replace('pgm', '')
+            row['program'] = int(pieces['program'].replace('pgm', ''))
             row['key science files'] = [filename]
             row['supporting files'] = []
             row['usable'] = True
@@ -326,16 +290,16 @@ while True:
     if not new_supporting_files:
         print('All supporting files present, nothing downloaded.')
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% move and rename downloaded files
 
     if new_supporting_files:
-        # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target)
-        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True)
+        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False, confirm=confirm_file_moves)
+        # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True, into_target_folders=False, confirm=confirm_file_moves)
 
-        utils.query_next_step(batch_mode)
+        utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% identify files missing data
@@ -405,7 +369,7 @@ while True:
         print('\nSome files found to be missing data:\n')
         obs_tbl.pprint(-1,-1)
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% note to self
@@ -421,16 +385,17 @@ while True:
     )
     obs_tbl.pprint(-1,-1)
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% save obs_tbl
 
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
-    obs_tbl.write(path_obs_tbl, overwrite=True)
+    obs_tbl.meta['last archive query'] = datetime.now().isoformat()
+    obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
-    utils.query_next_step(batch_mode)
+    utils.query_next_step(batch_mode, care_level, 1)
 
 
 #%% dummy cell

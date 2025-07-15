@@ -205,8 +205,9 @@ def click_n_plot(fig, plot_fn):
     return x, y
 
 
-def query_next_step(batch_mode=True):
+def query_next_step(batch_mode=True, care_level=0, threshold=0):
     if batch_mode:
-        answer = input('Continue?')
-        if answer != '':
-            raise StopIteration
+        if care_level >= threshold:
+            answer = input('Continue?')
+            if answer != '':
+                raise StopIteration
