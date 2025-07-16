@@ -1,7 +1,7 @@
-from pathlib import Path
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import re
+import warnings
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -148,20 +148,17 @@ vstd = (lya.wgrid_std/1215.67/u.AA - 1)*const.c.to('km s-1')
 
 for tic_id in target_info['TIC ID']:
     target_filename = preloads.stela_names.loc['tic_id', tic_id]['hostname_file']
+    data_dir = paths.target_hst_data(target_filename)
     if target_filename not in targets:
         continue
 
     # find the appropriate file
-    file_srch_kws = dict(targets=[target_filename], instruments=insts, directory=paths.data)
-    files = dbutils.find_data_files('coadd', **file_srch_kws)
-    if not files:
-        files = dbutils.find_data_files('x1d', **file_srch_kws)
-    if not files:
-        print(f'No x1d files found for {target_filename}.')
-        continue
-    if len(files) > 1:
-        print(f'Multiple x1d files found for {target_filename}, but no coadds.')
-    xf = files[0]
+    xfs = dbutils.find_coadd_or_x1ds(target_filename, instruments=insts, directory=data_dir)
+    if len(xfs) == 0:
+        print(f'No x1d file found for {target_filename}. Moving on.')
+    if len(xfs) > 1:
+        warnings.warn(f'Multiple x1d files found for {target_filename}, but no coadds.')
+    xf = xfs[0]
     if 'stis-e140m' in xf.name:
         assert 'coadd' in xf.name
 
@@ -199,7 +196,7 @@ for tic_id in target_info['TIC ID']:
                                    & np.insert(above_bk[:-1], 0, False))
         uncontaminated = ((bk_flux < 1e-15) | (above_bk & neighbors_above_bk))
     elif 'e140m' in xf.name:
-        xfsingle, = dbutils.find_data_files('x1d', **file_srch_kws)
+        xfsingle, = dbutils.find_data_files('x1d', instruments='hst-stis-e140m', directory=data_dir)
         v_helio = fits.getval(xfsingle, 'v_helio', 1)
         w0 = 1215.67
         dw = v_helio/3e5 * w0
@@ -282,7 +279,7 @@ for tic_id in target_info['TIC ID']:
         dpi = fig.get_dpi()
         fig.set_dpi(150)
         plugins.connect(fig, plugins.MousePosition(fontsize=14))
-        htmlfile = str(xf).replace('.fits', 'plot.html')
+        htmlfile = str(xf).replace('.fits', '.plot.html')
         mpld3.save_html(fig, htmlfile)
         fig.set_dpi(dpi)
 
@@ -327,10 +324,11 @@ for name in cols_to_update:
     prog_update[name2] = ''
     prog_update[name2] = prog_update[name2].astype('object')
 
-#%%  parse xml to update plan dates
+#%% parse xml to update plan dates
 
-# Iterate over each visit element in the visit status, find the appropriate row, and update dates
-# this can't be done with a standard table join given a row can be associated with multiple visits if there are redos
+"""Iterate over each visit element in the visit status, find the appropriate row, and update dates
+this can't be done with a standard table join given a row can be associated with multiple visits 
+if there are redos"""
 records = []
 prog_update[f'Lya Visit\nin Phase II_2'] = False
 prog_update[f'FUV Visit\nin Phase II_2'] = False
@@ -457,121 +455,4 @@ for stage in ['Lya', 'FUV']:
     plt.savefig(paths.stage1_processing / f'{stage} progress chart.png', dpi=300)
 
 
-#%% plot extraction locations
 
-fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', **obs_filters)
-
-for ff in fltfiles:
-    img = fits.getdata(ff, 1)
-    f1 = dbutils.modify_file_label(ff, 'x1d')
-    td = fits.getdata(f1, 1)
-    fig = plt.figure()
-    plt.imshow(np.cbrt(img), aspect='auto')
-    plt.title(ff.name)
-
-    x = np.arange(img.shape[1]) + 0.5
-    i = 36 if 'e140m' in ff.name else 0
-    y = td['extrlocy'][i]
-    ysz = td['extrsize'][i]
-    plt.plot(x, y.T, color='w', lw=0.5, alpha=0.5)
-    plt.fill_between(x, y - ysz/2, y + ysz/2, color='w', lw=0, alpha=0.5)
-    for ibk in (1,2):
-        off, sz = td[f'bk{ibk}offst'][i], td[f'bk{ibk}size'][i]
-        ym = y + off
-        y1, y2 = ym - sz/2, ym + sz/2
-        plt.fill_between(x, y1, y2, color='0.5', alpha=0.5, lw=0)
-
-    if saveplots:
-        dpi = fig.get_dpi()
-        fig.set_dpi(150)
-        plugins.connect(fig, plugins.MousePosition(fontsize=14))
-        htmlfile = str(ff).replace('_flt.fits', '_plot-extraction.html')
-        mpld3.save_html(fig, htmlfile)
-        fig.set_dpi(dpi)
-
-
-#%% --- INFREQUENT OR SINGLE USE CHECKS ---
-pass
-
-#%% table of target parameters combined with observation table values
-
-obscols = 'Rank,Target,Peak\nLya Flux,Integrated\nLya Flux,(O-C)/sigma,Pass to\nStage 1b?'.split(',')
-colmap = {'Rank': 'rank',
-          'Target': 'target',
-          'Peak\nLya Flux': 'peak lya flux',
-          'Integrated\nLya Flux': 'integrated lya flux',
-          '(O-C)/sigma': 'lya (O-C)/sigma',
-          'Pass to\nStage 1b?': 'pass'}
-oldcols, newcols = list(zip(*colmap.items()))
-
-bigtable = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__add-flags-scores.ecsv')
-bigtable = catutils.planets2hosts(bigtable)
-hostcols = 'hostname ra dec sy_dist st_radv st_teff st_mass st_rad st_rotp st_age st_agelim'.split()
-
-_temp = bigtable.copy()
-_temp['hostname'] = _temp['hostname'].astype(str)
-
-diagnostic_table = table.join(_temp[hostcols], progress_table[obscols],
-                              keys_left='hostname', keys_right='Target', join_type='right')
-assert len(diagnostic_table) == len(progress_table)
-diagnostic_table.rename_columns(oldcols, newcols)
-diagnostic_table.remove_column('target')
-
-numerical_cols = 'peak lya flux,integrated lya flux,lya (O-C)/sigma'.split(',')
-for name in numerical_cols:
-    empty = diagnostic_table[name] == ''
-    diagnostic_table[name][empty] = 'nan'
-    diagnostic_table[name] = table.MaskedColumn(diagnostic_table[name], mask=empty, fill_value=np.nan, dtype=float)
-
-
-today = datetime.today().isoformat()[:10]
-diagnostic_table.write(paths.status_input / f'target properties and lya fluxes {today}.ecsv')
-
-#%% plot coordinates of observed targets
-
-observed = ~diagnostic_table['integrated lya flux'].mask
-ot = diagnostic_table[observed]
-
-# plot positions on sky
-from astropy.coordinates import SkyCoord
-import astropy.units as u
-
-# SkyCoord object
-c = SkyCoord(ra=ot['ra'], dec=ot['dec'], frame='icrs')
-
-# Convert to radians for plotting
-ra_rad = c.ra.wrap_at(180 * u.deg).radian  # wrap RA to [-180, +180]
-dec_rad = c.dec.radian
-
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='mollweide')
-ax.grid(True)
-ax.scatter(ra_rad, dec_rad, marker='o', color='C0')
-ax.set_xlabel('RA')
-ax.set_ylabel('Dec')
-
-
-#%% plot other params vs Lya fluxes
-
-observed = ~diagnostic_table['integrated lya flux'].mask
-ot = diagnostic_table[observed]
-
-oc = ot['lya (O-C)/sigma']
-
-names = 'sy_dist st_radv st_mass st_rotp'.split()
-for name in names:
-    plt.figure()
-    plt.plot(ot[name], ot['lya (O-C)/sigma'], 'o')
-    plt.xlabel(name)
-    plt.ylabel('Lya Flux (O-C)/sigma')
-
-
-plt.figure()
-nolim = ot['st_agelim'].filled(0) == 0
-lolim = ot['st_agelim'].filled(0) == -1
-uplim = ot['st_agelim'].filled(0) == 1
-plt.errorbar(ot['st_age'][nolim], ot['lya (O-C)/sigma'][nolim], fmt='oC0')
-plt.errorbar(ot['st_age'][lolim], ot['lya (O-C)/sigma'][lolim], fmt='oC0', xerr=0.2, xlolims=True)
-plt.errorbar(ot['st_age'][uplim], ot['lya (O-C)/sigma'][uplim], fmt='oC0', xerr=0.2, xuplims=True)
-plt.xlabel('age')
-plt.ylabel('Lya Flux (O-C)/sigma')

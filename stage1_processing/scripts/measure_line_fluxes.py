@@ -65,12 +65,7 @@ for config in configs:
 
 #%% find files
 
-    files = dbutils.find_data_files('coadd', instruments=config, directory=data_folder)
-    if not files:
-        files = dbutils.find_data_files('x1d', instruments=config, directory=data_folder)
-        if not files:
-            print(f'No {config} files found.')
-
+    files = dbutils.find_coadd_or_x1ds(targname_file, instruments=config, directory=data_folder)
     iterfiles = iter(files)
 
 

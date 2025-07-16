@@ -1,4 +1,5 @@
 import os
+import warnings
 from pathlib import Path
 import glob
 from copy import copy
@@ -12,6 +13,8 @@ plt.ion()
 from astropy.io import fits
 from astropy import table
 import numpy as np
+import mpld3
+from mpld3 import plugins
 
 import stistools as stis
 
@@ -24,10 +27,14 @@ from stage1_processing import observation_table as obs_tbl_tools
 from data_reduction_tools import stis_extraction as stx
 
 
-#%% batch mode or single runs?
+#%% settings (incl. batch mode)
 
 batch_mode = True
 care_level = 2 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+
+redo_extractions = False
+# note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
+# delete the files produced by the extraction (including intermediates)
 
 
 #%% get targets
@@ -95,6 +102,8 @@ for line in setenvs:
         path = path.replace('${CRDS_PATH}', '/Users/parke/crds_cache')
         os.environ[key] = path
 
+import crds
+
 
 #%% SKIP? set up batch processing (skip if not in batch mode)
 
@@ -115,7 +124,7 @@ while True:
     target = next(itertargets)
 
 
-#%% change to data directory and renew file list
+#%% change to data directory and load file list
 
     print(
         f"""
@@ -128,30 +137,61 @@ while True:
     data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
     os.chdir(data_dir)
 
-    instruments = ['hst-stis']
-    stis_tag_files = dbutils.find_data_files('tag', instruments=instruments)
-    stis_tag_files = list(map(str, stis_tag_files))
-    if not stis_tag_files:
-        print('\nNo G140L or E140M files. Might want to look in folder to double check.\n')
+
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
 
+    stis_tag_files_in_tbl = []
+    for row in obs_tbl:
+        if 'hst-stis' in row['science config']:
+            stis_tag_files_in_tbl.extend(row['key science files'])
+    stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments='hst-stis')
+    stis_tag_files_in_dir = list(map(str, stis_tag_files_in_dir))
 
-#%% update the calibration files
+    n_tbl = len(stis_tag_files_in_tbl)
+    n_obs = len(stis_tag_files_in_dir)
+    if n_tbl != n_obs:
+        warnings.warn(f"There are {n_tbl} in the observation manifest table but {n_tbl} in the directory for {target}."
+                      f"\nOnly the files in the table will be extracted.")
 
-    import crds
 
-    if stis_tag_files:
-        crds.bestrefs.assign_bestrefs(stis_tag_files, sync_references=True, verbosity=10)
+#%% identify existing STIS extractions
 
+    obs_tbl['skip_extraction'] = False
+    obs_tbl['skip_extraction'].description = (
+        "Temporary column telling the extraction scrip whether to extract the data or not. Can likely be deleted if"
+        "still present later."
+    )
 
-#%% initial extraction
+    for row in obs_tbl:
+        sci_names = row['key science files']
+        for name in sci_names:
+            sci_file, = dbutils.find_stela_files_from_hst_filenames(name, data_dir)
+            x1d_file = dbutils.modify_file_label(sci_file, 'x1d')
+            if x1d_file.exists():
+                if redo_extractions:
+                    delete_extensions = ['flt', 'x1d', 'x2d']
+                    if '_raw.fits' not in sci_file.name:
+                        delete_extensions.append('raw')
+                    for ext in delete_extensions:
+                        del_file = dbutils.modify_file_label(sci_file, ext)
+                        if del_file.exists():
+                            os.remove(del_file)
+                else:
+                    row['skip_extraction'] = True
+
+#%% update calibration files and perform initial extraction
 
     overwrite_consent = False
-    for stis_tf in stis_tag_files:
+    for row in obs_tbl:
+        sci_tf_name, = row['key science files']
+        stis_tf, = dbutils.find_stela_files_from_hst_filenames(sci_tf_name, '.')
         stis_tf = str(stis_tf)
+
+        crds.bestrefs.assign_bestrefs([stis_tf], sync_references=True, verbosity=10)
+
         root = dbutils.modify_file_label(stis_tf, '')
         root = str(root).replace('_', '')
         if '_tag.fits' in stis_tf:
@@ -448,6 +488,11 @@ while True:
     os.chdir(paths.stage1_code)
 
 
+
+#%% delete skip column
+
+    obs_tbl.remove_column('skip_extraction')
+
 #%% check obs_tbl
 
     print(
@@ -469,6 +514,39 @@ while True:
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
     utils.query_next_step(batch_mode, care_level, 1)
+
+
+#%% plot extraction locations
+
+    fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
+
+    for ff in fltfiles:
+        img = fits.getdata(ff, 1)
+        f1 = dbutils.modify_file_label(ff, 'x1d')
+        td = fits.getdata(f1, 1)
+        fig = plt.figure()
+        plt.imshow(np.cbrt(img), aspect='auto')
+        plt.title(ff.name)
+
+        x = np.arange(img.shape[1]) + 0.5
+        i = 36 if 'e140m' in ff.name else 0
+        y = td['extrlocy'][i]
+        ysz = td['extrsize'][i]
+        plt.plot(x, y.T, color='w', lw=0.5, alpha=0.5)
+        plt.fill_between(x, y - ysz/2, y + ysz/2, color='w', lw=0, alpha=0.5)
+        for ibk in (1,2):
+            off, sz = td[f'bk{ibk}offst'][i], td[f'bk{ibk}size'][i]
+            ym = y + off
+            y1, y2 = ym - sz/2, ym + sz/2
+            plt.fill_between(x, y1, y2, color='0.5', alpha=0.5, lw=0)
+
+        dpi = fig.get_dpi()
+        fig.set_dpi(150)
+        plugins.connect(fig, plugins.MousePosition(fontsize=14))
+        htmlfile = str(ff).replace('.fits', '.plot-extraction.html')
+        mpld3.save_html(fig, htmlfile)
+        fig.set_dpi(dpi)
+
 
 #%% close plots
 

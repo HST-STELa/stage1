@@ -510,3 +510,9 @@ def delete_files_for_unusable_observations(
                     print(f"Keeping shared supporting file: {f}")
 
     return to_be_deleted
+
+def find_coadd_or_x1ds(target, **file_srch_kws):
+    files = find_data_files('coadd', targets=[target], **file_srch_kws)
+    if not files:
+        files = find_data_files('x1d', **file_srch_kws)
+    return files
