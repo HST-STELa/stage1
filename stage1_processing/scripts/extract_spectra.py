@@ -430,6 +430,11 @@ while True:
     utils.query_next_step(batch_mode, care_level, 2)
 
 
+#%% revise uncertainties
+
+    #todo utils.shift_floor_to_zero(spec.e, window_size=50) helpful
+
+
 #%% coadd multiple exposures or orders
 
     use_tbl = dbutils.filter_observations(
