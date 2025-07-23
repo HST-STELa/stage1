@@ -2,6 +2,9 @@ import warnings
 
 import numpy as np
 from matplotlib import pyplot as plt
+from mpld3 import plugins
+import mpld3
+from astropy.units import Quantity
 
 
 def midpts(ary, axis=None):
@@ -9,7 +12,8 @@ def midpts(ary, axis=None):
 
     Output has length len(vec)-1.
     """
-    if type(ary) != np.ndarray: ary = np.array(ary)
+    if type(ary) not in [np.ndarray, Quantity]:
+        ary = np.array(ary)
     if axis == None:
         return (ary[1:] + ary[:-1])/2.0
     else:
@@ -18,16 +22,19 @@ def midpts(ary, axis=None):
         return (hi+lo)/2.0
 
 
-def grid2bins(mids):
+def mids2bins(mids, bin_widths=None):
     """
     Reconstructs bin edges given only the midpoints by assuming the edges fall evenly between the midpoints.
     Note that this assumption can be invalid, particularly if the midpoints are not spaced evenly.
+    If bin_widths are provided, no assumption is needed.
 
     Parameters
     ----------
     mids : 1-D array-like
         A 1-D array or list of the midpoints from which bin edges are to be
         inferred.
+    bin_widths : 1-D array-like, optional
+        width of the bin associated with each midpoint
 
     Result
     ------
@@ -35,12 +42,15 @@ def grid2bins(mids):
         The inferred bin edges.
 
     """
-
-    edges = midpts(mids)
-    d0 = edges[0] - mids[0]
-    d1 = mids[-1] - edges[-1]
-    edges = np.insert(edges, [0, len(edges)], [mids[0] - d0, mids[-1] + d1])
-    return edges
+    if bin_widths is None:
+        edges = midpts(mids)
+        d0 = edges[0] - mids[0]
+        d1 = mids[-1] - edges[-1]
+        edges = np.insert(edges, [0, len(edges)], [mids[0] - d0, mids[-1] + d1])
+        return edges
+    else:
+        edges = np.append(mids - bin_widths/2, mids[-1] + bin_widths[-1]/2)
+        return edges
 
 
 def cumulative_trapz(y, x, zero_start=False):
@@ -135,7 +145,7 @@ def click_coords(fig=None, timeout=600.):
 
 
 def flux_integral(w, f, e=None):
-    we = grid2bins(w)
+    we = mids2bins(w)
     dw = np.diff(we)
     flux = np.sum(dw*f)
     if e is None:
@@ -211,3 +221,31 @@ def query_next_step(batch_mode=True, care_level=0, threshold=0):
             answer = input('Continue?')
             if answer != '':
                 raise StopIteration
+
+
+def save_standard_mpld3(fig, path):
+    dpi = fig.get_dpi()
+    fig.set_dpi(150)
+    plugins.connect(fig, plugins.MousePosition(fontsize=14))
+    mpld3.save_html(fig, str(path))
+    fig.set_dpi(dpi)
+
+
+def step_edges(bin_edges, y, ax=plt.gca(), **plt_kws):
+    edges2x = np.repeat(bin_edges, 2)
+    y2 = np.repeat(y, 2)
+    result = ax.plot(edges2x[1:-1], y2, **plt_kws)
+    return result
+
+
+def step_mids(bin_midpts, y, ax=plt.gca(), bin_widths=None, **plt_kws):
+    edges = mids2bins(bin_midpts, bin_widths=bin_widths)
+    return step_edges(edges, y, ax=ax, **plt_kws)
+
+
+def rebin(new_edges, old_edges, y):
+    dx = np.diff(old_edges)
+    areas = y*dx
+    integral = np.insert(np.cumsum(areas), 0, 0)
+    Iedges = np.interp(new_edges, old_edges, integral)
+    return np.diff(Iedges)/np.diff(new_edges)

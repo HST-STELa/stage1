@@ -35,7 +35,7 @@ targets = progress_table["Target"][eval_mask]
 targets_fnames = dbutils.target_names_stela2file(targets)
 problem_targets = []
 for name in targets_fnames:
-    targdir = paths.data / name
+    targdir = paths.data_targets / name
     anyx1d = list(targdir.glob(f'*stis-?140m*x1d.fits'))[0]
     coadd = list(targdir.glob('*stis-?140m*coadd.fits'))
     if len(coadd) == 1:
@@ -91,10 +91,10 @@ print(targets[mask])
 #%% distribute lya reconstructions
 
 lya_inbox_folder = Path('/Users/parke/Google Drive/Research/STELa/data/packages/inbox/2025-07-01 Lya reconstructions')
-lya_recon_files = list(lya_inbox_folder.rglob('*lya_recon.csv'))
+lya_recon_files = list(lya_inbox_folder.rglob('*lya-recon.csv'))
 for file in lya_recon_files:
     pieces = dbutils.parse_filename(file)
-    tgt_folder = paths.data / pieces['target'] / 'reconstructions'
+    tgt_folder = paths.data_targets / pieces['target'] / 'reconstructions'
     if not tgt_folder.exists():
         os.mkdir(tgt_folder)
     tgt_path = tgt_folder / file.name
@@ -113,7 +113,7 @@ for file in xray_files:
         targname, = dbutils.resolve_stela_name_w_simbad([targname])
     targname_file, = dbutils.target_names_stela2file([targname])
 
-    recon_folder = paths.data / targname_file / 'reconstructions'
+    recon_folder = paths.data_targets / targname_file / 'reconstructions'
     newname = f'{targname_file}.apec.na.na.na.xray_recon.fits'
     tgt_path = recon_folder / newname
     shutil.copy(file, tgt_path)
@@ -122,8 +122,8 @@ for file in xray_files:
 
 #%% add x-ray spectra to package
 
-xray_files = list(paths.data.rglob('*xray_recon.fits'))
-tgt_folder = paths.data / '../packages/2025-06-16.stela_stage2_eval_pkg1/xray_reconstructions'
+xray_files = list(paths.data_targets.rglob('*xray_recon.fits'))
+tgt_folder = paths.data_targets / '../packages/2025-06-16.stela_stage2_eval_pkg1/xray_reconstructions'
 for file in xray_files:
     newpath = tgt_folder / file.name
     shutil.copy(file, newpath)
@@ -131,8 +131,8 @@ for file in xray_files:
 
 #%% add line fluxes to package
 
-line_files = list(paths.data.rglob('*line-flux-table.ecsv'))
-tgt_folder = paths.data / '../packages/2025-06-16.stela_stage2_eval_pkg1/fuv_line_fluxes'
+line_files = list(paths.data_targets.rglob('*line-flux-table.ecsv'))
+tgt_folder = paths.data_targets / '../packages/2025-06-16.stela_stage2_eval_pkg1/fuv_line_fluxes'
 for file in line_files:
     tbl = table.Table.read(file)
     tbl.sort('wave')

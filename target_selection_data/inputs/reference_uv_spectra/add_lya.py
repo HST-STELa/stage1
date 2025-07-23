@@ -25,5 +25,5 @@ for path in files:
     spec['f'][fillmask] = 0
 
     savepath = added_folder / path.name.replace('.spec', '.dat')
-    data = np.array((spec['w'].data, spec['f'].data))
+    data = np.array((spec['w'].data_targets, spec['f'].data_targets))
     np.savetxt(savepath, data.T)

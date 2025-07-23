@@ -234,7 +234,7 @@ while True:
         id = h[0].header['asn_id'].lower()
         ids.append(id)
 
-        img = h[1].data
+        img = h[1].data_targets
         plt.figure()
         plt.title(Path(ff).name)
         plt.imshow(np.cbrt(img), aspect='auto')
@@ -242,7 +242,7 @@ while True:
         fx = dbutils.modify_file_label(ff, 'x1d')
         if fx.exists():
             hx = fits.open(fx)
-            y = hx[1].data['extrlocy']
+            y = hx[1].data_targets['extrlocy']
             x = np.arange(img.shape[1]) + 0.5
             iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
         else:
@@ -262,7 +262,7 @@ while True:
         xclick, yclick = xy[-1]
 
         if xclick < 100:
-            xclick, yclick = hx[1].data['a2center'], y_predicted
+            xclick, yclick = hx[1].data_targets['a2center'], y_predicted
             plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
         if fx.exists():
             # find offset to nearest trace
@@ -270,7 +270,7 @@ while True:
             dist = np.abs(yt - yclick)
             imin = np.argmin(dist)
             dy = yclick - yt[imin]
-            a2 = hx[1].data['a2center'] + dy
+            a2 = hx[1].data_targets['a2center'] + dy
         else:
             a2 = yclick
 
@@ -545,12 +545,8 @@ while True:
             y1, y2 = ym - sz/2, ym + sz/2
             plt.fill_between(x, y1, y2, color='0.5', alpha=0.5, lw=0)
 
-        dpi = fig.get_dpi()
-        fig.set_dpi(150)
-        plugins.connect(fig, plugins.MousePosition(fontsize=14))
         htmlfile = str(ff).replace('.fits', '.plot-extraction.html')
-        mpld3.save_html(fig, htmlfile)
-        fig.set_dpi(dpi)
+        utils.save_standard_mpld3(fig, htmlfile)
 
 
 #%% close plots

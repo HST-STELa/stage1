@@ -390,8 +390,8 @@ ids_to_remove = catutils.read_hand_checked_planets(('remove', 'no-exofop'))
 mask_remove = np.in1d(cat['id'], ids_to_remove) | np.in1d(cat['toi'], ids_to_remove)
 remove_str = "Removed because planet candidate failed manual vetting."
 catutils.flag_cut(cat, mask_remove, remove_str)
-Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data
-Teff = cat['st_teff'].filled(nan).data
+Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data_targets
+Teff = cat['st_teff'].filled(nan).data_targets
 Feuv_1au = lya.EUV_Linsky14(Flya_1au, Teff)
 assert np.all(Feuv_1au > 0)
 Feuv_1au *= erg_s_cm2
@@ -404,8 +404,8 @@ keep = ~cat['st_teff'].mask
 sum(keep)
 len(cat)
 cat = cat[keep]
-Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data
-Teff = cat['st_teff'].filled(nan).data
+Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data_targets
+Teff = cat['st_teff'].filled(nan).data_targets
 Feuv_1au = lya.EUV_Linsky14(Flya_1au, Teff)
 assert np.all(Feuv_1au > 0)
 Feuv_1au *= erg_s_cm2

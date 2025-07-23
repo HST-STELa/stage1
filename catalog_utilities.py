@@ -125,7 +125,7 @@ def match_by_tic_id(catalog0, catalog1):
         bad = ~np.isfinite(tic_ids)
         tic_ids[bad] = [next(unmatchable_ids) for _ in range(sum(bad))]
 
-        tic_ids = tic_ids.data.reshape((-1,1))
+        tic_ids = tic_ids.data_targets.reshape((-1, 1))
         kd = KDTree(tic_ids)
         kds.append(kd)
     return kds[1].query_ball_tree(kds[0], 0.5)
@@ -236,7 +236,7 @@ def flag_cut(catalog, mask, decision_str, colname='stage1'):
 
 
 def find_duplicates(catalog, distlimit=0.2*u.pc):
-    fake_distance = (1000 + catalog['pl_orbper'].data) * u.pc
+    fake_distance = (1000 + catalog['pl_orbper'].data_targets) * u.pc
     positions = coord.SkyCoord(catalog['ra'], catalog['dec'], fake_distance)
     i_match, _, _, _ = positions.search_around_3d(positions, distlimit=distlimit)
     _, i_match_unique, match_count = np.unique(i_match, return_index=True, return_counts=True)

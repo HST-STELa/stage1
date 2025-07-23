@@ -78,7 +78,7 @@ def Lya_from_Teff_linsky13(Teff, Prot):
     return 10**logFlya
 
 
-def EUV_Linsky14(Flya_at_1AU, Teff):
+def EUV_Linsky14(Flya_at_1AU, Teff, return_spec=False):
     if type(Teff) is not np.ndarray:
         Teff = np.array([Teff])
         Flya_at_1AU = np.array([Flya_at_1AU])
@@ -99,7 +99,14 @@ def EUV_Linsky14(Flya_at_1AU, Teff):
     logFEUV_bands[8, :] = -1.025+ logFlya
     FEUV_bands = 10**logFEUV_bands
     FEUV = np.sum(FEUV_bands, 0)
-    return FEUV
+    if return_spec:
+        bin_edges = np.array([100, 200, 300, 400, 500, 600, 700, 800, 912, 1170])
+        dw = np.diff(bin_edges)
+        Fdens = FEUV_bands/dw[:,None]
+        w = utils.midpts(bin_edges)
+        return w, dw, Fdens.squeeze()
+    else:
+        return FEUV
 
 
 def lya_factor_percentile(percentile):
@@ -214,7 +221,7 @@ def __default_rv_handler(catalog, default_rv):
 # region ETC reference info for SNR calcs
 etc_ref = etc.g140m_etc_countrates
 w_etc = etc_ref['wavelength'] * u.AA # EF = earth frame
-we_etc = utils.grid2bins(w_etc.value) * u.AA
+we_etc = utils.mids2bins(w_etc.value) * u.AA
 v_etc = w2v(w_etc.value)
 
 etc_ref['flux2cps'] = etc_ref['target_counts'] / etc.g140m_expt_ref / etc.g140m_flux_ref

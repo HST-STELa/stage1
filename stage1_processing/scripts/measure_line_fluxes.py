@@ -15,6 +15,8 @@ import paths
 import utilities as utils
 import catalog_utilities as catutils
 
+from stage1_processing import processing_utilities as pcutils
+
 
 #%% general setup
 
@@ -40,7 +42,7 @@ shift_errors = True
 tic_id = stela_name_tbl.loc['hostname', target]['tic_id']
 targname_file, = dbutils.target_names_stela2file([target])
 targname_file = str(targname_file)
-data_folder = paths.data / targname_file
+data_folder = paths.data_targets / targname_file
 
 configs = (
     'stis-g140m',
@@ -316,15 +318,8 @@ for config in configs:
 
         pass
         # save plot with mpl3
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', 'The converter')
-            warnings.filterwarnings('ignore', 'Blended')
-            dpi = fig.get_dpi()
-            fig.set_dpi(150)
-            plugins.connect(fig, plugins.MousePosition(fontsize=14))
-            htmlfile = str(file).replace('.fits', '.line_band_plot.html')
-            mpld3.save_html(fig, htmlfile)
-            fig.set_dpi(dpi)
+        htmlfile = str(file).replace('.fits', '.line_band_plot.html')
+        utils.save_standard_mpld3(fig, htmlfile)
 
         # save table
         linefile = str(file).replace('.fits', '.line_fluxes.ecsv')
@@ -408,12 +403,7 @@ del bestfluxes.meta['config']
 
 #%% add in Lya
 
-lyarecon_file, = data_folder.rglob('*lya_recon.csv')
-lyarecon = table.Table.read(lyarecon_file)
-Fs = []
-for suffix in ['low_1sig', 'median', 'high_1sig']:
-    F = np.trapz(lyarecon[f'lya_intrinsic unconvolved_{suffix}'], lyarecon['wave_lya'])
-    Fs.append(F)
+Fs = pcutils.get_intrinsic_lya_flux(targname_file)
 catutils.scrub_indices(bestfluxes)
 catutils.add_masked_row(bestfluxes)
 bestfluxes['key'][-1] = 'lya'

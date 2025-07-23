@@ -328,7 +328,7 @@ for i, row in enumerate(obs_tbl):
         counts = 0
         for file_info in scifiles:
             h = fits.open(file_info)
-            counts += len(h[1].data['time'])
+            counts += len(h[1].data_targets['time'])
             if counts <= 100:
                 reject = True
                 reason = reasons['nodata']
@@ -351,14 +351,14 @@ for i, row in enumerate(obs_tbl):
         note = ''
         for shortname, file_info in zip(shortnames, scifiles):
             with fits.open(file_info, mode='update') as h:
-                if len(h[2].data['start']):
+                if len(h[2].data_targets['start']):
                     raise NotImplementedError
                 if h[1].header['exptime'] == 0:
-                    start, stop = h[1].data['time'][[0,-1]]
+                    start, stop = h[1].data_targets['time'][[0, -1]]
                     data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
                     data['START'] = start
                     data['STOP'] = stop
-                    h[2].data = data
+                    h[2].data_targets = data
                     h[1].header['EXPTIME'] = stop - start
                     h[0].header['TEXPTIME'] = stop - start
                     h.flush()
@@ -404,7 +404,7 @@ for acq_name in acq_filenames:
         if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
             fig, axs = plt.subplots(1, 3, figsize=[7,3])
             for j, ax in enumerate(axs):
-                data = h['sci', j+1].data
+                data = h['sci', j+1].data_targets
                 ax.imshow(data)
                 ax.set_title(stages[j])
             fig.suptitle(acq_file.name)
@@ -422,18 +422,18 @@ for acq_name in acq_filenames:
             raise NotImplementedError
         if h[0].header['exptype'] == 'ACQ/PEAKXD':
             print('PEAKXD acq')
-            print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
-            print(f'\tcounts: {h[1].data['counts']}')
+            print(f'\txdisp offsets: {h[1].data_targets['XDISP_OFFSET']}')
+            print(f'\tcounts: {h[1].data_targets['counts']}')
             print(f'\tslew: {h[0].header['ACQSLEWY']}')
         if h[0].header['exptype'] == 'ACQ/PEAKD':
             print('PEAKD acq')
-            print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
-            print(f'\tcounts: {h[1].data['counts']}')
+            print(f'\tdisp offsets: {h[1].data_targets['DISP_OFFSET']}')
+            print(f'\tcounts: {h[1].data_targets['counts']}')
             print(f'\tslew: {h[0].header['ACQSLEWX']}')
         if h[0].header['exptype'] == 'ACQ/IMAGE':
             fig, axs = plt.subplots(1, 2, figsize=[5,3])
             for j, ax in enumerate(axs):
-                data = h['sci', j+1].data
+                data = h['sci', j+1].data_targets
                 ax.imshow(np.cbrt(data))
                 ax.set_title(stages[j])
             fig.suptitle(acq_file.name)
@@ -573,7 +573,7 @@ for ff in fltfiles:
     id = h[0].header['asn_id'].lower()
     ids.append(id)
 
-    img = h[1].data
+    img = h[1].data_targets
     plt.figure()
     plt.title(Path(ff).name)
     plt.imshow(np.cbrt(img), aspect='auto')
@@ -581,7 +581,7 @@ for ff in fltfiles:
     fx = dbutils.modify_file_label(ff, 'x1d')
     if fx.exists():
         hx = fits.open(fx)
-        y = hx[1].data['extrlocy']
+        y = hx[1].data_targets['extrlocy']
         x = np.arange(img.shape[1]) + 0.5
         iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
     else:
@@ -601,7 +601,7 @@ for ff in fltfiles:
     xclick, yclick = xy[-1]
 
     if xclick < 100:
-        xclick, yclick = hx[1].data['a2center'], y_predicted
+        xclick, yclick = hx[1].data_targets['a2center'], y_predicted
         plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
     if fx.exists():
         # find offset to nearest trace
@@ -609,7 +609,7 @@ for ff in fltfiles:
         dist = np.abs(yt - yclick)
         imin = np.argmin(dist)
         dy = yclick - yt[imin]
-        a2 = hx[1].data['a2center'] + dy
+        a2 = hx[1].data_targets['a2center'] + dy
     else:
         a2 = yclick
 

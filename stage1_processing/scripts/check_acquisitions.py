@@ -55,7 +55,7 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         wcs = WCS(h.header)
     ax = figure.add_subplot(*subplot_spec, projection=wcs)
 
-    ax.imshow(hh.data, origin='lower')
+    ax.imshow(hh.data_targets, origin='lower')
     ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
                transform=ax.get_transform('icrs'),
                marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
@@ -194,13 +194,13 @@ while True:
                 raise NotImplementedError
             if h[0].header['exptype'] == 'ACQ/PEAKXD':
                 print('PEAKXD acq')
-                print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
-                print(f'\tcounts: {h[1].data['counts']}')
+                print(f'\txdisp offsets: {h[1].data_targets['XDISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data_targets['counts']}')
                 print(f'\tslew: {h[0].header['ACQSLEWY']}')
             if h[0].header['exptype'] == 'ACQ/PEAKD':
                 print('PEAKD acq')
-                print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
-                print(f'\tcounts: {h[1].data['counts']}')
+                print(f'\tdisp offsets: {h[1].data_targets['DISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data_targets['counts']}')
                 print(f'\tslew: {h[0].header['ACQSLEWX']}')
             if h[0].header['exptype'] == 'ACQ/IMAGE':
                 fig = plt.figure(figsize=[5,3])

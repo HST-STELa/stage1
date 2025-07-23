@@ -319,7 +319,7 @@ while True:
             counts = 0
             for file_info in scifiles:
                 h = fits.open(file_info)
-                counts += len(h[1].data['time'])
+                counts += len(h[1].data_targets['time'])
                 if counts <= 100:
                     reject = True
                     reason = reasons['nodata']
@@ -342,14 +342,14 @@ while True:
             note = ''
             for shortname, file_info in zip(shortnames, scifiles):
                 with fits.open(file_info, mode='update') as h:
-                    if len(h[2].data['start']):
+                    if len(h[2].data_targets['start']):
                         raise NotImplementedError
                     if h[1].header['exptime'] == 0:
-                        start, stop = h[1].data['time'][[0,-1]]
+                        start, stop = h[1].data_targets['time'][[0, -1]]
                         data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
                         data['START'] = start
                         data['STOP'] = stop
-                        h[2].data = data
+                        h[2].data_targets = data
                         h[1].header['EXPTIME'] = stop - start
                         h[0].header['TEXPTIME'] = stop - start
                         h.flush()

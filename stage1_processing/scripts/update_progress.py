@@ -15,10 +15,10 @@ from astropy.io import fits
 from astropy import constants as const
 from astropy import units as u
 
-import utilities as utils
 import database_utilities as dbutils
 import paths
 import catalog_utilities as catutils
+import utilities as utils
 
 from lya_prediction_tools import lya, ism, stis
 from stage1_processing import preloads
@@ -30,7 +30,7 @@ from stage1_processing import target_lists
 saveplots = False
 
 targets = target_lists.observed_since('2025-06-05')
-obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data)
+obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
 
 
 #%% --- PROGRESS TABLE UPDATES ---
@@ -169,7 +169,7 @@ for tic_id in target_info['TIC ID']:
     _, _, grating = config.split('-')
 
     h = fits.open(specfile, ext=1)
-    data = h[1].data
+    data = h[1].data_targets
     spec = {}
     for name in data.names:
         spec[name.lower()] = data[name][0]
@@ -338,12 +338,8 @@ for tic_id in target_info['TIC ID']:
         pngfile = str(specfile).replace('.fits', '.plot.png')
         fig.savefig(pngfile, dpi=300)
 
-        dpi = fig.get_dpi()
-        fig.set_dpi(150)
-        plugins.connect(fig, plugins.MousePosition(fontsize=14))
         htmlfile = str(specfile).replace('.fits', '.plot.html')
-        mpld3.save_html(fig, htmlfile)
-        fig.set_dpi(dpi)
+        utils.save_standard_mpld3(fig, htmlfile)
 
     # plt.close()
 
