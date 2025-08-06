@@ -1,5 +1,7 @@
 from astropy import table
 
+import paths
+
 #%% set up table
 
 MC = table.MaskedColumn
@@ -19,4 +21,4 @@ linecat.add_row(row2)
 #%% save
 """enter the rest directly into the saved file"""
 
-linecat.write('reference_files/fuv_line_list.ecsv')
+linecat.write(paths.uv_lines / 'fuv_line_list.ecsv')

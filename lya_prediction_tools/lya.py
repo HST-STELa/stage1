@@ -1,4 +1,4 @@
-from math import pi, nan
+from math import nan
 import warnings
 
 import numpy as np
@@ -8,9 +8,7 @@ from scipy.special import wofz
 from scipy.stats import norm
 from tqdm import tqdm
 
-import utilities as utils
 from lya_prediction_tools import ism
-from lya_prediction_tools import etc
 
 
 # region intrinsic lya line shape
@@ -33,80 +31,6 @@ f = 4.1641e-01
 A = 6.2649e8 / u.s
 mH, mD = 1 * u.u, 2 * u.u
 #endregion
-
-
-def Lya_from_galex_schneider19(mag, dist, band='nuv'):
-    # mag to flux density from  https://asd.gsfc.nasa.gov/archive/galex/FAQ/counts_background.html
-    # Weff from SVO filter service http://svo2.cab.inta-csic.es/svo/theory/fps3/index.php?mode=browse&gname=GALEX&asttype=
-    dfac = (dist*u.pc/u.AU)**2
-    dfac = dfac.to('').value
-    if band == 'nuv':
-        f = 10**((mag - 20.08)/-2.5)*2.06e-16
-        F = f * 768.31
-        F1AU = F*dfac
-        logFlya = 0.7 * np.log10(F1AU) + 0.193
-    elif band == 'fuv':
-        f = 10**((mag - 18.82)/-2.5)*1.4e-15
-        F = f * 265.57
-        F1AU = F*dfac
-        logFlya = 0.742 * np.log10(F1AU) + 0.945
-    else:
-        raise ValueError
-    return 10**logFlya
-
-
-def Lya_from_Teff_schneider19(Teff):
-    """
-    Relationship only valid for field-age stars.
-    """
-    logF = 6.754e-4 * Teff - 2.639
-    Flya_au = 10 ** logF * u.Unit('erg s-1 cm-2')
-    return Flya_au
-
-
-def Lya_from_Teff_linsky13(Teff, Prot):
-    fast = Prot < 10
-    normal = (Prot >= 10) & (Prot < 25)
-    slow = Prot >= 25
-
-    logFlya = np.zeros(len(Teff))
-
-    logFlya[fast] = 0.37688 + 0.0002061*Teff[fast]
-    logFlya[normal] = 0.48243 + 0.0001632*Teff[normal]
-    logFlya[slow] = -1.5963 + 0.0004732*Teff[slow]
-
-    return 10**logFlya
-
-
-def EUV_Linsky14(Flya_at_1AU, Teff, return_spec=False):
-    if type(Teff) is not np.ndarray:
-        Teff = np.array([Teff])
-        Flya_at_1AU = np.array([Flya_at_1AU])
-    logFEUV_bands = np.zeros((9, len(Teff)))
-    Ms = Teff < 4000
-    logFlya = np.log10(Flya_at_1AU)
-    logFEUV_bands[0, Ms] = -0.491 + logFlya[Ms]
-    logFEUV_bands[1, Ms] = -0.548 + logFlya[Ms]
-    logFEUV_bands[2, Ms] = -0.602 + logFlya[Ms]
-    logFEUV_bands[0, ~Ms] = -1.357 + 0.344*logFlya[~Ms] + logFlya[~Ms]
-    logFEUV_bands[1, ~Ms] = -1.300 + 0.309*logFlya[~Ms] + logFlya[~Ms]
-    logFEUV_bands[2, ~Ms] = -0.882 + logFlya[~Ms]
-    logFEUV_bands[3, :] = -2.294+0.258*logFlya + logFlya
-    logFEUV_bands[4, :] = -2.098+0.572*logFlya + logFlya
-    logFEUV_bands[5, :] = -1.920+0.240*logFlya + logFlya
-    logFEUV_bands[6, :] = -1.894+0.518*logFlya + logFlya
-    logFEUV_bands[7, :] = -1.811+0.764*logFlya + logFlya
-    logFEUV_bands[8, :] = -1.025+ logFlya
-    FEUV_bands = 10**logFEUV_bands
-    FEUV = np.sum(FEUV_bands, 0)
-    if return_spec:
-        bin_edges = np.array([100, 200, 300, 400, 500, 600, 700, 800, 912, 1170])
-        dw = np.diff(bin_edges)
-        Fdens = FEUV_bands/dw[:,None]
-        w = utils.midpts(bin_edges)
-        return w, dw, Fdens.squeeze()
-    else:
-        return FEUV
 
 
 def lya_factor_percentile(percentile):
@@ -215,28 +139,6 @@ def __default_rv_handler(catalog, default_rv):
     else:
         raise ValueError
     return rv_star
-
-
-
-# region ETC reference info for SNR calcs
-etc_ref = etc.g140m_etc_countrates
-w_etc = etc_ref['wavelength'] * u.AA # EF = earth frame
-we_etc = utils.mids2bins(w_etc.value) * u.AA
-v_etc = w2v(w_etc.value)
-
-etc_ref['flux2cps'] = etc_ref['target_counts'] / etc.g140m_expt_ref / etc.g140m_flux_ref
-etc_ref['bkgnd_cps'] = (etc_ref['total_counts'] - etc_ref['target_counts'])/etc.g140m_expt_ref
-# endregion
-
-
-def sim_g140m_obs(f, expt):
-    fpix = utils.intergolate(we_etc, wgrid_std, f)
-    src = fpix * etc_ref['flux2cps'] * expt
-    bkgnd = etc_ref['bkgnd_cps'] * expt
-    total = bkgnd + src
-    err_counts = np.sqrt(total)
-    err_flux = err_counts / expt / etc_ref['flux2cps']
-    return fpix, err_flux
 
 
 def doppler_shift(w, velocity):

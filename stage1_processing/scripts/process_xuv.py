@@ -13,26 +13,25 @@ from astropy import units as u
 from astropy.io import fits
 from astropy import table
 
-import Mors as mors
-
 import paths
 import utilities as utils
+import catalog_utilities as catutils
+import empirical
 from stage1_processing import preloads
 from stage1_processing import target_lists
 from stage1_processing import processing_utilities as pcutils
-from lya_prediction_tools import lya
 
 
 #%% target list, batch mode?
 
 targets = target_lists.eval_no(1)
 batch_mode = True
-care_level = 1
+care_level = 0
 
 
 #%% paths and tables
 
-folder_phoenix = paths.inbox / '2025-07-11 xuv phoenix'
+folder_phoenix = paths.inbox / '2025-07-22 xuv phoenix'
 folder_dem = paths.inbox / '2025-07-16 xuv dem'
 
 hosts = preloads.hosts.copy()
@@ -105,7 +104,7 @@ while True:
 
     xfile, = targfolder.rglob(f'{target}*xray-recon*')
     xspec = fits.getdata(xfile)
-    xw, xdw, xf = xspec['Wave'], xspec['bin_width'], xspec['Flux']
+    xw, xdw, xf = xspec['wavelength'], xspec['bin_width'], xspec['flux']
     isort = np.argsort(xw)
     xw, xdw, xf = [ary[isort] for ary in [xw, xdw, xf]]
 
@@ -178,14 +177,17 @@ while True:
 
 #%% splice xuv spectra
 
-    for vspec, newname in zip(vspecs, filenames):
-        vw, vf = vspec['wavelength'], vspec['flux']
+    _legend_names = legend_names
+    legend_names = []
+    for vspec, newname, legname in zip(vspecs, filenames, _legend_names):
+        vw, vf = vspec['wavelength'].value, vspec['flux'].value
 
         # initial plot
         fig, ax = setup_plot()
         utils.step_mids(vw, vf, alpha=0.5, ax=ax)
         utils.step_mids(xw, xf, bin_widths=xdw*2, alpha=0.5, ax=ax)
         plt.title(newname)
+        plt.ylim(np.min(vf)/10)
 
         # pick splice location
         default = 200.
@@ -233,6 +235,7 @@ while True:
             units='AA,AA,erg s-1 cm-2 AA-1'.split(',')
         )
         final_specs.append(splicetbl)
+        legend_names.append(legname)
 
         # save plot of full spectrum
         plot_and_save(splicetbl, newname, ylim=(ylo, None))
@@ -248,7 +251,7 @@ while True:
 
     Flya = pcutils.get_intrinsic_lya_flux(target)
     Flya_1au = Flya * (d/u.au)**2
-    w, dw, f = lya.EUV_Linsky14(Flya_1au.to_value(''), Teff.to_value('K'), return_spec=True)
+    w, dw, f = empirical.EUV_linsky14(Flya_1au.to_value(''), Teff.to_value('K'), return_spec=True)
     f *= (u.au/d).to_value('')**2
     linsky_spec = table.Table(
         (w, dw, f),
@@ -264,31 +267,19 @@ while True:
 
 #%% Prot-based XUV
 
+    getprop = lambda key: catutils.get_quantity(key, props, hosts)
     if props['st_rotp']:
-        Prot = props['st_rotp']
-        print(f'{target} has measured Prot of {Prot:.1f} d')
-        M = props['st_mass']
-        if props['st_age']:
-            age = props['st_age']*1000
-            print(f'{target} has age estimate of {age:.0f} Myr')
-            if age > 1e4:
-                age = 1e4
+        Prot = getprop('st_rotp')
+        print(f'{target} has measured Prot of {Prot:.1f}')
+        M = getprop('st_mass')
+        age = getprop('st_age')
+        if not np.ma.is_masked(age):
+            print(f'{target} has age estimate of {age:.0f}')
         else:
-            # infer age based on median track
-            track = mors.Star(Mstar=M, percentile=50)
-            logagegrid = np.log10(track.AgeTrack)
-            Pgrid = track.ProtTrack
-            logage = np.interp(Prot, Pgrid, logagegrid)
-            age = 10**logage
-            print(f'{target} age estimate made from Mors of {age:.0f} Myr')
-
-        star = mors.Star(Mstar=M, Prot=Prot)
-        bin_edges_mors = [0.517, 12.4, 36, 92] * u.nm # actually the x-ray and euv bands overlap by 2 nm, but I'm ignoring that
-        dw = np.diff(bin_edges_mors)
-        w = utils.midpts(bin_edges_mors)
-        L = [star.Value(Age=age, Quantity=key) for key in 'Lx Leuv1 Leuv2'.split()]
-        L = np.asarray(L) * u.erg / u.s
-        f = L / (4*np.pi*d**2) / dw
+            age = empirical.age_from_Prot_johnstone21(Prot, M)
+            print(f'{target} age estimate made from Mors of {age:.0f}')
+        w, dw, F = empirical.XUV_from_Prot_johnstone21(Prot, M, age)
+        f = F / (4*np.pi*d**2)
         f = f.to('erg s-1 cm-2 AA-1')
 
         mors_spec = table.Table(
@@ -314,7 +305,7 @@ while True:
         ln, = utils.step_mids(spec['wavelength'], spec['flux'], bin_widths=spec['bin_width'],
                               ax=ax, zorder=i, alpha=0.5)
         old_edges = utils.mids2bins(spec['wavelength'].quantity, spec['bin_width'].quantity)
-        f_3bin = utils.rebin(bin_edges_mors, old_edges, spec['flux'])
+        f_3bin = utils.rebin(empirical.mors_bin_edges, old_edges, spec['flux'])
         ln3 = plt.errorbar(mors_spec['wavelength'], f_3bin.to('erg s-1 cm-2 AA-1'),
                            xerr=mors_spec['bin_width']/2, marker='none',
                            elinewidth=3, color=ln.get_color(), linestyle='none', zorder=n+i)
@@ -384,8 +375,8 @@ while True:
 
 staging_folder = paths.data / 'packages/2025-06-16.stage2.eval1.staging_area/xuv_reconstructions'
 
-os.mkdir(staging_folder)
-os.mkdir(staging_folder / 'comparison_plots')
+# os.mkdir(staging_folder)
+# os.mkdir(staging_folder / 'comparison_plots')
 
 for target in targets:
     reconfolder = paths.target_data(target) / 'reconstructions'

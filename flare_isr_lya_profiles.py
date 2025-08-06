@@ -103,7 +103,7 @@ for target in target_parameters:
     fluxcols = ['f(C IV)6', 'f(Si IV)6', 'f(Ly a)6,7']
     Fc4, Fsi4, Flya = [target[key] * u.Unit('erg s-1 cm-2') for key in fluxcols]
     yc4 = flare_line(w, 1548.2*u.AA, Fc4, 0.2*u.AA)
-    ysi4 = flare_line(w, 1393.8*u.AA, Fc4, 0.2*u.AA)
+    ysi4 = flare_line(w, 1393.8*u.AA, Fsi4, 0.2*u.AA)
     rv_offset = (rv - target['ism_radv']) * u.km/u.s
 
     ybb = normed_bb(w, target['U_flare'])

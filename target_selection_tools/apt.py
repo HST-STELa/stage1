@@ -7,7 +7,7 @@ from scipy import interpolate
 
 import catalog_utilities as catutils
 import database_utilities as dbutils
-from lya_prediction_tools import etc
+from lya_prediction_tools import stis
 from target_selection_tools import query
 from target_selection_tools import reference_tables as ref
 from target_selection_tools import empirical as emp
@@ -304,7 +304,7 @@ def write_target_table(aptcat, filepath, overwrite=False):
 
 
 def acquisition_setup(catalog):
-    etc_acq = etc.etc_acq_times
+    etc_acq = stis.etc_acq_times
     n = len(catalog)
     colnames = 'acq_filter acq_Texp_snr40 acq_Texp acq_Tsat'.split()
     dtypes = 'object float float float'.split()
@@ -365,7 +365,7 @@ def acquisition_setup(catalog):
 
 
 def find_nearest_etc_rows(Teff, grating):
-    Tetc = getattr(etc, f'etc_{grating}_times')
+    Tetc = getattr(stis, f'etc_{grating}_times')
     ietcs = list(range(len(Tetc)))
     findline = interpolate.interp1d(Tetc['Teff'], ietcs, 'nearest', bounds_error=False, fill_value='extrapolate')
     i_lines = findline(Teff).astype(int)

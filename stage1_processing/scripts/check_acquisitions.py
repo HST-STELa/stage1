@@ -55,7 +55,7 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         wcs = WCS(h.header)
     ax = figure.add_subplot(*subplot_spec, projection=wcs)
 
-    ax.imshow(hh.data_targets, origin='lower')
+    ax.imshow(hh.data, origin='lower')
     ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
                transform=ax.get_transform('icrs'),
                marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)

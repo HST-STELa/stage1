@@ -9,9 +9,10 @@ import utilities as utils
 
 from lya_prediction_tools import ism
 from lya_prediction_tools import lya
+from lya_prediction_tools import stis
 
 
-def depth_occulting_tail(catalog):
+def opaque_tail_depth(catalog):
     Mp = catalog['pl_bmasse'].filled(nan).quantity
     mass_provenance = catalog['pl_bmassprov'].filled('').astype(str)
     massless_giant = (Mp > 0.41*u.Mjup) & (np.char.count(mass_provenance, 'Mass') == 0)
@@ -28,9 +29,9 @@ def depth_occulting_tail(catalog):
     return depth
 
 
-def transit_profile(catalog, default_rv=nan, add_jitter=False,
-                    n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
-                    transit_range=(-100, 30), show_progress=False):
+def opaque_tail_transit_profile(catalog, default_rv=nan, add_jitter=False,
+                                n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
+                                transit_range=(-100, 30), show_progress=False):
     if add_jitter:
         needed_columns = (f'ra dec sy_dist st_radv st_rad st_mass pl_orbsmax pl_bmasse pl_rade pl_bmasseerr1 '
                           f'st_masserr1 pl_orbsmaxerr1 st_raderr1 {lya_1AU_colname}').split()
@@ -68,7 +69,7 @@ def transit_profile(catalog, default_rv=nan, add_jitter=False,
         jittercol('pl_orbsmax', 0.04*ones)
         jittercol('st_rad', 0.04*ones)
 
-    max_depth = depth_occulting_tail(cat)
+    max_depth = opaque_tail_depth(cat)
 
     if show_progress:
         print('Estimating Lya profiles.')
@@ -84,11 +85,11 @@ def transit_profile(catalog, default_rv=nan, add_jitter=False,
     return v_starframe, observed, intransit
 
 
-def eyeball_transit_prediction(catalog, default_rv=nan, add_jitter=False,
-                               n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
-                               transit_range=(-100, 30), show_progress=False):
-    v_starframe, observed, intransit = transit_profile(catalog, default_rv, add_jitter, n_H_percentile,
-                                          lya_percentile, lya_1AU_colname, transit_range, show_progress)
+def opaque_tail_transit_plots(catalog, default_rv=nan, add_jitter=False,
+                              n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
+                              transit_range=(-100, 30), show_progress=False):
+    v_starframe, observed, intransit = opaque_tail_transit_profile(catalog, default_rv, add_jitter, n_H_percentile,
+                                                                   lya_percentile, lya_1AU_colname, transit_range, show_progress)
     rv_star = lya.__default_rv_handler(catalog, default_rv)
     ra = catalog['ra'].filled(nan).quantity
     dec = catalog['dec'].filled(nan).quantity
@@ -113,12 +114,12 @@ def eyeball_transit_prediction(catalog, default_rv=nan, add_jitter=False,
         plt.annotate(infobox, xy=(0.05, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize='small', )
 
 
-def blue_wing_occulting_tail_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan, add_jitter=False,
-                                 n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
-                                 transit_range=(-100,30), integrate_range='best', show_progress=False):
+def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan, add_jitter=False,
+                            n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
+                            transit_range=(-100,30), integrate_range='best', show_progress=False):
 
-    _, observed, intransit = transit_profile(catalog, default_rv, add_jitter, n_H_percentile, lya_percentile,
-                                          lya_1AU_colname, transit_range, show_progress)
+    _, observed, intransit = opaque_tail_transit_profile(catalog, default_rv, add_jitter, n_H_percentile, lya_percentile,
+                                                         lya_1AU_colname, transit_range, show_progress)
 
     rv_star = lya.__default_rv_handler(catalog, default_rv)
 
@@ -126,14 +127,14 @@ def blue_wing_occulting_tail_SNR(catalog, expt_out=3500, expt_in=6000, default_r
     def estimate_flux_err(specs, expt):
         if show_progress:
             specs = tqdm(specs)
-        result = [lya.sim_g140m_obs(spec, expt) for spec in specs]
+        result = [stis.simple_sim_g140m_obs(spec, expt) for spec in specs]
         result = np.asarray(result)
         result = np.moveaxis(result, 1, 0)
         return result
 
     if show_progress:
         print('Binning out-of-transit spectra to estimate SNR.')
-    fo, eo = estimate_flux_err(observed, expt_out)
+    w, we, fo, eo = estimate_flux_err(observed, expt_out)
     if show_progress:
         print('And now the-in-transit spectra.')
     fi, ei = estimate_flux_err(intransit, expt_in)
@@ -147,8 +148,9 @@ def blue_wing_occulting_tail_SNR(catalog, expt_out=3500, expt_in=6000, default_r
         max_snr = np.max(spec_snr, 1)
         integrate = spec_snr > (max_snr[:,None] * snr_cut)
     elif hasattr(integrate_range, '__iter__'):
-        v_etc_PF = lya.v_etc[None, :] - rv_star.value[:, None]
-        integrate = (v_etc_PF > integrate_range[0]) & (v_etc_PF < integrate_range[1])
+        v_etc_earth_frame = lya.w2v(w)
+        v_etc_planet_frame = v_etc_earth_frame - rv_star.value[:, None]
+        integrate = (v_etc_planet_frame > integrate_range[0]) & (v_etc_planet_frame < integrate_range[1])
     else:
         raise ValueError
 
@@ -157,3 +159,4 @@ def blue_wing_occulting_tail_SNR(catalog, expt_out=3500, expt_in=6000, default_r
     D = np.sum(d_for_integrating, axis=1)
     E = np.sqrt(np.sum(e_for_integrating**2, axis=1))
     return D/E
+

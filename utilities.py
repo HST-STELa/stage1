@@ -7,6 +7,12 @@ import mpld3
 from astropy.units import Quantity
 
 
+def add_unit_to_output(input, output):
+    if hasattr(input, 'unit') and input.unit not in [None, ''] and not hasattr(output, 'unit'):
+        output *= input.unit
+    return output
+
+
 def midpts(ary, axis=None):
     """Computes the midpoints between points in a vector.
 
@@ -47,10 +53,12 @@ def mids2bins(mids, bin_widths=None):
         d0 = edges[0] - mids[0]
         d1 = mids[-1] - edges[-1]
         edges = np.insert(edges, [0, len(edges)], [mids[0] - d0, mids[-1] + d1])
-        return edges
     else:
         edges = np.append(mids - bin_widths/2, mids[-1] + bin_widths[-1]/2)
-        return edges
+
+    edges = add_unit_to_output(mids, edges)
+
+    return edges
 
 
 def cumulative_trapz(y, x, zero_start=False):
@@ -144,8 +152,23 @@ def click_coords(fig=None, timeout=600.):
     return np.array(xy)
 
 
-def flux_integral(w, f, e=None):
-    we = mids2bins(w)
+def flux_integral(w, f, range=None, e=None, bin_widths=None):
+    we = mids2bins(w, bin_widths=bin_widths)
+
+    if range is not None:
+        if range[0] < we[0] or range[-1] > we[-1]:
+            raise ValueError('Integration range extends beyond spectrum.')
+
+    if range is not None:
+        a, b = we[:-1], we[1:]
+        binmask = (we > range[0]) & (we < range[1])
+        fmask = (b > range[0]) & (a < range[1])
+        we = we[binmask]
+        we = np.insert(we, (0, len(we)), range)
+        f = f[fmask]
+        if e is not None:
+            e = e[fmask]
+
     dw = np.diff(we)
     flux = np.sum(dw*f)
     if e is None:

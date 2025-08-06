@@ -18,6 +18,8 @@ hst2simbad_map.add_index('odd')
 stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
 stela_name_tbl.add_index('tic_id')
 stela_name_tbl.add_index('hostname')
+stela_name_tbl.add_index('hostname_file')
+stela_name_tbl.add_index('hostname_hst')
 
 
 def resolve_stela_name_w_simbad(names_for_simbad):
@@ -55,6 +57,36 @@ def resolve_stela_name_w_simbad(names_for_simbad):
             warnings.warn(msg)
 
     return stela_names
+
+
+def resolve_stela_name_flexible(names):
+    names = np.asarray(names)
+    found = np.zeros(len(names), dtype=bool)
+    stela_names = np.empty(len(names), dtype='object')
+
+    # search for the name in stela columns
+    for colname in stela_name_tbl.colnames:
+        incol = np.isin(names, stela_name_tbl[colname])
+        if np.any(incol):
+            found |= incol
+            stela_names[incol] = stela_name_tbl.loc[colname, names[incol]]['hostname']
+
+    # search for the name in simbad
+    try:
+        names_from_simbad_search = resolve_stela_name_w_simbad(names[~found])
+    except ValueError as e:
+        msg = str(e)
+        if 'No SIMBAD matches' in msg:
+            namelist = msg.split('\n')[1:]
+            newmsg = 'These names not found in the STELa name table or SIMBAD:\n'
+            newmsg += '\n'.join(namelist)
+            raise ValueError(newmsg)
+        else:
+            raise
+
+    stela_names[~found] = names_from_simbad_search
+
+    return stela_names.astype(str)
 
 
 def groom_hst_names_for_simbad(hst_names):

@@ -13,8 +13,6 @@ plt.ion()
 from astropy.io import fits
 from astropy import table
 import numpy as np
-import mpld3
-from mpld3 import plugins
 
 import stistools as stis
 
@@ -43,7 +41,6 @@ targets = target_lists.observed_since('2025-06-05')
 
 
 #%% set extraction parameters
-pass
 
 # note that the G140L traces get as low as 100 and G140M as low as 150, so I can't go hog wild with the backgroun regions
 # x1d_params = dict()

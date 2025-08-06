@@ -20,7 +20,7 @@ from stage1_processing import processing_utilities as pcutils
 
 #%% general setup
 
-linecat = table.Table.read('reference_files/fuv_line_list.ecsv')
+linecat = table.Table.read(paths.uv_lines / 'fuv_line_list.ecsv')
 linewaves = linecat['wave'].value
 
 stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
@@ -420,14 +420,14 @@ bestfluxes.meta['Lya source file'] = lyarecon_file.name
 
 #%% augment with line-line correlations as needed
 
-basecat = table.Table.read('reference_files/fuv_line_list.ecsv')
+basecat = table.Table.read(paths.uv_lines / 'fuv_line_list.ecsv')
 basecat.add_index('name')
 
 dist = target_table.loc[tic_id]['sy_dist'] * u.pc
 
 min_snr = 3
 
-corrtbl = table.Table.read('reference_files/line-line_correlations.ecsv')
+corrtbl = table.Table.read(paths.uv_lines / 'line-line_correlations.ecsv')
 corrtbl.add_index('x')
 corrtbl.add_index('y')
 corrlines = np.unique(corrtbl['x']).tolist()

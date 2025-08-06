@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 
 import paths
 
@@ -187,3 +188,16 @@ for file in files:
 files = list(paths.stage1_code.rglob('*.plot.html')) + list(paths.stage1_code.rglob('*xuv*disposition*'))
 for file in files:
     os.remove(file)
+
+
+#%% remove duplicate x-ray files in hst paths
+
+badfiles = list(paths.data_targets.rglob('*/hst/*xray_recon.fits'))
+for file in badfiles:
+    newfile = file.parent / '..' / file.name.replace('xray_recon', 'xray-recon')
+    newfile = newfile.resolve()
+    # print(f'{Path(*file.parts[-3:])} --> {Path(*newfile.parts[-2:])}')
+    os.rename(file, newfile)
+    os.rmdir(file.parent)
+
+checkfiles = list(paths.data_targets.rglob('*xray*.fits'))

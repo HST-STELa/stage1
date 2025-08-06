@@ -45,14 +45,14 @@ old_snrs['snr_rerun'] = get_heritage_snrs(old_snrs)
 params = dict(expt_out=3500, expt_in=6000,
               default_rv=0, tail_shift='blue wing max',
               n_H_percentile=16, lya_percentile=84)
-snr_bugfix = transit.blue_wing_occulting_tail_SNR(new_snrs, integrate=(-150, 100), show_progress=True, **params)
+snr_bugfix = transit.opaque_tail_transit_SNR(new_snrs, integrate=(-150, 100), show_progress=True, **params)
 new_snrs['snr_new_cat+fun'] = snr_bugfix
-snr_optimal_integration = transit.blue_wing_occulting_tail_SNR(new_snrs, integrate='best', show_progress=True, **params)
+snr_optimal_integration = transit.opaque_tail_transit_SNR(new_snrs, integrate='best', show_progress=True, **params)
 new_snrs['snr_new_cat+fun+range'] = snr_optimal_integration
 
 params['n_H_percentile'] = 84
 params['lya_percentile'] = 16
-new_snrs['snr_pessimistic'] = transit.blue_wing_occulting_tail_SNR(new_snrs, integrate='best', show_progress=True, **params)
+new_snrs['snr_pessimistic'] = transit.opaque_tail_transit_SNR(new_snrs, integrate='best', show_progress=True, **params)
 
 comparison = table.join(old_snrs, new_snrs, 'id')
 

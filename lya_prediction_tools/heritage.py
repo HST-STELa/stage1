@@ -9,6 +9,7 @@ import numpy as np
 from astropy import units as u
 from tqdm import tqdm
 
+import empirical
 from lya_prediction_tools import lya
 import utilities as utils
 from lya_prediction_tools import ism
@@ -33,7 +34,7 @@ def lya_flux_estimate(cat):
     rep = isgood('st_teff') & isgood('st_rotp') & ~filled
     filled = filled | rep
     print('Using Teff per Linsky+ 2013 to predict Lya for {} rows.'.format(sum(rep)))
-    Flya_au = lya.Lya_from_Teff_linsky13(cat['st_teff'], cat['st_rotp'])
+    Flya_au = empirical.Lya_from_Teff_linsky13(cat['st_teff'], cat['st_rotp'])
     Flya_au_adopted[rep] = Flya_au[rep]
 
     # Lya based on Teff from Schneider

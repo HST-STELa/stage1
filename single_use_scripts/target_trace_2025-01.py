@@ -215,7 +215,7 @@ def snr_trace(ids, SNRfunc):
 
 def SNRfunc(cat):
     params = dict(expt_out=3500, expt_in=6000, default_rv=0, tail_shift=-50., integrate='best', show_progress=True)
-    return transit.blue_wing_occulting_tail_SNR(cat, lya_1AU_colname='Flya_1AU_adopted', **params)
+    return transit.opaque_tail_transit_SNR(cat, lya_1AU_colname='Flya_1AU_adopted', **params)
 
 # you might need to fiddle with FLya_at_1AU vs Flya_1AU_adopted to do what you want with this
 # def SNRfunc(cat):

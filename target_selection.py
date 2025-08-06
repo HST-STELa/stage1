@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 import catalog_utilities
+import empirical
 import paths
 import catalog_utilities as catutils
 from stage1_processing import visit_status_xml_parser
@@ -1129,7 +1130,7 @@ for band in ['nuv', 'fuv']:
     lim_flag = cat[f'sy_{band}maglim'].filled(nan) != 0
     MK = cat['st_teff'].filled(1e4) < 4500. # because schneider GALEX-Lya relationship is for late Ks and Ms only
     d = cat['sy_dist'].filled(nan).quantity
-    Flya_1AU = lya.Lya_from_galex_schneider19(mag, d.to_value('pc'), band=band)
+    Flya_1AU = empirical.Lya_from_galex_schneider19(mag, d.to_value('pc'), band=band)
     Flya_1AU = Flya_1AU * erg_s_cm2
     bad_galex_lya = ~np.isfinite(Flya_1AU) | lim_flag | ~MK
     cat[f'Flya_1AU_{band}'] = table.MaskedColumn(Flya_1AU, mask=bad_galex_lya)
@@ -1147,14 +1148,14 @@ young = cat['flag_young']
 Prot_adopt[young & noP] = 1
 Prot_adopt[~young & noP] = 20
 
-Flya_linsky = lya.Lya_from_Teff_linsky13(Teff, Prot_adopt) * erg_s_cm2
+Flya_linsky = empirical.Lya_from_Teff_linsky13(Teff, Prot_adopt) * erg_s_cm2
 valid_lya = Flya_linsky > 0
 assert np.all(valid_lya[keepers]) # sanity check
 cat['Flya_1AU_Teff_linsky'] = table.MaskedColumn(Flya_linsky, mask=~valid_lya,
                                                    description="Lya flux estimated based on Teff and Prot using Lisnky+ 2013.")
 
 
-Flya_schneider = lya.Lya_from_Teff_schneider19(Teff) * erg_s_cm2
+Flya_schneider = empirical.Lya_from_Teff_schneider19(Teff) * erg_s_cm2
 valid_lya = Flya_schneider > 0
 assert np.all(valid_lya[keepers])
 cat['Flya_1AU_Teff_schneider'] = table.MaskedColumn(Flya_schneider, mask=~valid_lya,
@@ -1248,13 +1249,13 @@ basis of our target selection.
 """
 
 params = dict(expt_out=3500, expt_in=6000, default_rv=default_sys_rv, transit_range=assumed_transit_range, integrate_range='best', show_progress=True)
-SNR_optimistic = transit.blue_wing_occulting_tail_SNR(cat, n_H_percentile=16, lya_percentile=84, **params)
+SNR_optimistic = transit.opaque_tail_transit_SNR(cat, n_H_percentile=16, lya_percentile=84, **params)
 assert np.all(SNR_optimistic > 0)
 # if this fails, check for valid values of sy_dist, Flya_at_1AU, pl_bmasse, st_rad
 # last failure happened becuase a community target didn't get a sy_dist
 cat['transit_snr_optimistic'] = table.MaskedColumn(SNR_optimistic)
 
-SNR_nominal = transit.blue_wing_occulting_tail_SNR(cat, n_H_percentile=50, lya_percentile=50, **params)
+SNR_nominal = transit.opaque_tail_transit_SNR(cat, n_H_percentile=50, lya_percentile=50, **params)
 assert np.all(SNR_nominal > 0)
 cat['transit_snr_nominal'] = table.MaskedColumn(SNR_nominal)
 
@@ -1315,7 +1316,7 @@ cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_mult
 
 Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data_targets
 Teff = cat['st_teff'].filled(nan).data_targets
-Feuv_1au = lya.EUV_Linsky14(Flya_1au, Teff)
+Feuv_1au = empirical.EUV_Linsky14(Flya_1au, Teff)
 assert np.all(Feuv_1au > 0)
 Feuv_1au *= erg_s_cm2
 cat['Feuv_1AU'] = table.MaskedColumn(Feuv_1au)

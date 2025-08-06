@@ -1,8 +1,15 @@
+import re
+
 import numpy as np
 from astropy import table
+from astropy import units as u
 from matplotlib import pyplot as plt # for debugging
 
 import paths
+import utilities as utils
+
+from lya_prediction_tools import lya
+
 
 def intergolate(x_bin_edges, xin, yin):
     I = cumtrapz(yin, xin)
@@ -28,8 +35,45 @@ def cumtrapz(y, x):
     return result
 
 
+# region ETC reference info for SNR calcs
+_etc_output_files_g140m = [
+    'g140m_counts_2021-09-28_exptime1700_flux1e-13.csv',
+    'g140m_counts_2025-08-05_exptime900_flux1e-13.csv'
+]
+etc_runs = {'g140m':{}, 'g140l':{}, 'e140m':{}}
+for _file in _etc_output_files_g140m:
+    _etc = table.Table.read(paths.stis / _file)
+    (_grating, _date, _expt, _flux), = re.findall(r'(.*?)_counts_(.*?)_exptime(.*?)_flux(.*?)\.', _file)
+    _etc.meta['date of etc run'] = _date
+    _etc.meta['exptime'] = float(_expt)
+    _etc.meta['flux'] = float(_flux)
+    _etc['flux2cps'] = _etc['target_counts'] / _etc.meta['exptime'] / _etc.meta['flux']
+    _etc['bkgnd_cps'] = (_etc['total_counts'] - _etc['target_counts']) / _etc.meta['exptime']
+    etc_runs[_grating][_date] = _etc
+# endregion
+
+
+def simple_sim_g140m_obs(f, expt, etc_run_date='2021-09-28'):
+    etc = etc_runs['g140m'][etc_run_date]
+    w = etc['wavelength'] * u.AA
+    we = utils.mids2bins(w.value) * u.AA
+    fpix = utils.intergolate(we, lya.wgrid_std, f)
+    src = fpix * _etc['flux2cps'] * expt
+    bkgnd = _etc['bkgnd_cps'] * expt
+    total = bkgnd + src
+    err_counts = np.sqrt(total)
+    err_flux = err_counts / expt / _etc['flux2cps']
+    return w, we, fpix, err_flux
+
+
+etc_acq_times = table.Table.read(paths.stis / 'ACQ.csv')
+etc_g140m_times = table.Table.read(paths.stis / 'G140M.csv')
+etc_g140l_times = table.Table.read(paths.stis / 'G140L.csv')
+etc_e140m_times = table.Table.read(paths.stis / 'E140M.csv')
+
+
 class Spectrograph(object):
-    def __init__(self, path_lsf):
+    def __init__(self, path_lsf, path_etc):
         # region load in STIS LSFs
         lsf_raw = np.loadtxt(path_lsf, skiprows=2)
         lsf_raw = table.Table(lsf_raw, names='pixel 52X0.1 52X0.2 52X0.5 52X2.0'.split())

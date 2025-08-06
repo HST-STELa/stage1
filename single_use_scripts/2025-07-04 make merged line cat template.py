@@ -3,7 +3,9 @@ from copy import copy
 import numpy as np
 from astropy.table import Table
 
-table = Table.read('reference_files/fuv_line_list.ecsv')
+import paths
+
+table = Table.read(paths.uv_lines / 'fuv_line_list.ecsv')
 
 wave_tol = 10
 
@@ -43,4 +45,4 @@ merged.sort('wave')
 merged.remove_column('Tform')
 merged['wave'] = merged['wave'].astype(int)
 
-merged.write('reference_files/fuv_line_list_merged.ecsv')
+merged.write(paths.uv_lines / 'fuv_line_list_merged.ecsv')

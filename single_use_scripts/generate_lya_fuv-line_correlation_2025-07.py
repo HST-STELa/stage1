@@ -157,4 +157,4 @@ for line_a in line_names:
 
 #%% save table
 
-corrtbl.write('reference_files/line-line_correlations.ecsv')
+corrtbl.write(paths.uv_lines / 'line-line_correlations.ecsv')

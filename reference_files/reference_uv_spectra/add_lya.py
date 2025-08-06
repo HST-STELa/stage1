@@ -3,6 +3,8 @@ from astropy import units as u
 import numpy as np
 
 import lya
+
+import empirical
 import paths
 
 masked_folder = paths.selection_inputs / 'reference_spectra/lya_masked'
@@ -13,7 +15,7 @@ for path in files:
     path_pieces = path.name.split('-')
     Teff = float(path_pieces[1])
     Prot = 1 if Teff < 2700 else 50 # this just puts the star in the right activity category for the linsky relationship
-    Flya_1au, = lya.Lya_from_Teff_linsky13(np.array([Teff]), np.array([Prot]))
+    Flya_1au, = empirical.Lya_from_Teff_linsky13(np.array([Teff]), np.array([Prot]))
     d = spec.meta['distance']
     Flya_at_dist = Flya_1au * (u.AU/(d*u.pc))**2
     Flya_at_dist = Flya_at_dist.to_value('')
