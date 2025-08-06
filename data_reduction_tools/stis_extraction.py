@@ -1,19 +1,14 @@
-import re
-from pathlib import Path
-
 import pandas as pd
 from astropy import table
 
 import paths
 
-script_dir = Path(__file__).resolve().parent
 
-_fwf = pd.read_fwf(script_dir / 'stis_aperture_data.txt', infer_nrows=300, comment='#',
+_fwf = pd.read_fwf(paths.stis / 'stis_aperture_data.txt', infer_nrows=300, comment='#',
                    names='aperture_id aperture_name Xref Yref V2ref V3ref Xscale Yscale Betax Betay'.split())
 aperture_data = table.Table.from_pandas(_fwf)
 aperture_data.add_index('aperture_name')
 mystery_trace_offset = 0
-
 
 def predicted_trace_location(tag_hdu, return_pieces=False):
     hdr = tag_hdu[0].header

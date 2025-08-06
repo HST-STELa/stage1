@@ -3,7 +3,9 @@ from math import pi, nan
 import numpy as np
 from tqdm import tqdm
 from astropy import units as u
+from astropy import table as Table
 from matplotlib import pyplot as plt
+import h5py
 
 import utilities as utils
 
@@ -160,3 +162,67 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
     E = np.sqrt(np.sum(e_for_integrating**2, axis=1))
     return D/E
 
+
+def model_transit_snr(
+        transit_simulation_file,
+        lya_reconstruction_file,
+        obstimes,
+        exptimes,
+        spectrograph_object,
+        rotation_period,
+        rotation_amplitude,
+        jitter,
+):
+
+
+    lya_recon = Table.read(lya_reconstruction_file)
+    lya_cases = 'low_2sig low_1sig median high_1sig high_2sig'.split()
+    wlya = lya_recon['wave_lya']
+
+    with h5py.File(transit_simulation_file) as f:
+        tsim = f['tgrid'][:]
+        wsim = f['wavgrid'][:]
+        transmission_array = f['intensity'][:]
+
+    # there seem to be odd "zero-point" offsets in some of the transmission vectors. correct these
+    transmaxs = np.max(transmission_array, axis=2)
+    offsets = 1 - transmaxs
+    transmission_corrected = transmission_array + offsets[:,:,None]
+
+    # figure out the start and end times of the observations so I can bin over them later
+    obs_start = obstimes - exptimes/2
+    obs_end = obstimes + exptimes/2
+    obs_edges = np.hstack((obs_start, obs_end))
+    obs_edges = np.sort(obs_edges)
+    obs_edges = obs_edges.to_value('h')
+    obs_mask = np.ones(len(obs_edges) - 1, bool)
+    obs_mask[1::2] = False
+
+    # merge the two wavelength grids
+    w = np.sort(np.hstack((wlya, wsim)))
+
+    # function to apply LSF and estimate uncties
+    observe = spectrograph_object.fast_observe_function(w)
+
+    snr, wa, wb = [], [], []
+    for transmission_raw in transmission_corrected:
+        for lya_case in lya_cases:
+            # average the transits over the observation intervals using the "intergolate" function I wrote
+            bin_to_obs = lambda trans: utils.intergolate(obs_edges, tsim, trans, left=1, right=1)
+            trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transmission_raw)
+            trans_obs = trans_tbinned[obs_mask]
+
+            # interp lya and transmission onto the same wavelength grid
+            lya_raw = lya_recon[f'lya_intrinsic unconvolved_{lya_case}']
+            lya = np.interp(w, wlya, lya_raw, left=0, right=0)
+            interp_wave = lambda trans: np.interp(w, wsim, trans, left=1, right=1)
+            trans = np.apply_along_axis(interp_wave, 1, trans_obs)
+
+            # get stellar variability vector
+
+            # multiply to get in transit fluxes
+            lya_transit = lya[None,:] * trans
+
+            # "observe" each spectrum
+            obsvtns = [observe()]
+            result = np.apply_along_axis(obs_std, 1, lya_transit_xp)

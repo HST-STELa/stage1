@@ -3,7 +3,9 @@ from astropy import units as u
 from astropy import coordinates as coord
 from astropy import table
 
-ism_columns = table.Table.read('lya_prediction_tools/redfield_N_H_columns.ecsv')
+import paths
+
+ism_columns = table.Table.read(paths.reference_tables / 'redfield_N_H_columns.ecsv')
 
 
 n_H = 10 ** ism_columns['N_H'] * u.cm ** -2 / (ism_columns['d'] * u.pc)
