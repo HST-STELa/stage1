@@ -164,14 +164,17 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
 
 
 def model_transit_snr(
-        transit_simulation_file,
-        lya_reconstruction_file,
         obstimes,
         exptimes,
+        in_transit_range,
+        baseline_range,
+        transit_simulation_file,
+        lya_reconstruction_file,
         spectrograph_object,
         rotation_period,
         rotation_amplitude,
         jitter,
+        seed = 20250807
 ):
 
 
@@ -218,11 +221,13 @@ def model_transit_snr(
             interp_wave = lambda trans: np.interp(w, wsim, trans, left=1, right=1)
             trans = np.apply_along_axis(interp_wave, 1, trans_obs)
 
-            # get stellar variability vector
-
             # multiply to get in transit fluxes
             lya_transit = lya[None,:] * trans
 
-            # "observe" each spectrum
-            obsvtns = [observe()]
-            result = np.apply_along_axis(obs_std, 1, lya_transit_xp)
+            # "observe" the lya line over the exposures
+            obsvtns = [observe(f, expt) for f, expt in zip(lya_transit, exptimes.to_value('s'))]
+
+            # add measurement and astrophysical noise
+
+
+            #

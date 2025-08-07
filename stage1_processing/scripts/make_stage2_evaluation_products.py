@@ -91,30 +91,6 @@ while True:
         letter = planet['pl_letter']
         transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
 
-        with h5py.File('gj341b.h5', 'r') as f:
-            print("Top-level keys:", list(f.keys()))
-
-            # Example: Check shapes
-            print("intensity shape:", f['intensity'].shape)
-            print("tgrid:", f['tgrid'][:5])  # Preview first 5 time steps
-            print("wavgrid:", len(f['wavgrid']))
-
-            # System parameters (stored as attributes)
-            for key, val in f['system_parameters'].attrs.items():
-                print(f"{key} = {val}")
-
-            # print(np.shape(f['intensity'][0, :, 100]))
-            print(f['tgrid'][:])
-
-            j = 75
-            for i in range(27):
-                plt.plot(f['tgrid'][:], f['intensity'][:][i, :, j], 'b')
-
-            v = (f['wavgrid'][:][j] / 1215.67e-8 - 1) * 3e5
-            plt.xlabel('Time (h)')
-            plt.ylabel(f'Transmission at {v:.0f} km s-1')
-        transits =
-
         utils.query_next_step(batch_mode, care_level, 1)
 
 #%% loop close

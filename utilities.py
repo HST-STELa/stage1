@@ -272,3 +272,15 @@ def rebin(new_edges, old_edges, y):
     integral = np.insert(np.cumsum(areas), 0, 0)
     Iedges = np.interp(new_edges, old_edges, integral)
     return np.diff(Iedges)/np.diff(new_edges)
+
+
+def is_in_range(x, lo, hi):
+    return (x >= lo) & (x <= hi)
+
+
+def quadsum(x):
+    return np.sqrt(np.sum(x**2))
+
+
+def find_max_snr_range(x, y, e, xlolim=None, xhilim=None):
+    pass
