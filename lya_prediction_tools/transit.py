@@ -176,8 +176,6 @@ def model_transit_snr(
         jitter,
         seed = 20250807
 ):
-
-
     lya_recon = Table.read(lya_reconstruction_file)
     lya_cases = 'low_2sig low_1sig median high_1sig high_2sig'.split()
     wlya = lya_recon['wave_lya']
@@ -208,8 +206,10 @@ def model_transit_snr(
     observe = spectrograph_object.fast_observe_function(w)
 
     snr, wa, wb = [], [], []
-    for transmission_raw in transmission_corrected:
-        for lya_case in lya_cases:
+    for lya_case in lya_cases:
+        # estimate added uncty due to imperfect correction of stellar variability
+
+        for transmission_raw in transmission_corrected:
             # average the transits over the observation intervals using the "intergolate" function I wrote
             bin_to_obs = lambda trans: utils.intergolate(obs_edges, tsim, trans, left=1, right=1)
             trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transmission_raw)
@@ -226,8 +226,3 @@ def model_transit_snr(
 
             # "observe" the lya line over the exposures
             obsvtns = [observe(f, expt) for f, expt in zip(lya_transit, exptimes.to_value('s'))]
-
-            # add measurement and astrophysical noise
-
-
-            #

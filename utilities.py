@@ -278,9 +278,14 @@ def is_in_range(x, lo, hi):
     return (x >= lo) & (x <= hi)
 
 
-def quadsum(x):
-    return np.sqrt(np.sum(x**2))
+def quadsum(x, axis=None):
+    return np.sqrt(np.sum(x**2, axis=axis))
 
 
-def find_max_snr_range(x, y, e, xlolim=None, xhilim=None):
-    pass
+def flux_average(exptimes, fluxes, errors, axis=None):
+    F = exptimes * fluxes
+    E = exptimes * errors
+    T = np.sum(exptimes, axis=axis)
+    avg = np.sum(F, axis=axis) / T
+    avg_err = quadsum(E, axis=axis) / T
+    return avg, avg_err

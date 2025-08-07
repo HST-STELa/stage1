@@ -5,6 +5,7 @@ from astropy.timeseries.periodograms.lombscargle.implementations.mle import desi
 from astropy import units as u
 
 import utilities as utils
+from utilities import quadsum
 
 
 def expand_jitter(t, jitter_amplitude):
@@ -13,22 +14,33 @@ def expand_jitter(t, jitter_amplitude):
     return jitter_amplitude
 
 
-def timeseries(t, jitter_amplitude, rotation_amplitude, rotation_period, num_draws=1):
+def rotation(t, rotation_amplitude, rotation_period, phase_offset):
+    phase_offset = np.atleast_1d(phase_offset)
+    phases = t[None, :] / rotation_period + phase_offset[:, None]
+    argument = (2*pi*phases).to_value('')
+    rot_vec = rotation_amplitude * np.sin(argument)
+    return np.squeeze(rot_vec)
+
+
+def noisy_rotation(t, jitter_amplitude, rotation_amplitude, rotation_period, num_draws=1, return_truth=False):
     m = num_draws
     n = len(t)
     jitter_amplitude = expand_jitter(t, jitter_amplitude)
     jitter = np.random.randn(m, n) * jitter_amplitude[None,:]
     random_phase_offset = np.random.random(m)
-    phases = t[None,:]/rotation_period + random_phase_offset[:,None]
-    argument = (2*pi*phases).to_value('')
-    rot_vec = rotation_amplitude * np.sin(argument)
-    y = jitter + rot_vec
-    return np.squeeze(y)
+    rot_vec = rotation(t, rotation_amplitude, rotation_period, random_phase_offset)
+    noisy_rot_vec = jitter + rot_vec
+    noisy_rot_vec = np.squeeze(noisy_rot_vec)
+    if return_truth:
+        return noisy_rot_vec, rot_vec
+    else:
+        return rot_vec
 
 
-def rotation_errorbars(
+def added_transit_uncertainty(
         t,
         exptimes,
+        normalization_snrs,
         jitter_amplitude,
         rotation_period,
         rotation_amplitude,
@@ -42,51 +54,45 @@ def rotation_errorbars(
 
     Parameters
     ----------
-    times
-    fluxes
-    jitter
-    rotation_period
-    in_transit_range
-    baseline_range
+    t
+    exptimes
+    normalization_snrs : snr of the flux measured in the normalization range for each exposure
+    jitter_amplitude : relative amplitude of stellar/instrumental jitter
+    rotation_period : stellar rotation period
+    rotation_amplitude : relative amplitude of rotational modulation
+    in_transit_range : time range that will be used for in-transit flux average
+    baseline_range : time range that will be used for out-of-transit baseline
     num_draws
 
     Returns
     -------
     """
-    ydraws = timeseries(t, jitter_amplitude, rotation_amplitude, rotation_period, num_draws)
-    dy = expand_jitter(t, jitter_amplitude)
+    y_noisy, y_true = noisy_rotation(
+        t,
+        jitter_amplitude,
+        rotation_amplitude,
+        rotation_period,
+        num_draws,
+        return_truth=True)
+    dy = quadsum((np.array(1/normalization_snrs, jitter_amplitude)))
     frequency = 1/rotation_period
 
     # fit the data with rotation and jitter added
     X = design_matrix(t, frequency, dy=dy, bias=True, nterms=1)
-    y_scaled = ydraws / dy[None,:]
-    theta_MLE = np.linalg.solve(np.dot(X.T, X), np.dot(X.T, y_scaled.T))
+    y_scaled = y_noisy / dy[None,:]
+    theta_mle = np.linalg.solve(np.dot(X.T, X), np.dot(X.T, y_scaled.T))
 
-    # compute residuals
+    # compute residuals relative to true model
     X_fit = design_matrix(t, frequency, bias=True, nterms=1)
-    models = np.dot(X_fit, theta_MLE).T
-    residuals = ydraws - models
-    # residuals = ydraws
+    y_mle = np.dot(X_fit, theta_mle).T
+    residuals = y_mle - y_true
 
     # compute the difference between baseline and transit for each draw
-    basemask = utils.is_in_range(t, *baseline_range)
-    transitmask = utils.is_in_range(t, *in_transit_range)
-    Y = residuals * exptimes[None,:]
-    Tbase = np.sum(exptimes[basemask])
-    Ttransit = np.sum(exptimes[transitmask])
-    ybases = np.sum(Y[:, basemask], axis=1) / Tbase
-    ytransits = np.sum(Y[:, transitmask], axis=1) / Ttransit
+    bx = utils.is_in_range(t, *baseline_range)
+    tx = utils.is_in_range(t, *in_transit_range)
+    ybases, _ = utils.flux_average(exptimes[None,bx], residuals[:,bx], 0, axis=1)
+    ytransits, _ = utils.flux_average(exptimes[None,tx], residuals[:,tx], 0, axis=1)
     diffs = ytransits - ybases
 
-    # estimate expected variance in differences based on noise alone
-    E = dy * exptimes
-    base_uncty = utils.quadsum(E[basemask]) / Tbase
-    transit_uncty =  utils.quadsum(E[transitmask]) / Ttransit
-    expected_scatter = utils.quadsum(u.Quantity((base_uncty, transit_uncty)))
-
-    # estimate actual variance and compare
-    actual_scatter = np.std(diffs)
-    if actual_variance < expected_variance:
-        return 0
-    excess_noise = np.sqrt(actual_variance - expected_variance)
-    return excess_noise
+    # return the scatter on those differences
+    return np.std(diffs)
