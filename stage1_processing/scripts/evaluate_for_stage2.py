@@ -1,6 +1,10 @@
+import warnings
+
+from astropy.table import Table, Column
 from astropy import units as u
 import numpy as np
 import h5py
+from matplotlib import pyplot as plt
 
 import empirical
 import paths
@@ -21,6 +25,11 @@ batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 
+#%% raise arithmetic warnings as errors
+
+np.seterr(divide='raise', over='raise', invalid='raise')
+
+
 #%% assumed observation timing
 
 obstimes_temp = [-1.5, 0, 18, 19.5, 21, 22.5, 24] * u.h
@@ -29,9 +38,13 @@ exptimes = [2000, 2700, 2000, 2700, 2700, 2700, 2700] * u.s
 baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + 1*u.h))
 def get_in_transit_range(planet):
     transit_duration = planet['pl_trandur'] * planet_catalog['pl_trandur'].unit
-    in_transit_range = u.Quantity((-transit_duration, 10 * u.h))  # long egress for tails
+    in_transit_range = u.Quantity((-transit_duration/2, 10 * u.h))  # long egress for tails
     return in_transit_range
 
+
+#%% ranges within which to search for integration bands that maximize SNR
+normalization_within_rvs = ((-400, -150), (150, 400)) * u.km / u.s
+transit_within_rvs = (-150, 50) * u.km / u.s
 
 #%% assumed variability
 
@@ -46,6 +59,17 @@ def satdecay_jitter(Ro):
 def satdecay_rotation(Ro):
     return variability.saturation_decay_loglog(
         Ro, Ro_break, rotation_amplitude_saturation, 1, rotation_amplitude_Ro1).to_value('')
+
+
+#%% store "global" transit settings
+
+global_transit_kws = dict(
+    obstimes=obstimes,
+    exptimes=exptimes,
+    baseline_time_range=baseline_range,
+    normalization_within_rvs=normalization_within_rvs,
+    transit_within_rvs=transit_within_rvs,
+)
 
 
 #%% tables
@@ -119,9 +143,9 @@ while True:
             age = 5 * u.Gyr
         else:
             if host['st_agelim'] == 0:
-                age = host['st_agelim'] * ageunit
+                age = host['st_age'] * ageunit
             elif host['st_agelim'] == 1:
-                age = host['st_agelim']/2 * ageunit
+                age = host['st_age']/2 * ageunit
             else:
                 age = 5 * u.Gyr
         Prot = empirical.Prot_from_age_johnstone21(age, Minput)
@@ -140,6 +164,19 @@ while True:
     Ro = variability.rossby_number(Mstar, Prot)
     jitter = satdecay_jitter(Ro)
     Arot = satdecay_rotation(Ro)
+
+
+#%% lya reconstruction
+
+    lya_reconstruction_file, = targfolder.rglob('*lya-recon*')
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='OverflowError converting to FloatType in column')
+        lya_recon = Table.read(lya_reconstruction_file)
+    lya_cases = 'low_2sig low_1sig median high_1sig high_2sig'.split()
+    lya_sigs = np.arange(-2, 3)
+    lya_wavegrid = lya_recon['wave_lya']
+    lya_flux_ary = [lya_recon[f'lya_model unconvolved_{lya_case}'] for lya_case in lya_cases]
+    lya_flux_ary = np.asarray(lya_flux_ary)
 
 
 #%% pick appropriate spectrograph
@@ -170,19 +207,35 @@ while True:
 
     spec = stis.Spectrograph(lsf_x, lsf_y, etc)
 
+#%% store target-specific transit settings
 
-#%% loop through planets and compute sigmas based on outflow sims
+    target_transit_kws = dict(
+        lya_recon_wavegrid = lya_wavegrid,
+        spectrograph_object = spec,
+        rv_star = rv_star,
+        rv_ism = rv_ism,
+        rotation_period = Prot,
+        rotation_amplitude = Arot,
+        jitter = jitter
+    )
 
-    missed_planets = []
 
-    lya_reconstruction_file, = targfolder.rglob('*lya-recon*')
+#%% loop through planets and compute transit sigmas
+
+    missed_planets_mod, missed_targets_mod, exceptions_mod = [], [], []
+    missed_planets_flat, missed_targets_flat, exceptions_flat = [], [], []
     for i, planet in enumerate(planets):
         in_transit_range = get_in_transit_range(planet)
 
         letter = planet['pl_letter']
         if np.ma.is_masked(letter):
-            letter = 'abcdefg'[i]
+            letter = 'bcdefg'[i]
 
+        planet_transit_kws = dict(
+            in_transit_time_range = in_transit_range
+        )
+
+#%% outflow model scenarios
         try:
             transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
 
@@ -193,32 +246,111 @@ while True:
             if not np.isclose(a_cat, a_sim, rtol=0.1):
                 raise ValueError
 
-            sigma_tbl = transit.model_transit_snr(
-                obstimes,
-                exptimes,
-                in_transit_range,
-                baseline_range,
-                transit_simulation_file,
-                lya_reconstruction_file,
-                spec,
-                rv_star,
-                rv_ism,
-                Prot,
-                Arot,
-                jitter
+            # load in the transit models
+            with h5py.File(transit_simulation_file) as f:
+                transit_timegrid = f['tgrid'][:]
+                transit_wavegrid = f['wavgrid'][:] * 1e8
+                transmission_array = f['intensity'][:]
+                eta_sim = f['eta'][:]
+                wind_scaling_sim = f['mdot_star_scaling'][:]
+                phion_scaling_sim = f['phion_scaling'][:]
+
+            # there seem to be odd "zero-point" offsets in some of the transmission vectors. correct these
+            transmaxs = np.max(transmission_array, axis=2)
+            offsets = 1 - transmaxs
+            transmission_corrected = transmission_array + offsets[:, :, None]
+
+            # expand lya and transit models to include a range of lya line cases
+            n = lya_flux_ary.shape[0]
+            m = transmission_array.shape[0]
+            x_lya_flux = np.repeat(lya_flux_ary, m, axis=0)
+            x_lya_sigma = np.repeat(lya_sigs, m)
+            x_transmission = np.tile(transmission_corrected, (n,1,1))
+            x_eta = np.tile(eta_sim, n)
+            x_wind_scaling = np.tile(wind_scaling_sim, n)
+            x_phion_scaling = np.tile(phion_scaling_sim, n)
+
+            # get detection sigmas
+            sigma_tbl = transit.generic_transit_snr(
+                transit_timegrid = transit_timegrid,
+                transit_wavegrid = transit_wavegrid,
+                transit_transmission_ary = x_transmission,
+                lya_recon_flux_ary = x_lya_flux,
+                **global_transit_kws,
+                **target_transit_kws,
+                **planet_transit_kws,
             )
+
+            # add parameters to table
+            sigma_tbl['lya sigma'] = Column(x_lya_sigma, format='%i')
+            sigma_tbl['eta'] = Column(x_eta, format='.2g')
+            sigma_tbl['wind scaling'] = Column(x_wind_scaling, format='.2g')
+            sigma_tbl['phion scaling'] = Column(x_phion_scaling, format='.2g')
 
             sigma_tbl_name = transit_simulation_file.name.replace('.h5', '-detection-sigmas.ecsv')
             sigma_tbl_path = targfolder / 'transit predictions' / sigma_tbl_name
             sigma_tbl.write(sigma_tbl_path, overwrite=True)
 
-        except:
-            missed_planets.append(planet)
+        except Exception as e:
+            missed_planets_mod.append(planet)
+            missed_targets_mod.append(target)
+            exceptions_mod.append(e)
+            raise
 
-        utils.query_next_step(batch_mode, care_level, 1)
+#%% flat opaque tail transit
+
+        try:
+            ta = (obstimes[0] - exptimes[0]/2).to_value('h')
+            tb = (obstimes[-1] + exptimes[-1]/2).to_value('h')
+            dt = 0.25
+            flat_tgrid = np.arange(ta, tb + dt, dt)
+
+            flat_wgrid = np.arange(*spec.wavegrid[[0,-1]], spec.binwidth[0]/3)
+            flat_vgrid = lya.w2v(flat_wgrid) - rv_star.to_value('km s-1')
+
+            flat_transit_wavemask = utils.is_in_range(flat_vgrid, *transit_within_rvs.to_value('km s-1'))
+            flat_transit_timemask = utils.is_in_range(flat_tgrid, *in_transit_range.to_value('h'))
+
+            flat_depth, = transit.opaque_tail_depth(planets[[i]]) # takes a table as input, hence the [[i]]
+            flat_transmission = np.ones((len(flat_tgrid), len(flat_wgrid)))
+            flat_transmission[np.ix_(flat_transit_timemask, flat_transit_wavemask)] = 1 - flat_depth
+
+            lya_sigma = 0
+            flat_lya_flux = lya_recon['lya_model unconvolved_median']
+
+            flat_sigma_tbl = transit.generic_transit_snr(
+                transit_timegrid = flat_tgrid,
+                transit_wavegrid = flat_wgrid,
+                transit_transmission_ary = flat_transmission,
+                lya_recon_flux_ary = flat_lya_flux,
+                **global_transit_kws,
+                **target_transit_kws,
+                **planet_transit_kws,
+            )
+
+            # store flat model parameters
+            flat_sigma_tbl['injected times'] = [in_transit_range.to_value('h')]
+            flat_sigma_tbl['injected rvs'] = [transit_within_rvs.to_value('km s-1')]
+            flat_sigma_tbl['depth'] = flat_depth
+            flat_sigma_tbl['lya sigma'] = lya_sigma
+
+            flat_filename = f'{target}.simple-opaque-tail.na.na.transit-{letter}-detection-sigmas.ecsv'
+            flat_path = targfolder / 'transit predictions' / flat_filename
+            flat_sigma_tbl.write(flat_path, overwrite=True)
+
+        except Exception as e:
+            missed_planets_flat.append(planet)
+            missed_targets_flat.append(target)
+            exceptions_flat.append(e)
+            raise
+
+    utils.query_next_step(batch_mode, care_level, 1)
 
 
 #%% loop close
 
   except StopIteration:
     break
+
+
+#%% make table of properties

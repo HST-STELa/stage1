@@ -1,3 +1,4 @@
+import warnings
 from math import pi, nan
 
 import numpy as np
@@ -165,10 +166,15 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
 
 
 def max_snr_integration_range(x, f, e, search_rng=None):
+    n = len(x)
     if search_rng is None:
         inrng = np.ones(len(f), bool)
     else:
         inrng = utils.is_in_range(x, *search_rng)
+
+    if np.all(f[inrng] == 0):
+        return 0, 0, 0, np.inf
+
     inrng_indices = np.flatnonzero(inrng)
 
     cF = utils.subinterval_cumsums(f[inrng])
@@ -177,12 +183,14 @@ def max_snr_integration_range(x, f, e, search_rng=None):
         cSNR = cF/cE
         cSNR[cF == 0] = 0
     max_idx_flat = np.argmax(cSNR)
-    a_inrng, b_inrng = np.unravel_index(max_idx_flat, cSNR.shape)
-    a_true, b_true = inrng_indices[a_inrng], inrng_indices[b_inrng]
+    a_inrng, b_inrng = np.unravel_index(max_idx_flat, (n+1, n+1))
+    true_indices = inrng_indices[a_inrng:b_inrng]
+    a_true = true_indices[0]
+    b_true = true_indices[-1] + 1
 
     F = cF.flat[max_idx_flat]
     E = cE.flat[max_idx_flat]
-    return a_true, b_true+1, F, E
+    return a_true, b_true, F, E
 
 
 def max_snr_red_blue(x, f, e, blue_rng, red_rng):
@@ -207,13 +215,18 @@ def max_snr_red_blue(x, f, e, blue_rng, red_rng):
         return masks[imx]
 
 
-def model_transit_snr(
+def generic_transit_snr(
         obstimes,
         exptimes,
-        in_transit_range,
-        baseline_range,
-        transit_simulation_file,
-        lya_reconstruction_file,
+        in_transit_time_range,
+        baseline_time_range,
+        normalization_within_rvs,
+        transit_within_rvs,
+        transit_timegrid,
+        transit_wavegrid,
+        transit_transmission_ary,
+        lya_recon_wavegrid,
+        lya_recon_flux_ary,
         spectrograph_object,
         rv_star,
         rv_ism,
@@ -221,31 +234,27 @@ def model_transit_snr(
         rotation_amplitude,
         jitter,
 ):
-    bx = utils.is_in_range(obstimes, *baseline_range)
-    tx = utils.is_in_range(obstimes, *in_transit_range)
+    if lya_recon_flux_ary.ndim == 1:
+        lya_recon_flux_ary = lya_recon_flux_ary[None,:]
+    if transit_transmission_ary.ndim == 2:
+        transit_transmission_ary = transit_transmission_ary[None, :, :]
+    assert lya_recon_flux_ary.shape[0] == transit_transmission_ary.shape[0]
 
+    # masks for observations that are in the baseline and transit ranges
+    bx = utils.is_in_range(obstimes, *baseline_time_range)
+    tx = utils.is_in_range(obstimes, *in_transit_time_range)
+
+    # for later use picking integration ranges
+    v0_ism = rv_ism - rv_star
+    v0_ism = v0_ism.to_value('km s-1')
+    normalization_within_rvs = normalization_within_rvs.to_value('km s-1')
+    transit_within_rvs = transit_within_rvs.to_value('km s-1')
+
+    # instrument wavelength and velocity grids
     dwspec = spectrograph_object.binwidth
     wspec = spectrograph_object.wavegrid
     vspec = lya.w2v(wspec.value) - rv_star.to_value('km s-1') # in star frame
     vspec_bins = utils.mids2bins(vspec)
-
-    lya_recon = Table.read(lya_reconstruction_file)
-    lya_cases = 'low_2sig low_1sig median high_1sig high_2sig'.split()
-    lya_sigs = dict(zip(lya_cases, range(-2, 3)))
-    wlya = lya_recon['wave_lya']
-
-    with h5py.File(transit_simulation_file) as f:
-        tsim = f['tgrid'][:]
-        wsim = f['wavgrid'][:] * 1e8
-        transmission_array = f['intensity'][:]
-        eta_sim = f['eta'][:]
-        wind_scaling_sim = f['mdot_star_scaling'][:]
-        phion_scaling_sim = f['phion_scaling'][:]
-
-    # there seem to be odd "zero-point" offsets in some of the transmission vectors. correct these
-    transmaxs = np.max(transmission_array, axis=2)
-    offsets = 1 - transmaxs
-    transmission_corrected = transmission_array + offsets[:,:,None]
 
     # figure out the start and end times of the observations so I can bin over them later
     obs_start = obstimes - exptimes/2
@@ -257,7 +266,7 @@ def model_transit_snr(
     obs_mask[1::2] = False
 
     # merge the two wavelength grids
-    w = np.sort(np.hstack((wlya, wsim)))
+    w = np.sort(np.hstack((lya_recon_wavegrid, transit_wavegrid)))
 
     # function to apply LSF and estimate uncties
     observe = spectrograph_object.fast_observe_function(w)
@@ -270,30 +279,37 @@ def model_transit_snr(
         jitter,
         rotation_period,
         rotation_amplitude,
-        in_transit_range,
-        baseline_range,
+        in_transit_time_range,
+        baseline_time_range,
         1000
     )
 
     rows = []
-    for lya_case in lya_cases:
+    for lya_recon_flux, transit_transmission in zip(lya_recon_flux_ary, transit_transmission_ary):
+        row = {}
+
+        # average the transits over the observation intervals using the "intergolate" function I wrote
+        bin_to_obs = lambda trans: utils.intergolate(obs_edges, transit_timegrid, trans, left=1, right=1)
+        trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transit_transmission)
+        trans_obs = trans_tbinned[obs_mask]
 
         # interp lya and transmission onto the same wavelength grid
-        f_lya_raw = lya_recon[f'lya_model unconvolved_{lya_case}']
-        f_lya = np.interp(w, wlya, f_lya_raw, left=0, right=0)
+        f_lya = np.interp(w, lya_recon_wavegrid, lya_recon_flux, left=0, right=0)
+        interp_wave = lambda trans: np.interp(w, transit_wavegrid, trans, left=1, right=1)
+        trans = np.apply_along_axis(interp_wave, 1, trans_obs)
 
         # "observe" the line over the baseline exposures
         exptime_baseline = np.sum(exptimes[bx])
         fb, eb = observe(f_lya, exptime_baseline.to_value('s'))
 
         # pick transit and normalization integration ranges
-        v0_ism = rv_ism - rv_star
-        v0_ism = v0_ism.to_value('km s-1')
-        normrng_mask = max_snr_red_blue(vspec, fb, eb, (-400, -150), (150, 400))
-        if v0_ism >= -140 and v0_ism <= 40:
-            absprng_mask = max_snr_red_blue(vspec, fb, eb, (-150, v0_ism), (v0_ism, 50))
+        normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_within_rvs)
+        if v0_ism >= transit_within_rvs[0] and v0_ism <= transit_within_rvs[1]:
+            absprng_mask = max_snr_red_blue(vspec, fb, eb,
+                                            (transit_within_rvs[0], v0_ism),
+                                            (v0_ism, transit_within_rvs[1]))
         else:
-            a, b, _, _ = max_snr_integration_range(vspec, fb, eb, (-150, 50))
+            a, b, _, _ = max_snr_integration_range(vspec, fb, eb, transit_within_rvs)
             absprng_mask = np.zeros(len(fb), bool)
             absprng_mask[a:b] = True
 
@@ -306,70 +322,53 @@ def model_transit_snr(
         i_norm = utils.chunk_edges(normrng_mask)
         v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_absp]
         v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_norm]
+        row['transit ranges'] = v_absp
+        row['normalization ranges'] = v_norm
 
-        for i, transmission in enumerate(transmission_corrected):
-            row = {
-                'lya sigma' : lya_sigs[lya_case],
-                'eta' : eta_sim[i],
-                'wind scaling' : wind_scaling_sim[i],
-                'phion scaling' : phion_scaling_sim[i],
-                'transit ranges' : v_absp,
-                'normalization ranges' : v_norm
-            }
+        # multiply to get in transit fluxes
+        f_lya_transit = f_lya[None,:] * trans
 
-            # average the transits over the observation intervals using the "intergolate" function I wrote
-            bin_to_obs = lambda trans: utils.intergolate(obs_edges, tsim, trans, left=1, right=1)
-            trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transmission)
-            trans_obs = trans_tbinned[obs_mask]
+        # "observe" the lya line over the exposures
+        obsvtns = [observe(f, expt) for f, expt in zip(f_lya_transit, exptimes.to_value('s'))]
+        fobs, eobs = zip(*obsvtns)
+        fobs, eobs = map(np.asarray, (fobs, eobs))
 
-            # now interpolate onto the merged wavelength grid
-            interp_wave = lambda trans: np.interp(w, wsim, trans, left=1, right=1)
-            trans = np.apply_along_axis(interp_wave, 1, trans_obs)
+        # in and out of transit fluxes and errors
+        Fs, Es = [], []
+        for x in (bx, tx):
+            f, e = utils.flux_average(exptimes[x, None], fobs[x,:], eobs[x,:], axis=0)
+            F = np.sum(f[absprng_mask] * dwspec[absprng_mask])
+            E = utils.quadsum(e[absprng_mask] * dwspec[absprng_mask])
+            Fs.append(F)
+            Es.append(E)
+        Fb, Eb = Fs[0], Es[0]
+        Ft, Et = Fs[1], Es[1]
 
-            # multiply to get in transit fluxes
-            f_lya_transit = f_lya[None,:] * trans
+        # add noise from stellar variability
+        terms = np.array([Et, Ft*variability_scatter])
+        Et_var = utils.quadsum(terms)
 
-            # "observe" the lya line over the exposures
-            obsvtns = [observe(f, expt) for f, expt in zip(f_lya_transit, exptimes.to_value('s'))]
-            fobs, eobs = zip(*obsvtns)
-            fobs, eobs = map(np.asarray, (fobs, eobs))
+        # versus noise from trying to normalize out that variability
+        Eratio = np.sqrt(2) * Enorm/Fnorm
+        terms = np.array([Et, Ft*Eratio])
+        Et_norm = utils.quadsum(terms)
 
-            # in and out of transit fluxes and errors
-            Fs, Es = [], []
-            for x in (bx, tx):
-                f, e = utils.flux_average(exptimes[x, None], fobs[x,:], eobs[x,:], axis=0)
-                F = np.sum(f[absprng_mask] * dwspec[absprng_mask])
-                E = utils.quadsum(e[absprng_mask] * dwspec[absprng_mask])
-                Fs.append(F)
-                Es.append(E)
-            Fb, Eb = Fs[0], Es[0]
-            Ft, Et = Fs[1], Es[1]
+        # and pick the smaller of the two
+        if Et_var < Et_norm:
+            row['normalized'] = False
+            Et_min = Et_var
+        else:
+            row['normalized'] = True
+            Et_min = Et_norm
 
-            # add noise from stellar variability
-            terms = np.array([Et, Ft*variability_scatter])
-            Et_var = utils.quadsum(terms)
+        # detection significance
+        dF = Fb - Ft
+        terms = np.array((Eb, Et_min))
+        dE = utils.quadsum(terms)
+        sigma = dF/dE
 
-            # versus noise from trying to normalize out that variability
-            Eratio = np.sqrt(2) * Enorm/Fnorm
-            terms = np.array([Et, Ft*Eratio])
-            Et_norm = utils.quadsum(terms)
-
-            # and pick the smaller of the two
-            if Et_var < Et_norm:
-                row['normalized'] = False
-                Et_min = Et_var
-            else:
-                row['normalized'] = True
-                Et_min = Et_norm
-
-            # detection significance
-            dF = Fb - Ft
-            terms = np.array((Eb, Et_min))
-            dE = utils.quadsum(terms)
-            sigma = dF/dE
-
-            row['transit sigma'] = sigma.to_value('')
-            rows.append(row)
+        row['transit sigma'] = sigma.to_value('')
+        rows.append(row)
 
     tbl = Table(rows=rows)
     return tbl

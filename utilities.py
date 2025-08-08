@@ -290,15 +290,15 @@ def subinterval_cumsums(x):
     cumsum = np.zeros(n + 1, dtype=x.dtype)
     cumsum[1:] = np.cumsum(x)
 
-    # Now create a 2D array such that S[i, j] = cumsum[j] - cumsum[i] for i < j
+    # Now create a 2D array such that S[i, j] = np.sumsum[i:j] for i < j
     # Broadcast to build 2D difference matrix
-    start = cumsum[:-1][:, None]  # shape (n, 1)
-    end   = cumsum[1:][None, :]   # shape (1, n)
+    start = cumsum[:, None]  # shape (n, 1)
+    end   = cumsum[None, :]   # shape (1, n)
 
     S = end - start  # shape (n, n)
 
     # Zero out the invalid parts (i >= j)
-    i, j = np.indices((n, n))
+    i, j = np.indices((n+1, n+1))
     S[i >= j] = 0
 
     return S
