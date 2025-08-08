@@ -7,10 +7,10 @@ from scipy import interpolate
 
 import catalog_utilities as catutils
 import database_utilities as dbutils
+import empirical
 from lya_prediction_tools import stis
 from target_selection_tools import query
 from target_selection_tools import reference_tables as ref
-from target_selection_tools import empirical as emp
 from target_selection_tools import galex_estimate
 
 
@@ -96,7 +96,7 @@ def conservatively_bright_FUV(catalog):
     FUVmag_field = FV + catalog['sy_vmag']
 
     # adjust for Rossby number
-    tau = emp.turnover_time(catalog['st_mass'])
+    tau = empirical.turnover_time(catalog['st_mass'])
     Ro = catalog['st_rotp']/tau
     saturated = Ro.filled(0) < 0.1  # assume saturated as a worst case
     old = catalog['st_age'].filled(0) > 1  # but not for stars we know are old
@@ -152,7 +152,7 @@ def categorize_activity(catalog_with_mags):
     }
 
     for i, row in enumerate(catalog):
-        tau = emp.turnover_time(row['st_mass'])
+        tau = empirical.turnover_time(row['st_mass'])
         info['mass'][i] = f'stellar mass {row['st_mass']:.2f}'
         info['Teff'][i] = f'stellar Teff {row['st_teff']:.2f}'
 

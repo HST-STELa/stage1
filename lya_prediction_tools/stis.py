@@ -120,7 +120,6 @@ class Spectrograph(object):
         self.dpix = lsf_x[1] - lsf_x[0]
         self.n_lsf = len(lsf_x) // 2
 
-
     def flux_uncty(self, pixel_flux, exptime):
         etc = self.etc
         w = etc['wavelength'] * u.AA
@@ -130,7 +129,6 @@ class Spectrograph(object):
         err_counts = np.sqrt(total)
         err_flux = err_counts / exptime / etc['flux2cps']
         return err_flux
-
 
     def observe(self, mod_w, mod_f, exptime):
         mod_dw = np.diff(mod_w)

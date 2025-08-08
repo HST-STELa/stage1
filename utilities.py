@@ -282,6 +282,28 @@ def quadsum(x, axis=None):
     return np.sqrt(np.sum(x**2, axis=axis))
 
 
+def subinterval_cumsums(x):
+    x = np.asarray(x)
+    n = len(x)
+
+    # Compute cumulative sum with one extra zero at the beginning
+    cumsum = np.zeros(n + 1, dtype=x.dtype)
+    cumsum[1:] = np.cumsum(x)
+
+    # Now create a 2D array such that S[i, j] = cumsum[j] - cumsum[i] for i < j
+    # Broadcast to build 2D difference matrix
+    start = cumsum[:-1][:, None]  # shape (n, 1)
+    end   = cumsum[1:][None, :]   # shape (1, n)
+
+    S = end - start  # shape (n, n)
+
+    # Zero out the invalid parts (i >= j)
+    i, j = np.indices((n, n))
+    S[i >= j] = 0
+
+    return S
+
+
 def flux_average(exptimes, fluxes, errors, axis=None):
     F = exptimes * fluxes
     E = exptimes * errors
@@ -289,3 +311,27 @@ def flux_average(exptimes, fluxes, errors, axis=None):
     avg = np.sum(F, axis=axis) / T
     avg_err = quadsum(E, axis=axis) / T
     return avg, avg_err
+
+
+def chunk_edges(chunk_mask):
+    """
+    Find the start and end indices of contiguous True chunks in a boolean array.
+
+    Parameters
+    ----------
+    chunk_mask : array-like of bool
+
+    Returns
+    -------
+    chunks : list of tuple
+        List of (start, end) index tuples for each contiguous True chunk.
+        Each tuple represents a half-open interval [start, end).
+    """
+    chunk_mask = np.asarray(chunk_mask, dtype=bool)
+    padded = np.pad(chunk_mask.astype(int), (1, 1), constant_values=0)
+    diffs = np.diff(padded)
+
+    starts = np.where(diffs == 1)[0]
+    ends = np.where(diffs == -1)[0]
+
+    return list(zip(starts, ends))

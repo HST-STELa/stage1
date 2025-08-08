@@ -112,6 +112,17 @@ def age_from_Prot_johnstone21(Prot, M):
     return age * u.Myr
 
 
+def Prot_from_age_johnstone21(age, M):
+    age = age.to_value('Myr')
+    logage = np.log10(age)
+    M = M.to_value('Msun')
+    track = mors.Star(Mstar=M, percentile=50)
+    logagegrid = np.log10(track.AgeTrack)
+    Pgrid = track.ProtTrack
+    P = np.interp(logage, logagegrid, Pgrid)
+    return P * u.d
+
+
 def XUV_from_Prot_johnstone21(Prot, M, age):
     """
 
@@ -143,3 +154,18 @@ def XUV_from_Prot_johnstone21(Prot, M, age):
     F = L / dw
 
     return w.to('AA'), dw.to('AA'), F.to('erg s-1 AA-1')
+
+
+def ho_gap_lowlim(P, Mstar):
+    A, B, C = -0.09, 0.21, 0.35
+    width = 0.1
+    logP = np.log10(P)
+    logM = np.log10(Mstar)
+    logR = A*logP + B*logM + C - width/2
+    return 10**logR
+
+
+def turnover_time(Msun):
+    # eqn 6 from Wright+ 2018
+    log_tau = 2.33 - 1.50 + 0.31*Msun**2
+    return 10**log_tau * u.d

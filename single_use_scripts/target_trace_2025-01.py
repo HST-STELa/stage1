@@ -5,10 +5,11 @@ import numpy as np
 from astropy import table
 from matplotlib import pyplot as plt
 
+import empirical
 import paths
 import catalog_utilities as catutils
 from lya_prediction_tools import heritage, transit
-from target_selection_tools import empirical
+
 
 
 #%% load old and new catalogs

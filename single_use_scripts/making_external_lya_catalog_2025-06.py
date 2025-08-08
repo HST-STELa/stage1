@@ -1,7 +1,5 @@
 import sys;
 
-import empirical
-
 print('Python %s on %s' % (sys.version, sys.platform))
 sys.path.extend(['/Users/parke/Google Drive/Research/STELa/public github repo/stage1'])
 from importlib import reload
@@ -20,12 +18,14 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 import catalog_utilities
 import paths
+import empirical
 import catalog_utilities as catutils
 from lya_prediction_tools import transit, lya
 from target_selection_tools import galex_query
 from target_selection_tools import duplication_checking as dc
 from target_selection_tools import reference_tables as ref
-from target_selection_tools import query, columns, apt, empirical
+from target_selection_tools import query, columns, apt
+
 import database_utilities as dbutils
 erg_s_cm2 = u.Unit('erg s-1 cm-2')
 allocated_orbits = 204

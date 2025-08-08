@@ -1,11 +1,32 @@
 from math import pi
 
 import numpy as np
-from astropy.timeseries.periodograms.lombscargle.implementations.mle import design_matrix
-from astropy import units as u
 
+import empirical
 import utilities as utils
-from utilities import quadsum
+
+
+
+def rossby_number(mass, rotation_period):
+    tau = empirical.turnover_time(mass.to_value('Msun'))
+    return rotation_period / tau
+
+
+def saturation_decay(x, x_break, y_saturation, x_ref, y_ref):
+    x = np.atleast_1d(x)
+    slope = (y_ref - y_saturation) / (x_ref - x_break)
+    result = np.zeros_like(x)
+    sat = x <= x_break
+    result[sat] = y_saturation
+    y_decay = slope * (x - x_break) + y_saturation
+    result[~sat] = y_decay[~sat]
+    return np.squeeze(result)
+
+
+def saturation_decay_loglog(x, x_break, y_saturation, x_ref, y_ref):
+    args = list(map(np.log10, (x, x_break, y_saturation, x_ref, y_ref)))
+    ly = saturation_decay(*args)
+    return 10**ly
 
 
 def expand_jitter(t, jitter_amplitude):
@@ -22,7 +43,7 @@ def rotation(t, rotation_amplitude, rotation_period, phase_offset):
     return np.squeeze(rot_vec)
 
 
-def noisy_rotation(t, jitter_amplitude, rotation_amplitude, rotation_period, num_draws=1, return_truth=False):
+def noisy_rotation(t, jitter_amplitude, rotation_amplitude, rotation_period, num_draws=1):
     m = num_draws
     n = len(t)
     jitter_amplitude = expand_jitter(t, jitter_amplitude)
@@ -31,16 +52,12 @@ def noisy_rotation(t, jitter_amplitude, rotation_amplitude, rotation_period, num
     rot_vec = rotation(t, rotation_amplitude, rotation_period, random_phase_offset)
     noisy_rot_vec = jitter + rot_vec
     noisy_rot_vec = np.squeeze(noisy_rot_vec)
-    if return_truth:
-        return noisy_rot_vec, rot_vec
-    else:
-        return rot_vec
+    return noisy_rot_vec, rot_vec
 
 
 def added_transit_uncertainty(
         t,
         exptimes,
-        normalization_snrs,
         jitter_amplitude,
         rotation_period,
         rotation_amplitude,
@@ -67,31 +84,22 @@ def added_transit_uncertainty(
     Returns
     -------
     """
-    y_noisy, y_true = noisy_rotation(
+    y_noisy, _ = noisy_rotation(
         t,
         jitter_amplitude,
         rotation_amplitude,
         rotation_period,
-        num_draws,
-        return_truth=True)
-    dy = quadsum((np.array(1/normalization_snrs, jitter_amplitude)))
-    frequency = 1/rotation_period
-
-    # fit the data with rotation and jitter added
-    X = design_matrix(t, frequency, dy=dy, bias=True, nterms=1)
-    y_scaled = y_noisy / dy[None,:]
-    theta_mle = np.linalg.solve(np.dot(X.T, X), np.dot(X.T, y_scaled.T))
-
-    # compute residuals relative to true model
-    X_fit = design_matrix(t, frequency, bias=True, nterms=1)
-    y_mle = np.dot(X_fit, theta_mle).T
-    residuals = y_mle - y_true
+        num_draws)
 
     # compute the difference between baseline and transit for each draw
     bx = utils.is_in_range(t, *baseline_range)
+    if sum(bx) == 0:
+        raise ValueError('Baseline range contains no points.')
     tx = utils.is_in_range(t, *in_transit_range)
-    ybases, _ = utils.flux_average(exptimes[None,bx], residuals[:,bx], 0, axis=1)
-    ytransits, _ = utils.flux_average(exptimes[None,tx], residuals[:,tx], 0, axis=1)
+    if sum(tx) == 0:
+        raise ValueError('In-transit range contains no points.')
+    ybases, _ = utils.flux_average(exptimes[None,bx], y_noisy[:,bx], 0, axis=1)
+    ytransits, _ = utils.flux_average(exptimes[None,tx], y_noisy[:,tx], 0, axis=1)
     diffs = ytransits - ybases
 
     # return the scatter on those differences
