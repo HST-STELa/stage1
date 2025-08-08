@@ -1,5 +1,6 @@
 from astropy import units as u
 import numpy as np
+import h5py
 
 import empirical
 import paths
@@ -16,8 +17,8 @@ from lya_prediction_tools import ism
 
 #%% option to loop (batch mode)
 
-batch_mode = False
-care_level = 2 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+batch_mode = True
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 
 #%% assumed observation timing
@@ -96,7 +97,12 @@ while True:
 
     target = next(itertargets)
     tic_id, hostname = stela_name_tbl.loc['hostname_file', target][['tic_id', 'hostname']]
-    planets = planet_catalog.loc[tic_id]
+
+    # hijinks to keep .loc from returning a row instead of a table if there is just one planet
+    i_planet = planet_catalog.loc_indices[tic_id]
+    i_planet = np.atleast_1d(i_planet)
+    planets = planet_catalog[i_planet]
+
     host = host_catalog.loc[tic_id]
     targfolder = paths.target_data(target)
 
@@ -104,12 +110,23 @@ while True:
 #%% some stellar params
 
     Mstar = host['st_mass'] * host_catalog['st_mass'].unit
-    Prot = host['st_rotp'] * host_catalog['st_rotp'].unit
-    if np.ma.is_masked(Prot):
+    if np.ma.is_masked(host['st_rotp']):
         # assume Prot for a 5 Gyr star of the same mass
         Minput = min(1.2 * u.Msun, Mstar)
         Minput = max(0.1 * u.Msun, Minput)
-        Prot = empirical.Prot_from_age_johnstone21(5 * u.Gyr, Minput)
+        ageunit = host_catalog['st_age'].unit
+        if np.ma.is_masked(host['st_age']):
+            age = 5 * u.Gyr
+        else:
+            if host['st_agelim'] == 0:
+                age = host['st_agelim'] * ageunit
+            elif host['st_agelim'] == 1:
+                age = host['st_agelim']/2 * ageunit
+            else:
+                age = 5 * u.Gyr
+        Prot = empirical.Prot_from_age_johnstone21(age, Minput)
+    else:
+        Prot = host['st_rotp'] * host_catalog['st_rotp'].unit
 
     if np.ma.is_masked(host['st_radv']):
         rv_star = 0 * u.km/u.s
@@ -156,31 +173,47 @@ while True:
 
 #%% loop through planets and compute sigmas based on outflow sims
 
+    missed_planets = []
+
     lya_reconstruction_file, = targfolder.rglob('*lya-recon*')
-    for planet in planets:
+    for i, planet in enumerate(planets):
         in_transit_range = get_in_transit_range(planet)
 
         letter = planet['pl_letter']
-        transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
+        if np.ma.is_masked(letter):
+            letter = 'abcdefg'[i]
 
-        sigma_tbl = transit.model_transit_snr(
-            obstimes,
-            exptimes,
-            in_transit_range,
-            baseline_range,
-            transit_simulation_file,
-            lya_reconstruction_file,
-            spec,
-            rv_star,
-            rv_ism,
-            Prot,
-            Arot,
-            jitter
-        )
+        try:
+            transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
 
-        sigma_tbl_name = transit_simulation_file.name.replace('.h5', '-detection-sigmas.ecsv')
-        sigma_tbl_path = targfolder / 'transit predictions' / sigma_tbl_name
-        sigma_tbl.write(sigma_tbl_path, overwrite=True)
+            # verify that I got the right planet
+            with h5py.File(transit_simulation_file) as f:
+                a_sim = f['system_parameters'].attrs['semimajoraxis'] * u.cm
+            a_cat = planet['pl_orbsmax'] * planets['pl_orbsmax'].unit
+            if not np.isclose(a_cat, a_sim, rtol=0.1):
+                raise ValueError
+
+            sigma_tbl = transit.model_transit_snr(
+                obstimes,
+                exptimes,
+                in_transit_range,
+                baseline_range,
+                transit_simulation_file,
+                lya_reconstruction_file,
+                spec,
+                rv_star,
+                rv_ism,
+                Prot,
+                Arot,
+                jitter
+            )
+
+            sigma_tbl_name = transit_simulation_file.name.replace('.h5', '-detection-sigmas.ecsv')
+            sigma_tbl_path = targfolder / 'transit predictions' / sigma_tbl_name
+            sigma_tbl.write(sigma_tbl_path, overwrite=True)
+
+        except:
+            missed_planets.append(planet)
 
         utils.query_next_step(batch_mode, care_level, 1)
 
