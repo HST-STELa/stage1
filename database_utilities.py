@@ -22,6 +22,15 @@ stela_name_tbl.add_index('hostname_file')
 stela_name_tbl.add_index('hostname_hst')
 
 
+def rename_replace(files, pattern, repl, dry_run):
+    for f in files:
+        newname = re.sub(pattern, repl, f.name)
+        if dry_run:
+            print(f"{f.name} --> {newname}")
+        else:
+            os.rename(f, f.parent / newname)
+
+
 def resolve_stela_name_w_simbad(names_for_simbad):
     tic_ids = query.query_simbad_for_tic_ids(names_for_simbad)
     stela_names = []

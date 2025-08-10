@@ -37,13 +37,13 @@ def cumtrapz(y, x):
 
 def read_etc_output(etc_output_file):
     try:
-        pattern = r'(.*?)_counts_(.*?)_exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
+        pattern = r'.*stis-(.*?)\..*(.*?)exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
         result, = re.findall(pattern, etc_output_file.name)
         grating, date, expt, flux, aperture = result
     except ValueError as e:
-        if 'too many values' in str(e):
+        if 'too many values' in str(e) or 'not enough values' in str(e):
             raise(ValueError('Nonstandard ETC output file name. Example standard name: '
-                             'g140m_counts_2021-09-28_exptime1700_flux1e-13_aperture52x0.2.csv'))
+                             'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv'))
         else:
             raise
     etc = table.Table.read(etc_output_file)
@@ -83,8 +83,8 @@ def read_lsf(path_lsf, aperture):
 
 
 _etc_files_for_smple_snr = [
-    'g140m_counts_2021-09-28_exptime1700_flux1e-13_aperture52x0.2.csv',
-    'g140m_counts_2025-08-05_exptime900_flux1e-13_aperture52x0.2.csv'
+    'etc.hst-stis-g140m.2021-09-28.unknown.exptime1700_flux1e-13_aperture52x0.2.csv',
+    'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv'
 ]
 _etc_dict_simple_snr = {}
 for _file in _etc_files_for_smple_snr:
@@ -198,15 +198,15 @@ class Spectrograph(object):
 
 
 lsf_g140m = read_lsf(paths.stis / 'LSF_G140M_1200.txt', '52x0.2')
-etc_g140m = read_etc_output(paths.stis / 'g140m_counts_2025-08-05_exptime900_flux1e-13_aperture52x0.2.csv')
+etc_g140m = read_etc_output(paths.stis / 'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv')
 g140m_52x02 = Spectrograph(*lsf_g140m, etc_g140m)
 
 lsf_g140l = read_lsf(paths.stis / 'LSF_G140L_1200.txt', '52x0.2')
-etc_g140l = read_etc_output(paths.stis / 'g140l_counts_2025-08-06_exptime900_flux1e-13_aperture52x0.2.csv')
+etc_g140l = read_etc_output(paths.stis / 'etc.hst-stis-g140l.2025-08-05.2025094.exptime900_flux1e-13_aperture52x0.2.csv')
 g140l_52x02 = Spectrograph(*lsf_g140l, etc_g140l)
 
 lsf_e140m = read_lsf(paths.stis / 'LSF_E140M_1200.txt', '0.2x0.2')
-etc_e140m = read_etc_output(paths.stis / 'e140m_counts_2025-08-06_exptime900_flux1e-19_aperture0.2x0.2.csv')
+etc_e140m = read_etc_output(paths.stis / 'etc.hst-stis-e140m.2025-08-05.2025092.exptime900_flux1e-13_aperture0.2x0.2.csv')
 e140m_02x02 = Spectrograph(*lsf_e140m, etc_e140m)
 
 etc_acq_times = table.Table.read(paths.stis / 'ACQ_snr40_and_saturation_times.csv')

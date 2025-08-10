@@ -1,4 +1,3 @@
-import warnings
 from math import pi, nan
 
 import numpy as np
@@ -6,7 +5,6 @@ from tqdm import tqdm
 from astropy import units as u
 from astropy.table import Table
 from matplotlib import pyplot as plt
-import h5py
 
 import utilities as utils
 
@@ -166,7 +164,6 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
 
 
 def max_snr_integration_range(x, f, e, search_rng=None):
-    n = len(x)
     if search_rng is None:
         inrng = np.ones(len(f), bool)
     else:
@@ -183,10 +180,10 @@ def max_snr_integration_range(x, f, e, search_rng=None):
         cSNR = cF/cE
         cSNR[cF == 0] = 0
     max_idx_flat = np.argmax(cSNR)
-    a_inrng, b_inrng = np.unravel_index(max_idx_flat, (n+1, n+1))
+    a_inrng, b_inrng = np.unravel_index(max_idx_flat, cSNR.shape)
     true_indices = inrng_indices[a_inrng:b_inrng]
     a_true = true_indices[0]
-    b_true = true_indices[-1] + 1
+    b_true = true_indices[-1]
 
     F = cF.flat[max_idx_flat]
     E = cE.flat[max_idx_flat]

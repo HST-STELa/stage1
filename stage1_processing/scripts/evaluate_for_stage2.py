@@ -1,6 +1,7 @@
+import re
 import warnings
 
-from astropy.table import Table, Column
+from astropy.table import Table, Column, vstack
 from astropy import units as u
 import numpy as np
 import h5py
@@ -44,7 +45,9 @@ def get_in_transit_range(planet):
 
 #%% ranges within which to search for integration bands that maximize SNR
 normalization_within_rvs = ((-400, -150), (150, 400)) * u.km / u.s
-transit_within_rvs = (-150, 50) * u.km / u.s
+search_model_transit_within_rvs = (-150, 50) * u.km / u.s
+search_simple_transit_within_rvs = (-150, 100) * u.km / u.s
+simple_transit_range = (-150, 100) * u.km / u.s
 
 #%% assumed variability
 
@@ -68,7 +71,6 @@ global_transit_kws = dict(
     exptimes=exptimes,
     baseline_time_range=baseline_range,
     normalization_within_rvs=normalization_within_rvs,
-    transit_within_rvs=transit_within_rvs,
 )
 
 
@@ -81,8 +83,39 @@ host_catalog = preloads.hosts
 host_catalog.add_index('tic_id')
 
 
+#%% planet lettering
+
+def get_letter(planet, i):
+    letter = planet['pl_letter']
+    if np.ma.is_masked(letter):
+        letter = 'bcdefg'[i]
+    return letter
+
+
+#%% picking the right grating
+def get_required_grating(target):
+    targfolder = paths.target_data(target)
+
+    # base the choice on whether the existing Lya data are e140m
+    g140m_files = list(targfolder.rglob('*hst-stis-g140m.*_x1d.fits'))
+    e140m_files = list(targfolder.rglob('*hst-stis-e140m.*_x1d.fits'))
+    g130m_files = list(targfolder.rglob('*hst-cos-g130mm.*_x1d.fits'))
+    if g140m_files or g130m_files:
+        grating = 'g140m'
+    else:
+        if e140m_files:
+            grating = 'e140m'
+        else:
+            raise ValueError(f"No lya data for {hostname}. That ain't right.")
+
+    return grating
+
+
 #%% move model transit spectra into target folders
 
+# from pathlib import Path
+# import database_utilities as dbutils
+#
 # delivery_folder = Path('/Users/parke/Google Drive/Research/STELa/data/packages/inbox/2025-07-30 transit predictions')
 # files = list(delivery_folder.glob('*.h5'))
 #
@@ -161,9 +194,13 @@ while True:
 
 #%% stellar variability guess
 
-    Ro = variability.rossby_number(Mstar, Prot)
-    jitter = satdecay_jitter(Ro)
-    Arot = satdecay_rotation(Ro)
+    if host['st_teff'] > 3500:
+        Ro = variability.rossby_number(Mstar, Prot)
+        jitter = satdecay_jitter(Ro)
+        Arot = satdecay_rotation(Ro)
+    else: # assume mid-late Ms are always quite variable
+        jitter = jitter_saturation
+        Arot = rotation_amplitude_saturation
 
 
 #%% lya reconstruction
@@ -181,21 +218,14 @@ while True:
 
 #%% pick appropriate spectrograph
 
-    # base the choice on whether the existing Lya data are e140m
-    g140m_files = list(targfolder.rglob('*hst-stis-g140m.*_x1d.fits'))
-    e140m_files = list(targfolder.rglob('*hst-stis-e140m.*_x1d.fits'))
-    g130m_files = list(targfolder.rglob('*hst-cos-g130mm.*_x1d.fits'))
-    if g140m_files or g130m_files:
-        etc_file = paths.stis / 'g140m_counts_2025-08-05_exptime900_flux1e-13_aperture52x0.2.csv'
-        lsf_file = paths.stis / 'LSF_G140M_1200.txt'
-        aperture = '52x0.2'
-    else:
-        if e140m_files:
-            etc_file = paths.stis / 'e140m_counts_2025-08-06_exptime900_flux1e-19_aperture0.2x0.2.csv'
-            lsf_file = paths.stis / 'LSF_E140M_1200.txt'
-            aperture = '0.2x0.2'
-        else:
-            raise ValueError(f"No lya data for {hostname}. That ain't right.")
+    grating = get_required_grating(target)
+    etc_filenames = dict(
+        g140m = 'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv',
+        e140m = 'etc.hst-stis-e140m.2025-08-05.2025092.exptime900_flux1e-13_aperture0.2x0.2.csv'
+    )
+    etc_file = paths.stis / etc_filenames[grating]
+    lsf_file = paths.stis / f'LSF_{grating.upper()}_1200.txt'
+    aperture, = re.findall(r'\d\.?\d+x\d\.?\d+', etc_file.name)
 
     etc = stis.read_etc_output(etc_file)
     lsf_x, lsf_y = stis.read_lsf(lsf_file, aperture=aperture)
@@ -206,6 +236,7 @@ while True:
     etc = etc[in_window]
 
     spec = stis.Spectrograph(lsf_x, lsf_y, etc)
+
 
 #%% store target-specific transit settings
 
@@ -227,9 +258,7 @@ while True:
     for i, planet in enumerate(planets):
         in_transit_range = get_in_transit_range(planet)
 
-        letter = planet['pl_letter']
-        if np.ma.is_masked(letter):
-            letter = 'bcdefg'[i]
+        letter = get_letter(planet, i)
 
         planet_transit_kws = dict(
             in_transit_time_range = in_transit_range
@@ -265,6 +294,7 @@ while True:
             m = transmission_array.shape[0]
             x_lya_flux = np.repeat(lya_flux_ary, m, axis=0)
             x_lya_sigma = np.repeat(lya_sigs, m)
+            x_lya_cases = np.repeat(lya_cases, m)
             x_transmission = np.tile(transmission_corrected, (n,1,1))
             x_eta = np.tile(eta_sim, n)
             x_wind_scaling = np.tile(wind_scaling_sim, n)
@@ -276,18 +306,19 @@ while True:
                 transit_wavegrid = transit_wavegrid,
                 transit_transmission_ary = x_transmission,
                 lya_recon_flux_ary = x_lya_flux,
+                transit_within_rvs=search_model_transit_within_rvs,
                 **global_transit_kws,
                 **target_transit_kws,
                 **planet_transit_kws,
             )
 
             # add parameters to table
-            sigma_tbl['lya sigma'] = Column(x_lya_sigma, format='%i')
+            sigma_tbl['lya reconstruction case'] = Column(x_lya_cases)
             sigma_tbl['eta'] = Column(x_eta, format='.2g')
             sigma_tbl['wind scaling'] = Column(x_wind_scaling, format='.2g')
             sigma_tbl['phion scaling'] = Column(x_phion_scaling, format='.2g')
 
-            sigma_tbl_name = transit_simulation_file.name.replace('.h5', '-detection-sigmas.ecsv')
+            sigma_tbl_name = transit_simulation_file.name.replace('.h5', f'.{grating}-detection-sigmas.ecsv')
             sigma_tbl_path = targfolder / 'transit predictions' / sigma_tbl_name
             sigma_tbl.write(sigma_tbl_path, overwrite=True)
 
@@ -304,25 +335,26 @@ while True:
             tb = (obstimes[-1] + exptimes[-1]/2).to_value('h')
             dt = 0.25
             flat_tgrid = np.arange(ta, tb + dt, dt)
+            flat_transit_timemask = utils.is_in_range(flat_tgrid, *in_transit_range.to_value('h'))
 
             flat_wgrid = np.arange(*spec.wavegrid[[0,-1]], spec.binwidth[0]/3)
             flat_vgrid = lya.w2v(flat_wgrid) - rv_star.to_value('km s-1')
 
-            flat_transit_wavemask = utils.is_in_range(flat_vgrid, *transit_within_rvs.to_value('km s-1'))
-            flat_transit_timemask = utils.is_in_range(flat_tgrid, *in_transit_range.to_value('h'))
-
             flat_depth, = transit.opaque_tail_depth(planets[[i]]) # takes a table as input, hence the [[i]]
+
+            flat_transit_wavemask = utils.is_in_range(flat_vgrid, *simple_transit_range.to_value('km s-1'))
             flat_transmission = np.ones((len(flat_tgrid), len(flat_wgrid)))
             flat_transmission[np.ix_(flat_transit_timemask, flat_transit_wavemask)] = 1 - flat_depth
 
-            lya_sigma = 0
-            flat_lya_flux = lya_recon['lya_model unconvolved_median']
+            lya_case = 'median'
+            flat_lya_flux = lya_recon[f'lya_model unconvolved_{lya_case}']
 
             flat_sigma_tbl = transit.generic_transit_snr(
                 transit_timegrid = flat_tgrid,
                 transit_wavegrid = flat_wgrid,
                 transit_transmission_ary = flat_transmission,
                 lya_recon_flux_ary = flat_lya_flux,
+                transit_within_rvs = search_simple_transit_within_rvs,
                 **global_transit_kws,
                 **target_transit_kws,
                 **planet_transit_kws,
@@ -330,11 +362,11 @@ while True:
 
             # store flat model parameters
             flat_sigma_tbl['injected times'] = [in_transit_range.to_value('h')]
-            flat_sigma_tbl['injected rvs'] = [transit_within_rvs.to_value('km s-1')]
+            flat_sigma_tbl['injected rvs'] = [search_simple_transit_within_rvs.to_value('km s-1')]
             flat_sigma_tbl['depth'] = flat_depth
-            flat_sigma_tbl['lya sigma'] = lya_sigma
+            flat_sigma_tbl['lya reconstruction level'] = lya_case
 
-            flat_filename = f'{target}.simple-opaque-tail.na.na.transit-{letter}-detection-sigmas.ecsv'
+            flat_filename = f'{target}.simple-opaque-tail.na.na.transit-{letter}.{grating}-detection-sigmas.ecsv'
             flat_path = targfolder / 'transit predictions' / flat_filename
             flat_sigma_tbl.write(flat_path, overwrite=True)
 
@@ -353,4 +385,205 @@ while True:
     break
 
 
+#%% targets
+
+targets = target_lists.eval_no(1)
+
+
 #%% make table of properties
+
+
+lya_recon_flag_txt = """| HD 5278   | LOW SIGNAL  |
+| HD 86226   | LOW SIGNAL  |
+| HD 149026   | LOW SIGNAL  |
+| K2-136   | MEDIOCRE FIT  |
+| LHS 1140   | LOW SIGNAL  |
+| TOI-178   | BAD AIRGLOW SUBTRACTION  |
+| TOI-561   | BAD AIRGLOW SUBTRACTION  |
+| TOI-836   | LOW SIGNAL  |
+| TOI-1201   | BAD AIRGLOW SUBTRACTION  |
+| TOI-1203   | BAD AIRGLOW SUBTRACTION  |
+| TOI-1224   | LOW SIGNAL  |
+| TOI-1231   | BAD AIRGLOW SUBTRACTION  |
+| TOI-2015   | LOW SIGNAL  |
+| TOI-2285   | BAD AIRGLOW SUBTRACTION  |
+| TOI-4438   | BAD AIRGLOW SUBTRACTION  |
+| TOI-4576   | BAD AIRGLOW SUBTRACTION  |
+| TOI-6078   | BAD AIRGLOW SUBTRACTION  |
+| WASP-107   | BAD AIRGLOW SUBTRACTION  |
+| Wolf 503   | LOW SIGNAL  |"""
+lines = lya_recon_flag_txt.split('\n')
+pairs = [line[2:-3].split('   | ') for line in lines]
+recon_flag_dict = dict(pairs)
+
+lya_bins = (-150, -50, 50, 150) * u.km/u.s
+
+eval_rows = []
+for target in targets:
+    host_row = {}
+    tic_id, hostname = stela_name_tbl.loc['hostname_file', target][['tic_id', 'hostname']]
+    host_row['hostname'] = hostname
+    grating = get_required_grating(target)
+    host_row['obs_grating'] = grating
+
+    # hijinks to keep .loc from returning a row instead of a table if there is just one planet
+    i_planet = planet_catalog.loc_indices[tic_id]
+    i_planet = np.atleast_1d(i_planet)
+    planets = planet_catalog[i_planet]
+
+    host = host_catalog.loc[tic_id]
+    targfolder = paths.target_data(target)
+
+
+    #%% stellar props
+
+    host_row['st_teff'] = host['st_teff'] * host_catalog['st_teff'].unit
+    Mstar = host['st_mass'] * host_catalog['st_mass'].unit
+    limit_dicionary = {-1:'>', 0:'', 1:'<'}
+    if np.ma.is_masked(host['st_age']):
+        if not np.ma.is_masked(host['st_rotp']) and host['st_rotplim'] == 0:
+            Prot = host['st_rotp'] * host_catalog['st_rotp'].unit
+            age = empirical.age_from_Prot_johnstone21(Prot, Mstar)
+            host_row['st_agelim'] = ''
+            host_row['st_age'] = age.to('Gyr')
+    else:
+        lim_flag = np.ma.filled(host['st_agelim'], 0)
+        host_row['st_agelim'] = limit_dicionary[int(lim_flag)]
+        host_row['st_age'] = host['st_age'] * host_catalog['st_age'].unit
+
+    if np.ma.is_masked(host['st_radv']):
+        rv_star = 0 * u.km/u.s
+    else:
+        rv_star = host['st_radv'] * host_catalog['st_radv'].unit
+
+
+    # %% lya reconstruction fluxes
+
+    recon_flag = recon_flag_dict.get(hostname, '')
+    host_row['st_lya_reconstruction_flag'] = recon_flag.lower()
+
+    lya_reconstruction_file, = targfolder.rglob('*lya-recon*')
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='OverflowError converting to FloatType in column')
+        lya_recon = Table.read(lya_reconstruction_file)
+    w = lya_recon['wave_lya']
+    v_sys = lya.w2v(w) - rv_star.to_value('km s-1')
+
+    v_bins_earth = lya_bins + rv_star
+    w_bins = lya.v2w(v_bins_earth.to_value('km s-1'))
+
+    lya_fluxes = []
+    lya_core_fluxdenses = []
+    for case in 'low_1sig median high_1sig'.split():
+        f = lya_recon[f'lya_model unconvolved_{case}']
+        lya_binned = utils.intergolate(w_bins, w, f, 0, 0)
+        lya_fluxes.append(lya_binned)
+        lya_core = np.interp(0, v_sys, f)
+        lya_core_fluxdenses.append(lya_core)
+    lya_fluxes = np.asarray(lya_fluxes)
+    lya_core_fluxdenses = np.asarray(lya_core_fluxdenses)
+
+    flux_unit = u.Unit('erg s-1 cm-2')
+    lya_flux_nom = lya_fluxes[1]
+    lya_flux_poserr = lya_fluxes[-1] - lya_flux_nom
+    lya_flux_negerr = lya_flux_nom - lya_fluxes[0]
+    for j in range(len(lya_flux_nom)):
+        va, vb = lya_bins[j:j+2].to_value('km s-1')
+        key = f'st_lyaflux_{va:.0f}_{vb:.0f}'
+        host_row[key] = lya_flux_nom[j] * flux_unit
+        host_row[key + 'err1'] = lya_flux_poserr[j] * flux_unit
+        host_row[key + 'err2'] = lya_flux_negerr[j] * flux_unit
+
+    fluxdens_unit = flux_unit / u.AA
+    lya_coreflux = lya_core_fluxdenses[1]
+    lya_coreflux_poserr = lya_core_fluxdenses[-1] - lya_coreflux
+    lya_coreflux_negerr = lya_coreflux - lya_core_fluxdenses[0]
+    key = 'st_lyaflux_core'
+    host_row[key] = lya_coreflux * fluxdens_unit
+    host_row[key + 'err1'] = lya_coreflux_poserr * fluxdens_unit
+    host_row[key + 'err2'] = lya_coreflux_negerr * fluxdens_unit
+
+    for i, planet in enumerate(planets):
+        planet_row = host_row.copy()
+
+        letter = get_letter(planet, i)
+        planet_row['pl_letter'] = letter
+        planet_row['pl_rade'] = planet['pl_rade'] * planet_catalog['pl_rade'].unit
+
+        flag_cols = [name for name in planet_catalog.colnames if 'flag_' in name]
+        for col in flag_cols:
+            planet_row[col] = planet[col]
+
+        # verify that I got the right planet and get
+        transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
+        with h5py.File(transit_simulation_file) as f:
+            params = f['system_parameters'].attrs
+            a_sim = params['semimajoraxis'] * u.cm
+            phion = params['phion_rate'] / u.s
+        a_cat = planet['pl_orbsmax'] * planets['pl_orbsmax'].unit
+        if not np.isclose(a_cat, a_sim, rtol=0.1):
+            raise ValueError
+
+        planet_row['pl_ionization_time'] = (1/phion).to('h')
+
+        sigma_tbl_path, = targfolder.rglob(f'*outflow-tail*transit-{letter}*sigmas.ecsv')
+        sigma_tbl = Table.read(sigma_tbl_path)
+        detectable = sigma_tbl['transit sigma'] > 3
+        detectability_fraction = np.sum(detectable)/len(sigma_tbl)
+        planet_row['pl_lyatransit_detectability'] = detectability_fraction
+
+        flat_sigma_tbl_path, = targfolder.rglob(f'*simple-opaque-tail*transit-{letter}*sigmas.ecsv')
+        flat_sigma_tbl = Table.read(flat_sigma_tbl_path)
+        snr, = flat_sigma_tbl['transit sigma']
+        planet_row['pl_lyatransit_optimistic_snr'] = snr
+
+        eval_rows.append(planet_row)
+
+eval_table = Table(rows=eval_rows)
+
+column_order = [
+    'hostname',
+    'pl_letter',
+    'pl_lyatransit_detectability',
+    'pl_lyatransit_optimistic_snr',
+    'st_lya_reconstruction_flag',
+    'st_lyaflux_-150_-50',
+    'st_lyaflux_-150_-50err1',
+    'st_lyaflux_-150_-50err2',
+    'st_lyaflux_-50_50',
+    'st_lyaflux_-50_50err1',
+    'st_lyaflux_-50_50err2',
+    'st_lyaflux_50_150',
+    'st_lyaflux_50_150err1',
+    'st_lyaflux_50_150err2',
+    'st_lyaflux_core',
+    'st_lyaflux_coreerr1',
+    'st_lyaflux_coreerr2',
+    'obs_grating',
+    'pl_rade',
+    'pl_ionization_time',
+    'st_teff',
+    'st_agelim',
+    'st_age',
+    'flag_young',
+    'flag_measured_mass',
+    'flag_high_TSM',
+    'flag_gaseous',
+    'flag_gas_and_rocky_in_sys',
+    'flag_water_world',
+    'flag_gap_upper_cusp',
+    'flag_super_puff',
+    'flag_outflow',
+    'flag_outflow_and_not_in_sys',
+]
+eval_table = eval_table[column_order]
+
+# some grooming
+for col in eval_table.colnames:
+    if 'flag_' in col:
+        eval_table[col] = eval_table[col].astype(bool)
+
+# save
+eval_filename = 'stage2_evalution_metrics.csv'
+eval_path = paths.catalogs / eval_filename
+eval_table.write(eval_path, overwrite=True)
