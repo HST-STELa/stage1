@@ -381,3 +381,19 @@ def merge_tables_with_update(old, new, key):
             merged[col] = updated[col_new]
 
     return merged
+
+
+def flexible_table_vstack(tables):
+    """Stacks tables while avoiding shape and type mismatch errors, at the cost of possibly creating frankentables."""
+    names = set()
+    for tbl in tables:
+        names |= set(tbl.colnames)
+
+    cols = {name:[] for name in names}
+    for tbl in tables:
+        for name in names:
+            if name in tbl.colnames:
+                cols[name].extend(tbl[name].tolist())
+
+    stacked = table.Table(data=cols)
+    return stacked

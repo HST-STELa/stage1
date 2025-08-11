@@ -10,7 +10,6 @@ import utilities as utils
 
 from lya_prediction_tools import lya
 
-
 def intergolate(x_bin_edges, xin, yin):
     I = cumtrapz(yin, xin)
     Iedges = np.interp(x_bin_edges, xin, I)
@@ -197,19 +196,62 @@ class Spectrograph(object):
         return fast_observe
 
 
-lsf_g140m = read_lsf(paths.stis / 'LSF_G140M_1200.txt', '52x0.2')
-etc_g140m = read_etc_output(paths.stis / 'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv')
-g140m_52x02 = Spectrograph(*lsf_g140m, etc_g140m)
+default_etc_filenames = dict(
+    g140m = {
+        '52x0.5': 'etc.hst-stis-g140m.2025-08-05.2025103.exptime900_flux1e-13_aperture52x0.5.csv',
+        '52x0.2': 'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv',
+        '52x0.1': 'etc.hst-stis-g140m.2025-08-05.2025102.exptime900_flux1e-13_aperture52x0.1.csv',
+        '52x0.05': 'etc.hst-stis-g140m.2025-08-05.2025101.exptime900_flux1e-13_aperture52x0.05.csv'
+    },
+    e140m = {
+        '0.2x0.2': 'etc.hst-stis-e140m.2025-08-05.2025092.exptime900_flux1e-13_aperture0.2x0.2.csv',
+        '6x0.2': 'etc.hst-stis-e140m.2025-08-05.2025104.exptime900_flux1e-13_aperture6x0.2.csv',
+        '52x0.05': 'etc.hst-stis-e140m.2025-08-05.2025105.exptime900_flux1e-13_aperture52x0.05.csv'
+    },
+    g140l = {
+        '52x0.2': 'etc.hst-stis-g140l.2025-08-05.2025094.exptime900_flux1e-13_aperture52x0.2.csv'
+    }
+)
 
-lsf_g140l = read_lsf(paths.stis / 'LSF_G140L_1200.txt', '52x0.2')
-etc_g140l = read_etc_output(paths.stis / 'etc.hst-stis-g140l.2025-08-05.2025094.exptime900_flux1e-13_aperture52x0.2.csv')
-g140l_52x02 = Spectrograph(*lsf_g140l, etc_g140l)
+proxy_lsf_apertures = dict(
+    g140m = {'52x0.05':'52x0.1'},
+    e140m = {'52x0.05':'0.2x0.06'},
+    g140l = {}
+)
 
-lsf_e140m = read_lsf(paths.stis / 'LSF_E140M_1200.txt', '0.2x0.2')
-etc_e140m = read_etc_output(paths.stis / 'etc.hst-stis-e140m.2025-08-05.2025092.exptime900_flux1e-13_aperture0.2x0.2.csv')
-e140m_02x02 = Spectrograph(*lsf_e140m, etc_e140m)
+preloaded_spectrographs = {grating:{} for grating in ['g140m', 'e140m', 'g140l']}
+for grating in preloaded_spectrographs.keys():
+    for aperture in default_etc_filenames[grating].keys():
+        # load in spectrograph info
+        etc_file = paths.stis / default_etc_filenames[grating][aperture]
+        lsf_file = paths.stis / f'LSF_{grating.upper()}_1200.txt'
+        proxy_aperture = proxy_lsf_apertures[grating].get(aperture, aperture)
+        etc = read_etc_output(etc_file)
+        lsf_x, lsf_y = read_lsf(lsf_file, aperture=proxy_aperture)
+
+        # slim down to just around the lya line for speed
+        window = lya.v2w((-500, 500))
+        in_window = utils.is_in_range(etc['wavelength'], *window)
+        etc = etc[in_window]
+
+        # initialize spectrograph object
+        spec = Spectrograph(lsf_x, lsf_y, etc)
+
+        preloaded_spectrographs[grating][aperture] = spec
+g140m = preloaded_spectrographs['g140m']['52x0.2']
+e140m = preloaded_spectrographs['e140m']['0.2x0.2']
+g140l = preloaded_spectrographs['g140l']['52x0.2']
 
 etc_acq_times = table.Table.read(paths.stis / 'ACQ_snr40_and_saturation_times.csv')
 etc_g140m_times = table.Table.read(paths.stis / 'G140M_maxrates_and_buffer.csv')
 etc_g140l_times = table.Table.read(paths.stis / 'G140L_maxrates_and_buffer.csv')
 etc_e140m_times = table.Table.read(paths.stis / 'E140M_maxrates_and_buffer.csv')
+
+breathing_rms = {
+    '0.2x0.2': 0.05,
+    '52x0.05': 0.118,
+    '52x0.1': 0.088,
+    '52x0.2': 0.045,
+    '52x0.5': 0.027,
+    '52x2': 0.013
+}

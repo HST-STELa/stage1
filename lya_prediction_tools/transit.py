@@ -179,11 +179,15 @@ def max_snr_integration_range(x, f, e, search_rng=None):
     with np.errstate(invalid='ignore'):
         cSNR = cF/cE
         cSNR[cF == 0] = 0
+
+    if np.all(cSNR <= 0):
+        return 0, 0, 0, np.inf
+
     max_idx_flat = np.argmax(cSNR)
     a_inrng, b_inrng = np.unravel_index(max_idx_flat, cSNR.shape)
     true_indices = inrng_indices[a_inrng:b_inrng]
     a_true = true_indices[0]
-    b_true = true_indices[-1]
+    b_true = true_indices[-1] + 1
 
     F = cF.flat[max_idx_flat]
     E = cE.flat[max_idx_flat]
@@ -230,12 +234,16 @@ def generic_transit_snr(
         rotation_period,
         rotation_amplitude,
         jitter,
+        diagnostic_plots=False,
 ):
     if lya_recon_flux_ary.ndim == 1:
         lya_recon_flux_ary = lya_recon_flux_ary[None,:]
     if transit_transmission_ary.ndim == 2:
         transit_transmission_ary = transit_transmission_ary[None, :, :]
     assert lya_recon_flux_ary.shape[0] == transit_transmission_ary.shape[0]
+
+    if diagnostic_plots and len(lya_recon_flux_ary) > 20:
+        raise ValueError('This would create over 40 plots. For your sanity, no.')
 
     # masks for observations that are in the baseline and transit ranges
     bx = utils.is_in_range(obstimes, *baseline_time_range)
@@ -282,6 +290,8 @@ def generic_transit_snr(
     )
 
     rows = []
+    wavefigs = []
+    timefigs = []
     for lya_recon_flux, transit_transmission in zip(lya_recon_flux_ary, transit_transmission_ary):
         row = {}
 
@@ -295,24 +305,52 @@ def generic_transit_snr(
         interp_wave = lambda trans: np.interp(w, transit_wavegrid, trans, left=1, right=1)
         trans = np.apply_along_axis(interp_wave, 1, trans_obs)
 
-        # "observe" the line over the baseline exposures
-        exptime_baseline = np.sum(exptimes[bx])
-        fb, eb = observe(f_lya, exptime_baseline.to_value('s'))
+        # multiply to get in transit fluxes
+        f_lya_transit = f_lya[None,:] * trans
 
-        # pick transit and normalization integration ranges
+        # "observe" the lya line over the exposures
+        obsvtns = [observe(f, expt) for f, expt in zip(f_lya_transit, exptimes.to_value('s'))]
+        fobs, eobs = zip(*obsvtns)
+        fobs, eobs = map(np.asarray, (fobs, eobs))
+
+        # in and out of transit fluxes and their difference
+        fb, eb = utils.flux_average(exptimes[bx, None], fobs[bx,:], eobs[bx,:], axis=0)
+        ft, et = utils.flux_average(exptimes[tx, None], fobs[tx,:], eobs[tx,:], axis=0)
+        tt, _ = utils.flux_average(exptimes[tx, None], trans_obs[tx,:], 0, axis=0)
+        d = fb - ft
+        de = utils.quadsum(np.vstack((eb, et)), axis=0)
+
+        if np.all(d < 1e-25):
+            if diagnostic_plots:
+                raise ValueError('Could not create diagnostic plots because the transit is negligible,'
+                                 'o the code cannot find integration ranges for the transit.')
+            row['transit ranges'] = np.ma.masked
+            row['normalization ranges'] = np.ma.masked
+            row['transit sigma'] = 0
+            row['normalized'] = np.ma.masked
+            rows.append(row)
+            continue
+
+        # pick transit and normalization integration ranges based on max SNR
         normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_within_rvs)
         if v0_ism >= transit_within_rvs[0] and v0_ism <= transit_within_rvs[1]:
-            absprng_mask = max_snr_red_blue(vspec, fb, eb,
+            # if mid-ism absorption falls within the transit range
+            absprng_mask = max_snr_red_blue(vspec, d, de,
                                             (transit_within_rvs[0], v0_ism),
                                             (v0_ism, transit_within_rvs[1]))
         else:
-            a, b, _, _ = max_snr_integration_range(vspec, fb, eb, transit_within_rvs)
+            a, b, _, _ = max_snr_integration_range(vspec, d, de, transit_within_rvs)
             absprng_mask = np.zeros(len(fb), bool)
             absprng_mask[a:b] = True
 
-        # normalization flux and error
-        Fnorm = np.sum(fb[normrng_mask] * dwspec[normrng_mask])
-        Enorm = utils.quadsum(eb[normrng_mask] * dwspec[normrng_mask])
+        # integrated fluxes
+        def integrate(f, e, mask):
+            F = np.sum(f[mask] * dwspec[mask])
+            E = utils.quadsum(e[mask] * dwspec[mask])
+            return F, E
+        Fout, Eout = integrate(fb, eb, absprng_mask)
+        Ftran, Etran = integrate(ft, et, absprng_mask)
+        Fnorm, Enorm = integrate(fb, eb, normrng_mask)
 
         # get associated ranges to store in the results table
         i_absp = utils.chunk_edges(absprng_mask)
@@ -322,53 +360,114 @@ def generic_transit_snr(
         row['transit ranges'] = v_absp
         row['normalization ranges'] = v_norm
 
-        # multiply to get in transit fluxes
-        f_lya_transit = f_lya[None,:] * trans
-
-        # "observe" the lya line over the exposures
-        obsvtns = [observe(f, expt) for f, expt in zip(f_lya_transit, exptimes.to_value('s'))]
-        fobs, eobs = zip(*obsvtns)
-        fobs, eobs = map(np.asarray, (fobs, eobs))
-
-        # in and out of transit fluxes and errors
-        Fs, Es = [], []
-        for x in (bx, tx):
-            f, e = utils.flux_average(exptimes[x, None], fobs[x,:], eobs[x,:], axis=0)
-            F = np.sum(f[absprng_mask] * dwspec[absprng_mask])
-            E = utils.quadsum(e[absprng_mask] * dwspec[absprng_mask])
-            Fs.append(F)
-            Es.append(E)
-        Fb, Eb = Fs[0], Es[0]
-        Ft, Et = Fs[1], Es[1]
-
-        # add noise from stellar variability
-        terms = np.array([Et, Ft*variability_scatter])
-        Et_var = utils.quadsum(terms)
+        # add noise from stellar/instrument variability
+        terms = np.array([Etran, Ftran*variability_scatter])
+        E_var = utils.quadsum(terms)
 
         # versus noise from trying to normalize out that variability
         Eratio = np.sqrt(2) * Enorm/Fnorm
-        terms = np.array([Et, Ft*Eratio])
-        Et_norm = utils.quadsum(terms)
+        terms = np.array([Etran, Ftran*Eratio])
+        E_norm = utils.quadsum(terms)
 
         # and pick the smaller of the two
-        if Et_var < Et_norm:
+        if E_var < E_norm:
             row['normalized'] = False
-            Et_min = Et_var
+            Etrans_min = E_var
         else:
             row['normalized'] = True
-            Et_min = Et_norm
+            Etrans_min = E_norm
 
         # detection significance
-        dF = Fb - Ft
-        terms = np.array((Eb, Et_min))
+        dF = Fout - Ftran
+        terms = np.array((Eout, Etrans_min))
         dE = utils.quadsum(terms)
         sigma = dF/dE
 
         row['transit sigma'] = sigma.to_value('')
         rows.append(row)
 
+        if diagnostic_plots:
+            # region wavelength diagnostic plot
+            fig, ax = plt.subplots(1, 1)
+            ax.set_xlabel('Velocity in System Frame (km s-1)')
+            ax.set_ylabel('Flux Density (erg s-1 cm-2 Å-1)')
+            ax2 = ax.twinx()
+            ax2.set_ylabel('Transit Transmission')
+
+            fbln = ax.errorbar(vspec, fb, eb, errorevery=5, label='baseline')
+            ftln = ax.errorbar(vspec, ft, et, fmt='-C2', errorevery=5, label='transit')
+            ag, = ax.plot(vspec, et, ':C3', label='uncty with airglow')
+
+            transit_vgrid = lya.w2v(transit_wavegrid) - rv_star.to_value('km s-1')
+            for i, t in enumerate(obstimes):
+                ax2.plot(transit_vgrid, trans_obs[i,:], lw=0.5, color='0.5', label=f'{t.to('h'):.1f}')
+            tln, = ax2.plot(transit_vgrid, tt, color='0.5', label='transit transmission')
+            ax2.set_ylim(-0.01, 1.05)
+
+            # integration ranges
+            for rng in v_norm:
+                nspan = ax.axvspan(*rng, color='0.5', alpha=0.2, ls='none', label='normalization')
+            for rng in v_absp:
+                aspan = ax.axvspan(*rng, color='C2', alpha=0.2, ls='none', label='transit')
+
+            ax.legend(handles=(fbln, ftln, ag, nspan, aspan))
+            ax2.legend(handles=(tln,))
+            wavefigs.append(fig)
+            # endregion
+
+            # region time diagnostic plot
+            fig, axs = plt.subplots(1, 2, figsize=(8,4), width_ratios=[2/5, 1])
+            fig.supxlabel('Time from Mid-Transit (h)')
+            fig.supylabel('Normalized flux (h)')
+
+            result = [integrate(ff, ee, absprng_mask) for ff,ee in zip(fobs,eobs)]
+            Fs, Es = zip(*result)
+            Fs, Es = np.array((Fs, Es))
+
+            for ax, x in zip(axs, (bx, ~bx)):
+                ta, tb =  obs_edges[::2][x][0] - 0.25, obs_edges[1::2][x][-1] + 0.25
+                buffer = (tb - ta) * 0.05
+                ax.set_xlim(ta - buffer, tb + buffer)
+
+                ax.errorbar(obstimes.to_value('h'), Fs/Fout, Es/Fout, exptimes.to_value('h')/2, fmt='o')
+                ax.axhline(1, color='0.5', lw=0.5, ls=':')
+
+            int_edges = np.sort(np.hstack((obs_edges[::2][tx], obs_edges[1::2][tx])))
+            int_y = np.repeat(Fs[tx]/Fout, 2)
+            ax.fill_between(int_edges, int_y, 1.0, color='0.5', alpha=0.3, lw=0)
+
+            # time ranges
+            for tedge in in_transit_time_range.to_value('h'):
+                axs[-1].axvline(tedge, color='0.5', ls='--')
+
+            # stellar rotation
+            worst_phase = 3*np.pi/4
+            dt = 0.1
+            tsmpl = np.arange(axs[0].get_xlim()[0], axs[1].get_xlim()[1] + dt, dt) * u.h
+            yrot = variability.rotation(tsmpl, rotation_amplitude, rotation_period, worst_phase)
+            tbase = np.mean(obstimes[bx])
+            ybase = np.interp(tbase, tsmpl, yrot)
+            yrot_offset = yrot - ybase + 1
+            for ax in axs:
+                rotln, = ax.plot(tsmpl, yrot_offset, '-C1')
+
+            # jitter
+            for ax in axs:
+                ax.plot(tsmpl, yrot_offset + jitter, ':C1')
+                jitterln, = ax.plot(tsmpl, yrot_offset - jitter, ':C1')
+
+            labels = (f'{rotation_amplitude*100:.1f}% stellar rotation, Prot = {rotation_period:.1f}',
+                      f'{jitter*100:.1f}% instrument+stellar jitter')
+            axs[1].legend((rotln, jitterln), labels)
+
+            timefigs.append(fig)
+            # endregion
+
     tbl = Table(rows=rows)
-    return tbl
+    if diagnostic_plots:
+        return tbl, wavefigs, timefigs
+    else:
+        return tbl
 
     # footnote: algebra for the noise from normalizing
     # Ft_normed = Fin * Fnorm_out/Fnorm_in = Fin * normratio
