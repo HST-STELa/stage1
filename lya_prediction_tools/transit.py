@@ -276,6 +276,12 @@ def generic_transit_snr(
     # function to apply LSF and estimate uncties
     observe = spectrograph_object.fast_observe_function(w)
 
+    # convenience tool to integrate fluxes
+    def integrate(f, e, mask):
+        F = np.sum(f[mask] * dwspec[mask])
+        E = utils.quadsum(e[mask] * dwspec[mask])
+        return F, E
+
     # scatter added due to stellar variability if not normalizing by line wings, in relative units
     np.random.seed(20250807)
     variability_scatter = variability.added_transit_uncertainty(
@@ -321,70 +327,65 @@ def generic_transit_snr(
         de = utils.quadsum(np.vstack((eb, et)), axis=0)
 
         if np.all(d < 1e-25):
-            if diagnostic_plots:
-                raise ValueError('Could not create diagnostic plots because the transit is negligible,'
-                                 'o the code cannot find integration ranges for the transit.')
+            negligible_transit = True
             row['transit ranges'] = np.ma.masked
             row['normalization ranges'] = np.ma.masked
             row['transit sigma'] = 0
             row['normalized'] = np.ma.masked
             rows.append(row)
-            continue
 
-        # pick transit and normalization integration ranges based on max SNR
-        normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_within_rvs)
-        if v0_ism >= transit_within_rvs[0] and v0_ism <= transit_within_rvs[1]:
-            # if mid-ism absorption falls within the transit range
-            absprng_mask = max_snr_red_blue(vspec, d, de,
-                                            (transit_within_rvs[0], v0_ism),
-                                            (v0_ism, transit_within_rvs[1]))
         else:
-            a, b, _, _ = max_snr_integration_range(vspec, d, de, transit_within_rvs)
-            absprng_mask = np.zeros(len(fb), bool)
-            absprng_mask[a:b] = True
+            negligible_transit = False
 
-        # integrated fluxes
-        def integrate(f, e, mask):
-            F = np.sum(f[mask] * dwspec[mask])
-            E = utils.quadsum(e[mask] * dwspec[mask])
-            return F, E
-        Fout, Eout = integrate(fb, eb, absprng_mask)
-        Ftran, Etran = integrate(ft, et, absprng_mask)
-        Fnorm, Enorm = integrate(fb, eb, normrng_mask)
+            # pick transit and normalization integration ranges based on max SNR
+            normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_within_rvs)
+            if v0_ism >= transit_within_rvs[0] and v0_ism <= transit_within_rvs[1]:
+                # if mid-ism absorption falls within the transit range
+                absprng_mask = max_snr_red_blue(vspec, d, de,
+                                                (transit_within_rvs[0], v0_ism),
+                                                (v0_ism, transit_within_rvs[1]))
+            else:
+                a, b, _, _ = max_snr_integration_range(vspec, d, de, transit_within_rvs)
+                absprng_mask = np.zeros(len(fb), bool)
+                absprng_mask[a:b] = True
 
-        # get associated ranges to store in the results table
-        i_absp = utils.chunk_edges(absprng_mask)
-        i_norm = utils.chunk_edges(normrng_mask)
-        v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_absp]
-        v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_norm]
-        row['transit ranges'] = v_absp
-        row['normalization ranges'] = v_norm
+            Fout, Eout = integrate(fb, eb, absprng_mask)
+            Ftran, Etran = integrate(ft, et, absprng_mask)
+            Fnorm, Enorm = integrate(fb, eb, normrng_mask)
 
-        # add noise from stellar/instrument variability
-        terms = np.array([Etran, Ftran*variability_scatter])
-        E_var = utils.quadsum(terms)
+            # get associated ranges to store in the results table
+            i_absp = utils.chunk_edges(absprng_mask)
+            i_norm = utils.chunk_edges(normrng_mask)
+            v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_absp]
+            v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_norm]
+            row['transit ranges'] = v_absp
+            row['normalization ranges'] = v_norm
 
-        # versus noise from trying to normalize out that variability
-        Eratio = np.sqrt(2) * Enorm/Fnorm
-        terms = np.array([Etran, Ftran*Eratio])
-        E_norm = utils.quadsum(terms)
+            # add noise from stellar/instrument variability
+            terms = np.array([Etran, Ftran*variability_scatter])
+            E_var = utils.quadsum(terms)
 
-        # and pick the smaller of the two
-        if E_var < E_norm:
-            row['normalized'] = False
-            Etrans_min = E_var
-        else:
-            row['normalized'] = True
-            Etrans_min = E_norm
+            # versus noise from trying to normalize out that variability
+            Eratio = np.sqrt(2) * Enorm/Fnorm
+            terms = np.array([Etran, Ftran*Eratio])
+            E_norm = utils.quadsum(terms)
 
-        # detection significance
-        dF = Fout - Ftran
-        terms = np.array((Eout, Etrans_min))
-        dE = utils.quadsum(terms)
-        sigma = dF/dE
+            # and pick the smaller of the two
+            if E_var < E_norm:
+                row['normalized'] = False
+                Etrans_min = E_var
+            else:
+                row['normalized'] = True
+                Etrans_min = E_norm
 
-        row['transit sigma'] = sigma.to_value('')
-        rows.append(row)
+            # detection significance
+            dF = Fout - Ftran
+            terms = np.array((Eout, Etrans_min))
+            dE = utils.quadsum(terms)
+            sigma = dF/dE
+
+            row['transit sigma'] = sigma.to_value('')
+            rows.append(row)
 
         if diagnostic_plots:
             # region wavelength diagnostic plot
@@ -405,6 +406,11 @@ def generic_transit_snr(
             ax2.set_ylim(-0.01, 1.05)
 
             # integration ranges
+            if negligible_transit:
+                v_norm = (transit_within_rvs,)
+                v_absp = normalization_within_rvs
+                absprng_mask = utils.is_in_range(vspec, *transit_within_rvs)
+                ax.annotate('Transit does not register.\nDefault integration ranges shown.', xy=(0.5, 0.5), ha='center', va='center')
             for rng in v_norm:
                 nspan = ax.axvspan(*rng, color='0.5', alpha=0.2, ls='none', label='normalization')
             for rng in v_absp:
@@ -420,6 +426,7 @@ def generic_transit_snr(
             fig.supxlabel('Time from Mid-Transit (h)')
             fig.supylabel('Normalized flux (h)')
 
+            Fout, Eout = integrate(fb, eb, absprng_mask)
             result = [integrate(ff, ee, absprng_mask) for ff,ee in zip(fobs,eobs)]
             Fs, Es = zip(*result)
             Fs, Es = np.array((Fs, Es))
@@ -439,6 +446,9 @@ def generic_transit_snr(
             # time ranges
             for tedge in in_transit_time_range.to_value('h'):
                 axs[-1].axvline(tedge, color='0.5', ls='--')
+
+            if negligible_transit:
+                ax.annotate('Transit does not register.', xy=(0.5, 0.5), ha='center', va='center')
 
             # stellar rotation
             worst_phase = 3*np.pi/4

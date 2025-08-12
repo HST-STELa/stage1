@@ -5,6 +5,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 import numpy as np
 import h5py
+from dask.cache import overhead
 from matplotlib import pyplot as plt
 
 import empirical
@@ -14,6 +15,7 @@ import catalog_utilities as catutils
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
+from stage1_processing import processing_utilities as pu
 
 from lya_prediction_tools import variability
 from lya_prediction_tools import transit
@@ -51,6 +53,16 @@ apertures_to_consider = dict(
     g140m='52x0.5 52x0.2 52x0.1 52x0.05'.split(),
     e140m='6x0.2 52x0.05'.split()
 )
+
+def exptime_w_peakups(aperture):
+    if aperture in stis.peakup_overhead:
+        guess_at_acquisition_exptime = 5
+        overhead = stis.peakup_overhead[aperture] + stis.peakup_num_exposures[aperture] * guess_at_acquisition_exptime
+        exptimes_mod = exptimes.copy()
+        exptimes_mod[[0,2]] -= overhead * u.s
+    else:
+        exptimes_mod = exptimes.copy()
+    return exptimes_mod
 
 def get_spectrograph_object(grating, aperture, host):
     # load in spectrograph info
@@ -116,7 +128,6 @@ simple_transit_range = (-150, 100) * u.km / u.s
 
 global_transit_kws = dict(
     obstimes=obstimes,
-    exptimes=exptimes,
     baseline_time_range=baseline_range,
     normalization_within_rvs=normalization_within_rvs,
 )
@@ -144,6 +155,13 @@ planet_catalog = preloads.planets.copy()
 planet_catalog.add_index('tic_id')
 host_catalog = preloads.hosts
 host_catalog.add_index('tic_id')
+
+
+#%% get standard wavgrid from Ethan's sims to use in cases where it seems like there was a bug that zerod it out
+
+temp_simfile, = list(paths.data_targets.rglob(f'hd149026*outflow-tail-model*transit-b.h5'))
+with h5py.File(temp_simfile) as f:
+    default_sim_wavgrid = f['wavgrid'][:] * 1e8
 
 
 #%% planet lettering
@@ -280,6 +298,7 @@ while True:
         lya_recon = Table.read(lya_reconstruction_file)
     lya_cases = 'low_2sig low_1sig median high_1sig high_2sig'.split()
     lya_sigs = np.arange(-2, 3)
+    lya_sigma_dic = dict(zip(lya_cases, lya_sigs))
     lya_wavegrid_earth = lya_recon['wave_lya']
     lya_flux_ary = [lya_recon[f'lya_model unconvolved_{lya_case}'] for lya_case in lya_cases]
     lya_flux_ary = np.asarray(lya_flux_ary)
@@ -313,21 +332,23 @@ while True:
         try:
             transit_simulation_file, = targfolder.rglob(f'*outflow-tail-model*transit-{letter}.h5')
 
-            # verify that I got the right planet
-            with h5py.File(transit_simulation_file) as f:
-                a_sim = f['system_parameters'].attrs['semimajoraxis'] * u.cm
-            a_cat = planet['pl_orbsmax'] * planets['pl_orbsmax'].unit
-            if not np.isclose(a_cat, a_sim, rtol=0.1):
-                raise ValueError
-
             # load in the transit models
             with h5py.File(transit_simulation_file) as f:
                 transit_timegrid = f['tgrid'][:]
                 transit_wavegrid_sys = f['wavgrid'][:] * 1e8
+                if np.all(transit_wavegrid_sys == 0):
+                    transit_wavegrid_sys = default_sim_wavgrid
                 transmission_array = f['intensity'][:]
                 eta_sim = f['eta'][:]
                 wind_scaling_sim = f['mdot_star_scaling'][:]
                 phion_scaling_sim = f['phion_scaling'][:]
+                params = dict(f['system_parameters'].attrs)
+
+            # verify that I got the right planet
+            a_sim = params['semimajoraxis'] * u.cm
+            a_cat = planet['pl_orbsmax'] * planets['pl_orbsmax'].unit
+            if not np.isclose(a_cat, a_sim, rtol=0.1):
+                raise ValueError
 
             # there seem to be odd "zero-point" offsets in some of the transmission vectors. correct these
             transmaxs = np.max(transmission_array, axis=2)
@@ -356,9 +377,11 @@ while True:
             for aperture in apertures_to_consider[grating]:
                 spec = get_spectrograph_object(grating, aperture, host)
                 jitter = star_plus_breathing_jitter(aperture)
+                exptimes_mod = exptime_w_peakups(aperture)
 
                 # run snr calcs
                 sigma_tbl = transit.generic_transit_snr(
+                    exptimes = exptimes_mod,
                     transit_timegrid = transit_timegrid,
                     transit_wavegrid = transit_wavegrid_earth,
                     transit_transmission_ary = x_transmission,
@@ -406,8 +429,10 @@ while True:
 
                 spec = get_spectrograph_object(grating, row['aperture'], host)
                 jitter = star_plus_breathing_jitter(row['aperture'])
+                exptimes_mod = exptime_w_peakups(aperture)
 
                 _, wfigs, tfigs = transit.generic_transit_snr(
+                    exptimes=exptimes_mod,
                     transit_timegrid = transit_timegrid,
                     transit_wavegrid = transit_wavegrid_earth,
                     transit_transmission_ary = transmission,
@@ -421,15 +446,49 @@ while True:
                     **planet_transit_kws,
                 )
 
+                title = f'{hostname} {letter}'
+
                 wfig, = wfigs
                 wfig.tight_layout()
-                wname = sigma_tbl_name.replace('.ecsv', f'.plot-spectra-{case}-snr.pdf')
-                wfig.savefig(targ_transit_folder / wname)
+                wfig.suptitle(title)
+                wname_pdf = sigma_tbl_name.replace('.ecsv', f'.plot-spectra-{case}-snr.pdf')
+                wname_png = sigma_tbl_name.replace('.ecsv', f'.plot-spectra-{case}-snr.png')
+                wfig.savefig(targ_transit_folder / wname_pdf)
+                wfig.savefig(targ_transit_folder / wname_png, dpi=300)
 
                 tfig, = tfigs
                 tfig.tight_layout()
-                tname = sigma_tbl_name.replace('.ecsv', f'.plot-lightcurve-{case}-snr.pdf')
-                wfig.savefig(targ_transit_folder / tname)
+                tfig.suptitle(title)
+                tname_pdf = sigma_tbl_name.replace('.ecsv', f'.plot-lightcurve-{case}-snr.pdf')
+                tname_png = sigma_tbl_name.replace('.ecsv', f'.plot-lightcurve-{case}-snr.png')
+                tfig.savefig(targ_transit_folder / tname_pdf)
+                tfig.savefig(targ_transit_folder / tname_png, dpi=300)
+
+                # corner-like plot
+                apertures = np.unique(sigma_tbl['aperture'])
+                sigma_tbl.add_index('aperture')
+                mean_snrs = [np.mean(sigma_tbl.loc[aperture]['transit sigma']) for aperture in apertures]
+                ibest = np.argmax(mean_snrs)
+                sigma_tbl_best_ap = sigma_tbl.loc[apertures[ibest]]
+
+                labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],σ_Lya'.split(',')
+                phion = params['phion_rate'] * sigma_tbl_best_ap['phion scaling']
+                Tion = 1/phion
+                lTion = np.log10(Tion)
+                Mdot = params['mdot_star'] * sigma_tbl_best_ap['wind scaling']
+                lMdot = np.log10(Mdot)
+                eta = sigma_tbl_best_ap['eta']
+                leta = np.log10(eta)
+                lya_sigma = [lya_sigma_dic[lcase] for lcase in sigma_tbl_best_ap['lya reconstruction case']]
+                snr_vec = sigma_tbl_best_ap['transit sigma']
+                param_vecs = [leta, lTion, lMdot, lya_sigma]
+                cfig, _ = pu.detection_sigma_corner(param_vecs, snr_vec, labels=labels,
+                                                    levels=(3,), levels_kws=dict(colors='w'))
+                cfig.suptitle(title)
+                cname_pdf = sigma_tbl_name.replace('.ecsv', f'.plot-snr-corner.pdf')
+                cname_png = sigma_tbl_name.replace('.ecsv', f'.plot-snr_corner.png')
+                cfig.savefig(targ_transit_folder / cname_pdf)
+                cfig.savefig(targ_transit_folder / cname_png, dpi=300)
 
                 plt.close('all')
 
@@ -466,8 +525,10 @@ while True:
             for aperture in apertures_to_consider[grating]:
                 spec = get_spectrograph_object(grating, aperture, host)
                 jitter = star_plus_breathing_jitter(aperture)
+                exptimes_mod = exptime_w_peakups(aperture)
 
                 flat_sigma_tbl = transit.generic_transit_snr(
+                    exptimes=exptimes_mod,
                     transit_timegrid = flat_tgrid,
                     transit_wavegrid = flat_wgrid,
                     transit_transmission_ary = flat_transmission,
@@ -501,8 +562,10 @@ while True:
             transmission = flat_transmission
             spec = get_spectrograph_object(grating, aperture, host)
             jitter = star_plus_breathing_jitter(aperture)
+            exptimes_mod = exptime_w_peakups(aperture)
 
             _, wfigs, tfigs = transit.generic_transit_snr(
+                exptimes = exptimes_mod,
                 transit_timegrid=flat_tgrid,
                 transit_wavegrid=flat_wgrid,
                 transit_transmission_ary=transmission,
@@ -516,15 +579,22 @@ while True:
                 **planet_transit_kws,
             )
 
+            title = f'{hostname} {letter}'
             wfig, = wfigs
             wfig.tight_layout()
-            wname = flat_filename.replace('.ecsv', f'.plot-spectra-{case}-snr.pdf')
-            wfig.savefig(targ_transit_folder / wname)
+            wfig.suptitle(title)
+            wname_pdf = flat_filename.replace('.ecsv', f'.plot-spectra-{case}-snr.pdf')
+            wname_png = flat_filename.replace('.ecsv', f'.plot-spectra-{case}-snr.png')
+            wfig.savefig(targ_transit_folder / wname_pdf)
+            wfig.savefig(targ_transit_folder / wname_png, dpi=300)
 
             tfig, = tfigs
             tfig.tight_layout()
-            tname = flat_filename.replace('.ecsv', f'.plot-lightcurve-{case}-snr.pdf')
-            wfig.savefig(targ_transit_folder / tname)
+            tfig.suptitle(title)
+            tname_pdf = flat_filename.replace('.ecsv', f'.plot-lightcurve-{case}-snr.pdf')
+            tname_png = flat_filename.replace('.ecsv', f'.plot-lightcurve-{case}-snr.png')
+            tfig.savefig(targ_transit_folder / tname_pdf)
+            tfig.savefig(targ_transit_folder / tname_png, dpi=300)
 
             plt.close('all')
 
@@ -705,7 +775,7 @@ for target in targets:
         colname = f'flat transit snr\n[{simple_transit_range[0].value:.0f}, {simple_transit_range[1].value:.0f}]'
         planet_row[colname] = snr
         ibest = np.argmax(flat_sigma_tbl['transit sigma'])
-        aperture = flat_sigma_tbl[ibest]
+        aperture = flat_sigma_tbl['aperture'][ibest]
         planet_row['flat transit\nbrest aperture'] = aperture
 
         eval_rows.append(planet_row)
@@ -761,3 +831,9 @@ for col in eval_table.colnames:
 eval_filename = 'stage2_evalution_metrics.csv'
 eval_path = paths.catalogs / eval_filename
 eval_table.write(eval_path, overwrite=True)
+
+eval_table_ecsv = eval_table.copy()
+for name in eval_table_ecsv.colnames:
+    eval_table_ecsv.rename_column(name, name.replace('\n', ' '))
+eval_path_ecsv = paths.catalogs / eval_filename.replace('csv', 'ecsv')
+eval_table_ecsv.write(eval_path_ecsv, overwrite=True)

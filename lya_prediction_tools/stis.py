@@ -249,9 +249,20 @@ etc_e140m_times = table.Table.read(paths.stis / 'E140M_maxrates_and_buffer.csv')
 
 breathing_rms = {
     '0.2x0.2': 0.05,
+    '6x0.2': 0.05, # using 0.2x0.2 as proxy
     '52x0.05': 0.118,
     '52x0.1': 0.088,
     '52x0.2': 0.045,
     '52x0.5': 0.027,
     '52x2': 0.013
+}
+
+peakup_overhead = {
+    '52x0.05' : 300,
+    '52x0.1' : 220,
+}
+
+peakup_num_exposures = {
+    '52x0.05' : 16,
+    '52x0.1' : 12
 }

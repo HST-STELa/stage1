@@ -2,6 +2,7 @@ from pathlib import Path
 
 root = Path('/Users/parke/Google Drive/Research/STELa')
 stage1_code = root / 'public github repo/stage1'
+scratch = root / 'scratch'
 data = root / 'data'
 catalogs = data / 'catalogs'
 inbox = data / 'packages/inbox'
