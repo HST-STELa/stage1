@@ -3,6 +3,7 @@ import os
 import re
 import warnings
 from collections import defaultdict
+from itertools import cycle
 
 import numpy as np
 from astropy.io import fits
@@ -150,6 +151,28 @@ def target_names_tic2stela(tic_ids):
 def target_names_stela2file(stela_names):
     names = target_names_stela2hst(stela_names)
     return np.char.lower(names)
+
+
+def planet_suffixes(catalog):
+    tois = catalog['toi']
+    has_letter = catalog['pl_letter'].filled('') != ''
+    has_toi = catalog['toi'].filled('') != ''
+    toi_number = [toi.split('.')[1] for toi in tois[has_toi]]
+    special = ~has_letter & ~has_toi
+    specials = catalog[special]
+    specials.add_index('tic_id')
+    special_letters = np.empty(len(specials), dtype=object)
+    for tic_id in np.unique(specials['tic_id'].tolist()):
+        hostmask = specials['tic_id'] == tic_id
+        n = sum(hostmask)
+        for i, letter in zip(range(n), cycle('xyz')):
+            special_letters[i] = letter
+    suffixes = np.empty(len(catalog), dtype=object)
+    suffixes[special] = special_letters
+    suffixes[has_toi] = toi_number
+    suffixes[has_letter] = catalog['pl_letter'][has_letter]
+    return suffixes
+
 
 
 def hst_filename2stela(path, target='from_header'):

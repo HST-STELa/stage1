@@ -7,6 +7,7 @@ import numpy as np
 import h5py
 from dask.cache import overhead
 from matplotlib import pyplot as plt
+import matplotlib as mpl
 
 import empirical
 import paths
@@ -228,6 +229,7 @@ while True:
   # I'm being sneaky with 2-space indents here because I want to avoid 8 space indents on the cells
   if not batch_mode:
     break
+  mpl.use('Agg') # so plot windows don't constantly interrupt my typing
 
   try:
 
@@ -473,8 +475,8 @@ while True:
 
                 labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],σ_Lya'.split(',')
                 phion = params['phion_rate'] * sigma_tbl_best_ap['phion scaling']
-                Tion = 1/phion
-                lTion = np.log10(Tion)
+                Tion = 1/phion * u.s
+                lTion = np.log10(Tion.to_value('h'))
                 Mdot = params['mdot_star'] * sigma_tbl_best_ap['wind scaling']
                 lMdot = np.log10(Mdot)
                 eta = sigma_tbl_best_ap['eta']
@@ -610,6 +612,7 @@ while True:
 #%% loop close
 
   except StopIteration:
+    mpl.use('qt5agg')
     break
 
 
@@ -738,6 +741,7 @@ for target in targets:
         letter = get_letter(planet, i)
         planet_row['planet'] = letter
         planet_row['planet\nradius (Re)'] = planet['pl_rade'] * planet_catalog['pl_rade'].unit
+        planet_row['orbital\nperiod (d)'] = planet['pl_orbper'] * planet_catalog['pl_orbper'].unit
 
         flag_cols = [name for name in planet_catalog.colnames if 'flag_' in name]
         for col in flag_cols:
@@ -791,6 +795,7 @@ column_order_and_names = {
     'lya recnstcnt flag' : '',
     'planet\nradius (Re)': '',
     'H ionztn\ntime (h)': '',
+    'orbital\nperiod (d)': ''.
     'stellar\neff temp (K)': '',
     'age\nlimit': '',
     'age': '',

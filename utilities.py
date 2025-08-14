@@ -1,4 +1,5 @@
 import warnings
+from math import nan
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -66,6 +67,79 @@ def cumulative_trapz(y, x, zero_start=False):
     if zero_start:
         result = np.insert(result, 0, 0)
     return result
+
+
+def interpolate_many(x_new, x, y, axis=None, infer=True, assume_sorted=False, left=nan, right=nan):
+    """
+    Vectorized 1D interpolation along a specified axis of an N-D array y.
+    - x_new:   array with last dim K (can broadcast across leading dims of y)
+    - x: array with last dim M (can broadcast across leading dims of y)
+    - y: N-D array; one axis (given or inferred) has length M
+    Returns: y interpolated at x_new along that axis.
+    """
+    x = np.asarray(x)
+    x_new   = np.asarray(x_new)
+    y       = np.asarray(y)
+
+    # Infer axis if needed
+    if axis is None:
+        if infer:
+            matches = [i for i, s in enumerate(y.shape) if s == x.shape[-1]]
+            if not matches:
+                raise ValueError("Could not infer axis: no dimension of y matches x_known's last dimension.")
+            axis = matches[0]
+        else:
+            raise ValueError("Specify 'axis' or set infer=True.")
+
+    # Move interpolation axis to the end
+    yL = np.moveaxis(y, axis, -1)                  # shape: B... x M
+    B = yL.shape[:-1]
+    M = yL.shape[-1]
+
+    # Broadcast x_known and x_new to match leading dims
+    if x.shape[-1] != M:
+        raise ValueError("x_known's last dimension must equal the length of y along the interpolation axis.")
+    xk = np.broadcast_to(x, B + (M,))        # B... x M
+    K  = x_new.shape[-1]
+    xn = np.broadcast_to(x_new,   B + (K,))        # B... x K
+
+    # Flatten leading dims for clean vectorized gather
+    N  = int(np.prod(B)) or 1
+    y2 = yL.reshape(N, M)
+    xk2 = xk.reshape(N, M)
+    xn2 = xn.reshape(N, K)
+
+    # Optionally sort x_known (and y) along the M axis
+    if not assume_sorted:
+        order = np.argsort(xk2, axis=1)
+        xk2 = np.take_along_axis(xk2, order, axis=1)
+        y2  = np.take_along_axis(y2,  order, axis=1)
+
+    # Find bin indices for each new-x (vectorized). O(N*M*K) but fully NumPy.
+    # idx points to the left node of the interval [idx, idx+1].
+    idx = (xn2[..., None] >= xk2[:, None, :]).sum(axis=-1) - 1  # shape (N, K)
+    idx = np.clip(idx, 0, M - 2)
+
+    # Gather neighbors
+    x0 = np.take_along_axis(xk2, idx, axis=1)
+    x1 = np.take_along_axis(xk2, idx + 1, axis=1)
+    y0 = np.take_along_axis(y2,  idx, axis=1)
+    y1 = np.take_along_axis(y2,  idx + 1, axis=1)
+
+    # Linear interpolation
+    t = (xn2 - x0) / (x1 - x0)
+    out = y0 + t * (y1 - y0)
+
+    # Handle left/right
+    mask_left = xn2 < xk2[:, [0]]
+    out = np.where(mask_left, left, out)
+    mask_right = xn2 > xk2[:, [-1]]
+    out = np.where(mask_right, right, out)
+
+    # Reshape back and restore axis
+    out = out.reshape(B + (K,))
+    out = np.moveaxis(out, -1, axis)
+    return out
 
 
 def intergolate(x_bin_edges,xin,yin, left=None, right=None):

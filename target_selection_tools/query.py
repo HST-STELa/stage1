@@ -1,6 +1,8 @@
 import warnings
 import re
 
+import requests
+from urllib.parse import quote_plus
 import numpy as np
 import pyvo as vo
 from astroquery.simbad import Simbad
@@ -199,3 +201,59 @@ def query_simbad_for_tic_ids(names):
     tic_ids_ary = np.asarray(tic_ids_lst)
 
     return tic_ids_ary
+
+
+def get_exoarchive_parameters_from_all_sources(pl_names, cols='*'):
+    service = vo.dal.TAPService('https://exoplanetarchive.ipac.caltech.edu/TAP')
+    column_string = ','.join(cols)
+    pieces = [f"pl_name = '{name}'" for name in pl_names]
+    planets_string =  ' or '.join(pieces)
+    resultset = service.search(f'SELECT {column_string} FROM ps WHERE {planets_string}')
+    catalog = resultset.to_table()
+    return catalog
+
+
+def get_default_exoarchive_name(objname: str) -> str:
+    BASE = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/Lookup/nph-aliaslookup.py?objname="
+    """Return the default (canonical) name from NASA Exoplanet Archive System Aliases."""
+    url = BASE + quote_plus(objname)
+    data = requests.get(url, timeout=30).json()
+    return data.get("manifest", {}).get("resolved_name")
+
+
+def get_exofop_ephemerides(toi_pfx: str | int):
+    """
+    Return latest (best-available) transit ephemeris for a TOI from ExoFOP.
+    Output: dict with period [d], t0_bjd_tdb [BJD_TDB], notes, and source URL.
+    """
+    toi_str = str(toi_pfx).replace("TOI", "").replace(" ", "")
+    # normalize like "1066.01"
+    if not re.match(r"^\d+(\.\d+)?$", toi_str):
+        raise ValueError("TOI must look like '1066.01' or '1066'.")
+
+    # ExoFOP will resolve by TOI number:
+    base = f"https://exofop.ipac.caltech.edu/tess/target.php?toi={toi_str}"
+    # The page exposes a JSON export; appending '&json' returns the page data as JSON.
+    url = base + "&json"
+    j = requests.get(url, timeout=30).json()
+
+    pp_rows  = j.get("planet_parameters", [])
+
+    ephemerides = []
+    for row in pp_rows:
+        name = row.get('name', '')
+        toi = row.get('toi', '')
+        pdate = row.get('pdate', '')
+        puser = row.get('puser', '')
+        if not name and not toi:
+            continue
+        values = [row.get(key, None) for key in 'epoch epoch_e per per_e'.split()]
+        if any(value is None for value in values):
+            continue
+        ephemerides.append((name, toi, *map(float, values), puser, pdate))
+
+    if not ephemerides:
+        raise RuntimeError("No period/epoch found on the ExoFOP page JSON for this TOI.")
+
+    ephemeris_table = table.Table(rows=ephemerides, names='name toi epoch epoch_e per per_e puser pdate'.split())
+    return ephemeris_table

@@ -23,28 +23,30 @@ def get_intrinsic_lya_flux(target_name_file, return_16_50_84=False):
 
 
 def detection_sigma_corner(param_vecs, snr_vec, **hist_corner_kws):
-    mean_snr_1d = []
+    max_snr_1d = []
     for x in param_vecs:
-        unique_x, inverse_idx = np.unique(x, return_inverse=True)
-        edges = utils.mids2bins(unique_x)
-        mean_snr = np.bincount(inverse_idx, weights=snr_vec) / np.bincount(inverse_idx)
-        mean_snr_1d.append((mean_snr, edges))
+        ux = np.unique(x)
+        edges = utils.mids2bins(ux)
+        max_snr = [np.nanmax(snr_vec[x == uxx]) for uxx in ux]
+        max_snr_1d.append((max_snr, edges))
 
-    mean_snr_2d = {}
-
+    max_snr_2d = {}
     n = len(param_vecs)
     for i, j in combinations(range(n), 2):
         x, y = param_vecs[i], param_vecs[j]
-        edges_x = utils.mids2bins(np.unique(x))
-        edges_y = utils.mids2bins(np.unique(y))
-        keys = np.column_stack((x, y))
-        unique_pairs, inverse_idx = np.unique(keys, axis=0, return_inverse=True)
-        n = len(edges_y) - 1
-        mean_snr = np.bincount(inverse_idx, weights=snr_vec) / np.bincount(inverse_idx)
-        mean_snr = mean_snr.reshape((n,n))
-        mean_snr_2d[(j,i)] = (mean_snr, edges_x, edges_y)
+        ux = np.unique(x)
+        uy = np.unique(y)
+        xi = np.searchsorted(ux, x)
+        yi = np.searchsorted(uy, y)
+        edges_x = utils.mids2bins(ux)
+        edges_y = utils.mids2bins(uy)
+        max_grid = np.full((len(ux), len(uy)), np.nan)
+        for ii, jj, val in zip(xi, yi, snr_vec):
+            if np.isnan(max_grid[ii, jj]) or val > max_grid[ii, jj]:
+                max_grid[ii, jj] = val
+        max_snr_2d[(j,i)] = (max_grid, edges_x, edges_y)
 
-    return make_hist_corner(mean_snr_1d, mean_snr_2d, **hist_corner_kws)
+    return make_hist_corner(max_snr_1d, max_snr_2d, **hist_corner_kws)
 
 
 def make_hist_corner(
