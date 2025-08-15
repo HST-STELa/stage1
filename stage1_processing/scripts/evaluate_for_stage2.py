@@ -11,7 +11,6 @@ import matplotlib as mpl
 
 import empirical
 import hst_utilities
-import lya_prediction_tools.spectrograph
 import paths
 import utilities as utils
 import catalog_utilities as catutils
@@ -23,8 +22,11 @@ from stage1_processing import processing_utilities as pu
 from lya_prediction_tools import variability
 from lya_prediction_tools import transit
 from lya_prediction_tools import stis
+from lya_prediction_tools import cos
 from lya_prediction_tools import lya
 from lya_prediction_tools import ism
+from lya_prediction_tools.spectrograph import Spectrograph
+
 
 #%% option to loop (batch mode)
 
@@ -48,14 +50,22 @@ etc_filenames = dict(
     e140m = {
         '6x0.2': 'etc.hst-stis-e140m.2025-08-05.2025104.exptime900_flux1e-13_aperture6x0.2.csv',
         '52x0.05': 'etc.hst-stis-e140m.2025-08-05.2025105.exptime900_flux1e-13_aperture52x0.05.csv'
+    },
+    g130m = {
+        'psa': 'etc.hst-cos-g130m.2025-08-14. 2026269.exptime900_flux1e-13_aperturepsa.csv'
     }
 )
 
-
 apertures_to_consider = dict(
     g140m='52x0.5 52x0.2 52x0.1 52x0.05'.split(),
-    e140m='6x0.2 52x0.05'.split()
+    e140m='6x0.2 52x0.05'.split(),
+    g130m=('psa',)
 )
+
+grating_aperture_combos = []
+for grating, apertures in apertures_to_consider.items():
+    for aperture in apertures:
+        grating_aperture_combos.append((grating, aperture))
 
 def exptime_w_peakups(aperture):
     if aperture in stis.peakup_overhead:
@@ -69,11 +79,18 @@ def exptime_w_peakups(aperture):
 
 def get_spectrograph_object(grating, aperture, host):
     # load in spectrograph info
-    etc_file = paths.stis / stis.default_etc_filenames[grating][aperture]
-    lsf_file = paths.stis / f'LSF_{grating.upper()}_1200.txt'
+    usecos = grating == 'g130m'
+    usestis = grating in ['g140m', 'e140m']
+    assert usecos or usestis, 'Not sure what spectrograh to use for that grating.'
+    folder = paths.cos if usecos else paths.stis
+    etc_file = folder / stis.default_etc_filenames[grating][aperture]
+    lsf_file = folder / f'LSF_{grating.upper()}_1200.txt'
     etc = hst_utilities.read_etc_output(etc_file)
-    proxy_aperture = stis.proxy_lsf_apertures[grating].get(aperture, aperture)
-    lsf_x, lsf_y = stis.read_lsf(lsf_file, aperture=proxy_aperture)
+    if usestis:
+        proxy_aperture = stis.proxy_lsf_apertures[grating].get(aperture, aperture)
+        lsf_x, lsf_y = stis.read_lsf(lsf_file, aperture=proxy_aperture)
+    else:
+        lsf_x, lsf_y = cos.read_lsf(lsf_file, wavelength=1215.67)
 
     # slim down to just around the lya line for speed
     window = lya.v2w((-500, 500))
@@ -102,22 +119,20 @@ def get_spectrograph_object(grating, aperture, host):
     etc['sky_counts'] = y_expanded
 
     # initialize spectrograph object
-    spec = lya_prediction_tools.spectrograph.Spectrograph(lsf_x, lsf_y, etc)
+    spec = Spectrograph(lsf_x, lsf_y, etc)
 
     return spec
 
 
 #%% assumed observation timing
 
-obstimes_temp = [-1.5, 0, 18, 19.5, 21, 22.5, 24] * u.h
-obstimes = obstimes_temp - 21 * u.h
+obstimes = [-22.5, -21., -3., -1.5,  0.,  1.5,  3.] * u.h
 exptimes = [2000, 2700, 2000, 2700, 2700, 2700, 2700] * u.s
 baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + 1*u.h))
 def get_in_transit_range(planet):
     transit_duration = planet['pl_trandur'] * planet_catalog['pl_trandur'].unit
     in_transit_range = u.Quantity((-transit_duration/2, 10 * u.h))  # long egress for tails
     return in_transit_range
-
 
 
 #%% ranges within which to search for integration bands that maximize SNR
@@ -183,7 +198,7 @@ def get_required_grating(target):
     # base the choice on whether the existing Lya data are e140m
     g140m_files = list(targfolder.rglob('*hst-stis-g140m.*_x1d.fits'))
     e140m_files = list(targfolder.rglob('*hst-stis-e140m.*_x1d.fits'))
-    g130m_files = list(targfolder.rglob('*hst-cos-g130mm.*_x1d.fits'))
+    g130m_files = list(targfolder.rglob('*hst-cos-g130m.*_x1d.fits'))
     if g140m_files or g130m_files:
         grating = 'g140m'
     else:
@@ -248,6 +263,8 @@ while True:
     host = host_catalog.loc[tic_id]
     targfolder = paths.target_data(target)
     targ_transit_folder = targfolder / 'transit predictions'
+
+    anticipated_grating = get_required_grating(target)
 
 
 #%% some stellar params
@@ -364,7 +381,7 @@ while True:
             transit_vgrid_earth = transit_vgrid_sys + rv_star.to_value('km s-1')
             transit_wavegrid_earth = lya.v2w(transit_vgrid_earth)
 
-            # expand lya and transit models to include a range of lya line cases
+            # expand lya and transit models to include the range of lya line cases
             n = lya_flux_ary.shape[0]
             m = transmission_array.shape[0]
             x_lya_flux = np.repeat(lya_flux_ary, m, axis=0)
@@ -413,12 +430,13 @@ while True:
             sigma_tbl.write(sigma_tbl_path, overwrite=True)
 
             # diagnostic plots
-            isort = np.argsort(sigma_tbl['transit sigma'])
+            sigma_tbl_antpd = sigma_tbl[sigma_tbl['grating'] == anticipated_grating]
+            isort = np.argsort(sigma_tbl_antpd['transit sigma'])
             cases = {'max': isort[-1],
                      'median': isort[len(isort) // 2]}
             sim_lookup_indices = np.arange(len(eta_sim))
             for case, k in cases.items():
-                row = sigma_tbl[k]
+                row = sigma_tbl_antpd[k]
 
                 sim_mask = (
                     (eta_sim == row['eta'])
@@ -469,11 +487,11 @@ while True:
                 tfig.savefig(targ_transit_folder / tname_png, dpi=300)
 
                 # corner-like plot
-                apertures = np.unique(sigma_tbl['aperture'])
-                sigma_tbl.add_index('aperture')
-                mean_snrs = [np.mean(sigma_tbl.loc[aperture]['transit sigma']) for aperture in apertures]
+                apertures = np.unique(sigma_tbl_antpd['aperture'])
+                sigma_tbl_antpd.add_index('aperture')
+                mean_snrs = [np.mean(sigma_tbl_antpd.loc[aperture]['transit sigma']) for aperture in apertures]
                 ibest = np.argmax(mean_snrs)
-                sigma_tbl_best_ap = sigma_tbl.loc[apertures[ibest]]
+                sigma_tbl_best_ap = sigma_tbl_antpd.loc[apertures[ibest]]
 
                 labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],σ_Lya'.split(',')
                 phion = params['phion_rate'] * sigma_tbl_best_ap['phion scaling']
@@ -524,9 +542,8 @@ while True:
             flat_lya_flux = lya_recon[f'lya_model unconvolved_{lya_case}']
 
             # get detection sigmas for a range of apertures
-            grating = get_required_grating(target)
             flat_tbls = []
-            for aperture in apertures_to_consider[grating]:
+            for grating, aperture in grating_aperture_combos:
                 spec = get_spectrograph_object(grating, aperture, host)
                 jitter = star_plus_breathing_jitter(aperture)
                 exptimes_mod = exptime_w_peakups(aperture)
@@ -561,8 +578,9 @@ while True:
             flat_sigma_tbl.write(flat_path, overwrite=True)
 
             # diagnostic plots
+            flat_sigma_tbl_antpd = flat_sigma_tbl[sigma_tbl['grating'] == anticipated_grating]
             k_max = np.argmax(flat_sigma_tbl['transit sigma'])
-            aperture = sigma_tbl['aperture'][k_max]
+            aperture = flat_sigma_tbl_antpd['aperture'][k_max]
             transmission = flat_transmission
             spec = get_spectrograph_object(grating, aperture, host)
             jitter = star_plus_breathing_jitter(aperture)
@@ -737,6 +755,8 @@ for target in targets:
     host_row[key + ' +err'] = lya_coreflux_poserr * fluxdens_unit
     host_row[key + ' -err'] = lya_coreflux_negerr * fluxdens_unit
 
+
+#%% loop through planets
     for i, planet in enumerate(planets):
         planet_row = host_row.copy()
 
@@ -782,7 +802,7 @@ for target in targets:
         planet_row[colname] = snr
         ibest = np.argmax(flat_sigma_tbl['transit sigma'])
         aperture = flat_sigma_tbl['aperture'][ibest]
-        planet_row['flat transit\nbrest aperture'] = aperture
+        planet_row['flat transit\nbest aperture'] = aperture
 
         eval_rows.append(planet_row)
 
@@ -797,7 +817,7 @@ column_order_and_names = {
     'lya recnstcnt flag' : '',
     'planet\nradius (Re)': '',
     'H ionztn\ntime (h)': '',
-    'orbital\nperiod (d)': ''.
+    'orbital\nperiod (d)': '',
     'stellar\neff temp (K)': '',
     'age\nlimit': '',
     'age': '',
@@ -822,7 +842,7 @@ column_order_and_names = {
     'lya flux\ncore -err' : '',
     'obsvtn\ngrating' : '',
     'outflow model\nbest aperture' : '',
-    'flat transit\nbrest aperture' : ''
+    'flat transit\nbest aperture' : ''
 }
 eval_table = eval_table[list(column_order_and_names.keys())]
 for oldcol, newcol in column_order_and_names.items():

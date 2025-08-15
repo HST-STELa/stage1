@@ -20,6 +20,7 @@ reference_files = Path('reference_files')
 reference_tables = reference_files / 'reference_tables'
 reference_spectra = reference_files / 'reference_uv_spectra' / 'lya_added_intrinsic'
 stis = reference_files / 'stis'
+cos = reference_files / 'cos'
 locked = reference_files / 'locked_choices'
 uv_lines = reference_files / 'uv_lines'
 
