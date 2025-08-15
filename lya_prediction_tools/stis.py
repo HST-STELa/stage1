@@ -87,7 +87,7 @@ for grating in preloaded_spectrographs.keys():
     for aperture in default_etc_filenames[grating].keys():
         # load in spectrograph info
         etc_file = paths.stis / default_etc_filenames[grating][aperture]
-        lsf_file = paths.stis / f'LSF_{grating.upper()}_1200.txt'
+        lsf_file = paths.stis / f'lsf.hst-stis-{grating}-1200.txt'
         proxy_aperture = proxy_lsf_apertures[grating].get(aperture, aperture)
         etc = read_etc_output(etc_file)
         lsf_x, lsf_y = read_lsf(lsf_file, aperture=proxy_aperture)
@@ -129,3 +129,12 @@ peakup_num_exposures = {
     '52x0.05' : 16,
     '52x0.1' : 12
 }
+
+def shorten_exposures_by_peakups(aperture, acq_exptime, exptimes, visit_start_indices):
+    if aperture in peakup_overhead:
+        overhead = peakup_overhead[aperture] + peakup_num_exposures[aperture] * acq_exptime
+        exptimes_mod = exptimes.copy()
+        exptimes_mod[visit_start_indices] -= overhead * u.s
+    else:
+        exptimes_mod = exptimes.copy()
+    return exptimes_mod

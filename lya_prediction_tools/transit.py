@@ -221,8 +221,8 @@ def generic_transit_snr(
         exptimes,
         in_transit_time_range,
         baseline_time_range,
-        normalization_within_rvs,
-        transit_within_rvs,
+        normalization_search_rvs,
+        transit_search_rvs,
         transit_timegrid,
         transit_wavegrid,
         transit_transmission_ary,
@@ -252,8 +252,8 @@ def generic_transit_snr(
     # for later use picking integration ranges
     v0_ism = rv_ism - rv_star
     v0_ism = v0_ism.to_value('km s-1')
-    normalization_within_rvs = normalization_within_rvs.to_value('km s-1')
-    transit_within_rvs = transit_within_rvs.to_value('km s-1')
+    normalization_search_rvs = normalization_search_rvs.to_value('km s-1')
+    transit_search_rvs = transit_search_rvs.to_value('km s-1')
 
     # instrument wavelength and velocity grids
     dwspec = spectrograph_object.binwidth
@@ -338,14 +338,14 @@ def generic_transit_snr(
             negligible_transit = False
 
             # pick transit and normalization integration ranges based on max SNR
-            normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_within_rvs)
-            if v0_ism >= transit_within_rvs[0] and v0_ism <= transit_within_rvs[1]:
+            normrng_mask = max_snr_red_blue(vspec, fb, eb, *normalization_search_rvs)
+            if v0_ism >= transit_search_rvs[0] and v0_ism <= transit_search_rvs[1]:
                 # if mid-ism absorption falls within the transit range
                 absprng_mask = max_snr_red_blue(vspec, d, de,
-                                                (transit_within_rvs[0], v0_ism),
-                                                (v0_ism, transit_within_rvs[1]))
+                                                (transit_search_rvs[0], v0_ism),
+                                                (v0_ism, transit_search_rvs[1]))
             else:
-                a, b, _, _ = max_snr_integration_range(vspec, d, de, transit_within_rvs)
+                a, b, _, _ = max_snr_integration_range(vspec, d, de, transit_search_rvs)
                 absprng_mask = np.zeros(len(fb), bool)
                 absprng_mask[a:b] = True
 
@@ -407,9 +407,9 @@ def generic_transit_snr(
 
             # integration ranges
             if negligible_transit:
-                v_norm = (transit_within_rvs,)
-                v_absp = normalization_within_rvs
-                absprng_mask = utils.is_in_range(vspec, *transit_within_rvs)
+                v_norm = (transit_search_rvs,)
+                v_absp = normalization_search_rvs
+                absprng_mask = utils.is_in_range(vspec, *transit_search_rvs)
                 ax.annotate('Transit does not register.\nDefault integration ranges shown.', xy=(0.5, 0.5), ha='center', va='center')
             for rng in v_norm:
                 nspan = ax.axvspan(*rng, color='0.5', alpha=0.2, ls='none', label='normalization')
