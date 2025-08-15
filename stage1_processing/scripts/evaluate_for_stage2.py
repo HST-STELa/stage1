@@ -10,6 +10,8 @@ from matplotlib import pyplot as plt
 import matplotlib as mpl
 
 import empirical
+import hst_utilities
+import lya_prediction_tools.spectrograph
 import paths
 import utilities as utils
 import catalog_utilities as catutils
@@ -69,7 +71,7 @@ def get_spectrograph_object(grating, aperture, host):
     # load in spectrograph info
     etc_file = paths.stis / stis.default_etc_filenames[grating][aperture]
     lsf_file = paths.stis / f'LSF_{grating.upper()}_1200.txt'
-    etc = stis.read_etc_output(etc_file)
+    etc = hst_utilities.read_etc_output(etc_file)
     proxy_aperture = stis.proxy_lsf_apertures[grating].get(aperture, aperture)
     lsf_x, lsf_y = stis.read_lsf(lsf_file, aperture=proxy_aperture)
 
@@ -100,7 +102,7 @@ def get_spectrograph_object(grating, aperture, host):
     etc['sky_counts'] = y_expanded
 
     # initialize spectrograph object
-    spec = stis.Spectrograph(lsf_x, lsf_y, etc)
+    spec = lya_prediction_tools.spectrograph.Spectrograph(lsf_x, lsf_y, etc)
 
     return spec
 
@@ -406,7 +408,7 @@ while True:
                 tbls.append(sigma_tbl)
 
             sigma_tbl = catutils.flexible_table_vstack(tbls)
-            sigma_tbl_name = transit_simulation_file.name.replace('.h5', f'.{grating}-detection-sigmas.ecsv')
+            sigma_tbl_name = transit_simulation_file.name.replace('.h5', f'.detection-sigmas.ecsv')
             sigma_tbl_path = targ_transit_folder / sigma_tbl_name
             sigma_tbl.write(sigma_tbl_path, overwrite=True)
 

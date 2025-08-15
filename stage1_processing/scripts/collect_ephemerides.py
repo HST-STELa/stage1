@@ -1,9 +1,11 @@
 import os
+from functools import reduce
 
 import numpy as np
 from astropy.table import Table, vstack
 from astropy import time
 from astropy import units as u
+from tqdm import tqdm
 
 import paths
 
@@ -25,8 +27,7 @@ test_date = time.Time(test_date_str)
 #%%
 
 report_rows = []
-for planet in planets[4:]:
-# for planet in planets:
+for planet in tqdm(planets):
 
 
 #%% get default exoarchive name
@@ -63,31 +64,34 @@ for planet in planets[4:]:
     arx_ephems['pl_tranmiderr'] = T0err1
 
     arx_ephems = arx_ephems['pl_tranmid pl_tranmiderr pl_orbper pl_orbpererr pl_refname'.split()]
+    masks = [arx_ephems[col].mask for col in 'pl_tranmid pl_tranmiderr pl_orbper pl_orbpererr'.split()]
+    keep = ~reduce(np.logical_or, masks[1:], masks[0])
+    arx_ephems = arx_ephems[keep]
 
 
-#%% get exofop ephemerides
+#%% get exofop ephemerides and merge
 
-    fop_ephems = query.get_exofop_ephemerides(toi)
-    # this will return ephemerides for all TOIs in the system, so need to filter
-    P = planet['pl_orbper']
-    keep = np.isclose(fop_ephems['per'], P, rtol=0.1)
-    fop_ephems = fop_ephems[keep]
+    if has_toi:
+        fop_ephems = query.get_exofop_ephemerides(toi)
+        # this will return ephemerides for all TOIs in the system, so need to filter
+        P = planet['pl_orbper']
+        keep = np.isclose(fop_ephems['per'], P, rtol=0.1)
+        fop_ephems = fop_ephems[keep]
 
+        fop_groomed = fop_ephems['per per_e epoch epoch_e'.split()].copy()
+        fop_groomed.rename_column('per', 'pl_orbper')
+        fop_groomed.rename_column('per_e', 'pl_orbpererr')
+        fop_groomed.rename_column('epoch', 'pl_tranmid')
+        fop_groomed.rename_column('epoch_e', 'pl_tranmiderr')
+        src = np.char.add(fop_ephems['puser'], ' ')
+        src = np.char.add(src, fop_ephems['pdate'])
+        src = np.char.add('ExoFOP: ', src)
+        fop_groomed['pl_refname'] = src
+        fop_groomed['pl_refname'] = fop_groomed['pl_refname'].astype('object')
 
-#%% merge
-
-    fop_groomed = fop_ephems['per per_e epoch epoch_e'.split()].copy()
-    fop_groomed.rename_column('per', 'pl_orbper')
-    fop_groomed.rename_column('per_e', 'pl_orbpererr')
-    fop_groomed.rename_column('epoch', 'pl_tranmid')
-    fop_groomed.rename_column('epoch_e', 'pl_tranmiderr')
-    src = np.char.add(fop_ephems['puser'], ' ')
-    src = np.char.add(src, fop_ephems['pdate'])
-    src = np.char.add('ExoFOP: ', src)
-    fop_groomed['pl_refname'] = src
-    fop_groomed['pl_refname'] = fop_groomed['pl_refname'].astype('object')
-
-    ephems = vstack((arx_ephems, fop_groomed))
+        ephems = vstack((arx_ephems, fop_groomed))
+    else:
+        ephems = arx_ephems
 
 
 #%% pick the most accurate
@@ -114,7 +118,7 @@ for planet in planets[4:]:
     if not folder.exists():
         os.mkdir(folder)
     filename = f'{targfilename}-{planet['pl_id']}.ephemerides.ecsv'
-    ephems.write(folder, filename, overwrite=True)
+    ephems.write(folder / filename, overwrite=True)
 
 
 #%% add accuracy line to report

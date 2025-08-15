@@ -1,10 +1,11 @@
+import re
 import warnings
 from pathlib import Path
 
 import numpy as np
 from astroquery.mast import MastMissions
 from astropy.io import fits
-from astropy import time
+from astropy import time, table
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
@@ -73,3 +74,25 @@ def is_raw_science(file):
             return False
     else:
         return False
+
+
+def read_etc_output(etc_output_file):
+    try:
+        pattern = r'.*stis-(.*?)\..*(.*?)exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
+        result, = re.findall(pattern, etc_output_file.name)
+        grating, date, expt, flux, aperture = result
+    except ValueError as e:
+        if 'too many values' in str(e) or 'not enough values' in str(e):
+            raise(ValueError('Nonstandard ETC output file name. Example standard name: '
+                             'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv'))
+        else:
+            raise
+    etc = table.Table.read(etc_output_file)
+    etc.meta['date of etc run'] = date
+    etc.meta['aperture'] = aperture
+    etc.meta['grating'] = grating
+    etc.meta['exptime'] = float(expt)
+    etc.meta['flux'] = float(flux)
+    etc['flux2cps'] = etc['target_counts'] / etc.meta['exptime'] / etc.meta['flux']
+    etc['bkgnd_cps'] = (etc['total_counts'] - etc['target_counts']) / etc.meta['exptime']
+    return etc
