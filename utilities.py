@@ -1,5 +1,6 @@
 import warnings
 from math import nan
+import sys
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -409,3 +410,17 @@ def chunk_edges(chunk_mask):
     ends = np.where(diffs == -1)[0]
 
     return list(zip(starts, ends))
+
+
+def printprogress(items):
+    """
+    Generator that yields items from a list while printing progress
+    on the same line.
+    """
+    total = len(items)
+    for i, item in enumerate(items, start=1):
+        msg = f"{i}/{total}: {item}"
+        sys.stdout.write("\r" + msg + " " * 10)  # pad to clear leftovers
+        sys.stdout.flush()
+        yield item
+    print()  # move to a new line at the end

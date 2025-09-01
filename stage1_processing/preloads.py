@@ -1,4 +1,5 @@
 from datetime import datetime
+import warnings
 
 from astropy import table
 import numpy as np
@@ -14,6 +15,10 @@ from stage1_processing import visit_status_xml_parser as xparse
 
 planets = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt8__target-build.ecsv')
 hosts = catutils.planets2hosts(planets)
+# convert to QTables
+with catutils.catch_QTable_unit_warnings():
+    planets = table.QTable(planets)
+    hosts = table.QTable(hosts)
 planets.add_index('tic_id')
 hosts.add_index('tic_id')
 

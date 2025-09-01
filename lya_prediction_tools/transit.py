@@ -3,7 +3,7 @@ from math import pi, nan
 import numpy as np
 from tqdm import tqdm
 from astropy import units as u
-from astropy.table import Table
+from astropy.table import Table, Row, QTable
 from matplotlib import pyplot as plt
 
 import utilities as utils
@@ -214,6 +214,24 @@ def max_snr_red_blue(x, f, e, blue_rng, red_rng):
         return masks[0] | masks[1]
     else:
         return masks[imx]
+
+
+def flat_transit_transmission(
+        planet: Row,
+        tgrid: u.Quantity,
+        wgrid: u.Quantity,
+        time_range: u.Quantity,
+        rv_star: u.Quantity,
+        rv_range:u.Quantity):
+    timemask = utils.is_in_range(tgrid, *time_range)
+    vgrid = lya.w2v(wgrid.to_value('AA')) * u.km/u.s - rv_star
+    flat_depth, = opaque_tail_depth(Table(rows=[planet]))  # takes a table as input, hence the [[i]]
+
+    flat_transit_wavemask = utils.is_in_range(vgrid, *rv_range)
+    flat_transmission = np.ones((len(tgrid), len(wgrid)))
+    flat_transmission[np.ix_(timemask, flat_transit_wavemask)] = 1 - flat_depth
+
+    return flat_transmission, flat_depth
 
 
 def generic_transit_snr(
@@ -473,7 +491,7 @@ def generic_transit_snr(
             timefigs.append(fig)
             # endregion
 
-    tbl = Table(rows=rows)
+    tbl = QTable(rows=rows)
     if diagnostic_plots:
         return tbl, wavefigs, timefigs
     else:

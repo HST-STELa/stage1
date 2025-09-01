@@ -1,9 +1,11 @@
 import re
 import warnings
 from math import nan
+from contextlib import contextmanager
 
 import numpy as np
 from astropy import table, coordinates as coord, time, units as u
+from astropy.utils.exceptions import AstropyWarning, AstropyUserWarning
 from tqdm import tqdm
 from scipy.spatial import KDTree
 import pandas as pd
@@ -383,17 +385,38 @@ def merge_tables_with_update(old, new, key):
     return merged
 
 
-def flexible_table_vstack(tables):
-    """Stacks tables while avoiding shape and type mismatch errors, at the cost of possibly creating frankentables."""
-    names = set()
-    for tbl in tables:
-        names |= set(tbl.colnames)
+class UnitAwareRow(table.Row):
+    def __init__(self, row: table.Row, source_table: table.Table):
+        self.row = row
+        self.src = source_table
 
-    cols = {name:[] for name in names}
-    for tbl in tables:
-        for name in names:
-            if name in tbl.colnames:
-                cols[name].extend(tbl[name].tolist())
+    def __getitem__(self, item):
+        unit = self.src[item].unit
+        return super().__getitem__(item) * unit
 
-    stacked = table.Table(data=cols)
-    return stacked
+
+@contextmanager
+def catch_QTable_unit_warnings():
+    """
+    Suppress the noisy Astropy warning:
+      '... has a unit but is kept as a MaskedColumn ...'
+    that can be emitted when constructing QTables.
+
+    Usage:
+        with catch_QTable_unit_warnings():
+            planets = table.QTable(planets)
+            hosts = table.QTable(hosts)
+    """
+    with warnings.catch_warnings():
+        # Start from default filters inside this context
+        warnings.simplefilter("default")
+
+        # Limit to astropy.table module & Astropy warnings to avoid hiding unrelated issues
+        shared_kws = dict(
+            action="ignore",
+            message=r".*has a unit but is kept as a (?:Masked)?Column"
+            )
+        warnings.filterwarnings(**shared_kws, category=AstropyWarning)
+        warnings.filterwarnings(**shared_kws, category=AstropyUserWarning)
+
+        yield

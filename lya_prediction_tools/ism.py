@@ -23,6 +23,8 @@ def ism_velocity(ra, dec):
     target_directions = coord.SkyCoord(ra, dec)
     target_vectors = target_directions.represent_as('cartesian').xyz
 
+    if hasattr(target_vectors, 'to_value'):
+        target_vectors = target_vectors.to_value()
     v_sun_component = np.dot(v_sun_vector.to_value(), target_vectors) * v_sun_vector.unit
     return v_sun_component
 
