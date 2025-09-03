@@ -78,7 +78,7 @@ def is_raw_science(file):
 
 def read_etc_output(etc_output_file):
     try:
-        pattern = r'.*stis-(.*?)\..*(.*?)exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
+        pattern = r'etc.hst-\w+-(.*?)\..*(.*?)exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
         result, = re.findall(pattern, etc_output_file.name)
         grating, date, expt, flux, aperture = result
     except ValueError as e:

@@ -47,7 +47,7 @@ for target, props  in zip(targets, proptbl):
     f = xray['flux'].value
     Fx = utils.flux_integral(w, f, range=_wband, bin_widths=dw) * u.Unit('erg s-1 cm-2')
 
-    getprop = lambda key: catutils.get_quantity(key, props, proptbl)
+    getprop = lambda key: catutils.get_quantity_flexible(key, props, proptbl)
     R = getprop('st_rad')
     d = getprop('sy_dist')
 

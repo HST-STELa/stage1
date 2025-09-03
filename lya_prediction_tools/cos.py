@@ -20,3 +20,11 @@ def read_lsf(path_lsf, wavelength):
     x = np.arange(len(ynorm))
 
     return x, ynorm
+
+
+default_etc_filenames = dict(
+    g130m = {
+        'psa': 'etc.hst-cos-g130m.2025-08-14.2026269.exptime900_flux1e-13_aperturepsa.csv'
+    }
+)
+

@@ -6,7 +6,6 @@ import empirical
 import utilities as utils
 
 
-
 def rossby_number(mass, rotation_period):
     tau = empirical.turnover_time(mass.to_value('Msun'))
     return rotation_period / tau

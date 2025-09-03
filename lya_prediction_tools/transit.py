@@ -3,25 +3,29 @@ from math import pi, nan
 import numpy as np
 from tqdm import tqdm
 from astropy import units as u
-from astropy.table import Table, Row, QTable
+from astropy.table import Row, QTable, Column
 from matplotlib import pyplot as plt
-
-import utilities as utils
 
 from lya_prediction_tools import ism
 from lya_prediction_tools import lya
 from lya_prediction_tools import stis
 from lya_prediction_tools import variability
 
+import utilities as utils
+import catalog_utilities as catutils
 
-def opaque_tail_depth(catalog):
-    Mp = catalog['pl_bmasse'].filled(nan).quantity
-    mass_provenance = catalog['pl_bmassprov'].filled('').astype(str)
+
+def opaque_tail_depth(catalog_or_row):
+    catalog_or_row = catalog_or_row
+    get = lambda name: catutils.get_quantity_flexible(name, catalog_or_row, catalog_or_row, True, nan)
+    Mp = get('pl_bmasse')
+    Ms = get('st_mass')
+    a = get('pl_orbsmax')
+    Rs = get('st_rad')
+    mass_provenance = catutils.get_value_or_col_filled('pl_bmassprov', catalog_or_row, '')
+    mass_provenance = mass_provenance.astype(str) if isinstance(mass_provenance, Column) else str(mass_provenance)
     massless_giant = (Mp > 0.41*u.Mjup) & (np.char.count(mass_provenance, 'Mass') == 0)
     Mp[massless_giant] = 1*u.Mjup
-    Ms = catalog['st_mass'].filled(nan).quantity
-    a = catalog['pl_orbsmax'].filled(nan).quantity
-    Rs = catalog['st_rad'].filled(nan).quantity
     Rhill = (a * (Mp / 3 / Ms)**(1./3))
     Rhill = Rhill.to('Rsun')
     Ahill = Rhill*2*Rs*2 # rectangular transit to approximate an opaque tail
@@ -225,7 +229,7 @@ def flat_transit_transmission(
         rv_range:u.Quantity):
     timemask = utils.is_in_range(tgrid, *time_range)
     vgrid = lya.w2v(wgrid.to_value('AA')) * u.km/u.s - rv_star
-    flat_depth, = opaque_tail_depth(Table(rows=[planet]))  # takes a table as input, hence the [[i]]
+    flat_depth = opaque_tail_depth(planet)
 
     flat_transit_wavemask = utils.is_in_range(vgrid, *rv_range)
     flat_transmission = np.ones((len(tgrid), len(wgrid)))
@@ -245,7 +249,7 @@ def generic_transit_snr(
         transit_wavegrid,
         transit_transmission_ary,
         lya_recon_wavegrid,
-        lya_recon_flux_ary,
+        lya_recon_flux,
         spectrograph_object,
         rv_star,
         rv_ism,
@@ -254,13 +258,15 @@ def generic_transit_snr(
         jitter,
         diagnostic_plots=False,
 ):
-    if lya_recon_flux_ary.ndim == 1:
-        lya_recon_flux_ary = lya_recon_flux_ary[None,:]
+    """Compute transit snr iterating over the first dimension of the transmission arrays, gaining some efficiency
+    by pre-computing wavelength and time gridded values and variability estimates that don't change across transit
+    cases."""
+
+    assert lya_recon_flux.ndim == 1
     if transit_transmission_ary.ndim == 2:
         transit_transmission_ary = transit_transmission_ary[None, :, :]
-    assert lya_recon_flux_ary.shape[0] == transit_transmission_ary.shape[0]
 
-    if diagnostic_plots and len(lya_recon_flux_ary) > 20:
+    if diagnostic_plots and len(transit_transmission_ary) > 20:
         raise ValueError('This would create over 40 plots. For your sanity, no.')
 
     # masks for observations that are in the baseline and transit ranges
@@ -316,7 +322,7 @@ def generic_transit_snr(
     rows = []
     wavefigs = []
     timefigs = []
-    for lya_recon_flux, transit_transmission in zip(lya_recon_flux_ary, transit_transmission_ary):
+    for transit_transmission in transit_transmission_ary:
         row = {}
 
         # average the transits over the observation intervals using the "intergolate" function I wrote

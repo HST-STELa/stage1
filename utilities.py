@@ -1,6 +1,7 @@
 import warnings
 from math import nan
 import sys
+from pathlib import Path
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -321,6 +322,7 @@ def query_next_step(batch_mode=True, care_level=0, threshold=0):
                 raise StopIteration
 
 
+# region plot utilities
 def save_standard_mpld3(fig, path):
     dpi = fig.get_dpi()
     fig.set_dpi(150)
@@ -329,16 +331,28 @@ def save_standard_mpld3(fig, path):
     fig.set_dpi(dpi)
 
 
-def step_edges(bin_edges, y, ax=plt.gca(), **plt_kws):
+def step_edges(bin_edges, y, ax='current', **plt_kws):
+    if ax == 'current':
+        ax = plt.gca()
     edges2x = np.repeat(bin_edges, 2)
     y2 = np.repeat(y, 2)
     result = ax.plot(edges2x[1:-1], y2, **plt_kws)
     return result
 
 
-def step_mids(bin_midpts, y, ax=plt.gca(), bin_widths=None, **plt_kws):
+def step_mids(bin_midpts, y, ax='current', bin_widths=None, **plt_kws):
+    if ax == 'current':
+        ax = plt.gca()
     edges = mids2bins(bin_midpts, bin_widths=bin_widths)
     return step_edges(edges, y, ax=ax, **plt_kws)
+
+
+def save_pdf_png(fig, basepath, pngdpi=300):
+    basepath = Path(basepath)
+    fig.savefig(basepath.parent / (basepath.name + '.pdf'))
+    fig.savefig(basepath.parent / (basepath.name + '.png'), dpi=pngdpi)
+
+# endregion
 
 
 def rebin(new_edges, old_edges, y):
@@ -412,15 +426,22 @@ def chunk_edges(chunk_mask):
     return list(zip(starts, ends))
 
 
-def printprogress(items):
+def printprogress(items, attr=None):
     """
     Generator that yields items from a list while printing progress
     on the same line.
     """
     total = len(items)
     for i, item in enumerate(items, start=1):
-        msg = f"{i}/{total}: {item}"
-        sys.stdout.write("\r" + msg + " " * 10)  # pad to clear leftovers
+        lbl = item if attr is None else getattr(item, attr)
+        msg = f"{i}/{total}: {lbl}"
+        sys.stdout.write("\r" + msg + " " * 10 + "\n")  # pad to clear leftovers
         sys.stdout.flush()
         yield item
     print()  # move to a new line at the end
+
+
+def qrange(a: Quantity, b: Quantity, step: Quantity):
+    u = a.unit
+    x = np.arange(a.to_value(u), b.to_value(u), step.to_value(u))
+    return x * u

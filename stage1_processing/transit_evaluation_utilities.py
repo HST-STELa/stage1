@@ -1,19 +1,22 @@
 import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import List, Mapping, Literal
 from copy import copy
 
 import numpy as np
+import numpy.typing as npt
 from astropy import units as u
 from astropy.coordinates import SkyCoord
-from astropy.table import Table, vstack, QTable
+from astropy.table import Table, QTable, Row
 import h5py
+import pandas as pd
 
 import paths
 import utilities as utils
 import hst_utilities
 import database_utilities as dbutils
+import catalog_utilities as catutils
 import empirical
 
 from stage1_processing import preloads
@@ -44,19 +47,19 @@ etc_filenames = dict(
 )
 
 
-# @lru_cache(maxsize=None) # enables caching for identical calls
+@lru_cache(maxsize=None) # enables caching for identical calls
 def get_spectrograph_object(grating, aperture, host_ra, host_dec) -> Spectrograph:
     # load in spectrograph info
     usecos = grating == 'g130m'
     usestis = grating in ['g140m', 'e140m']
     assert usecos or usestis, 'Not sure what spectrograh to use for that grating.'
-    folder = paths.cos if usecos else paths.stis
-    etc_file = folder / stis.default_etc_filenames[grating][aperture]
+    folder, spec = (paths.cos, cos) if usecos else (paths.stis, stis)
+    etc_file = folder / spec.default_etc_filenames[grating][aperture]
     etc = hst_utilities.read_etc_output(etc_file)
     if usestis:
         lsf_name = f'lsf.hst-stis-{grating}-1200.txt'
-        proxy_aperture = stis.proxy_lsf_apertures[grating].get(aperture, aperture)
-        lsf_x, lsf_y = stis.read_lsf(folder / lsf_name, aperture=proxy_aperture)
+        proxy_aperture = spec.proxy_lsf_apertures[grating].get(aperture, aperture)
+        lsf_x, lsf_y = spec.read_lsf(folder / lsf_name, aperture=proxy_aperture)
     else:
         lsf_name = f'lsf.hst-cos-{grating}-1291-lp5.txt'
         lsf_x, lsf_y = cos.read_lsf(folder / lsf_name, wavelength=1215.67)
@@ -140,7 +143,7 @@ class LyaReconstruction(object):
         return np.asarray(flux_ary)
 
 
-# @lru_cache(maxsize=None) # enables caching for faster reuses of the same file
+@lru_cache(maxsize=None) # enables caching for faster reuses of the same file
 def get_lyarecon_object(filepath) -> LyaReconstruction:
     return LyaReconstruction(filepath)
 
@@ -222,8 +225,7 @@ class Host(object):
         # make planet objects
         planets = []
         for i, row in enumerate(planet_rows):
-            planet = Planet(row, i)
-            planet.dbname = f'{self.dbname} {planet.stela_suffix}'
+            planet = Planet(row, i, self.dbname)
             planets.append(planet)
         self.planets = planets
 
@@ -278,8 +280,9 @@ class HostVariability(object):
     def __init__(self, host:Host, variability_predictor:VariabilityPredictor):
         x = host.params
         if not hasattr(x['st_rad'], 'unit'):
-            raise ValueError('Host parameters, which is just a Table.Row object, has not units. To ensure units, '
-                             'be sure the host and planet catalogs are transformed into ')
+            raise ValueError('Host parameters, which is just a Table.Row object, has no units. To ensure units, '
+                             'be sure the host and planet catalogs are transformed into QTable')
+        Mstar = x['st_mass'].unmasked # unmasked avoids a bug in mors when the value is a MaskedQuantity
 
         # get or guess at age
         fallback_age = 5 * u.Gyr
@@ -299,9 +302,8 @@ class HostVariability(object):
         # get or guess at rotation period
         if np.ma.is_masked(x['st_rotp']) or (x['st_rotplim'] != 0):
             # estimate Prot based on age
-            Mstar = x['st_mass']
             mass_for_track = max(min(1.2 * u.Msun, Mstar), 0.1 * u.Msun) # mass to use for rotation tracks, which have a min and max
-            Prot = empirical.Prot_from_age_johnstone21(age, mass_for_track) * u.d
+            Prot = empirical.Prot_from_age_johnstone21(age, mass_for_track)
             self.Prot_source = 'estimated from age'
         else:
             Prot = x['st_rotp']
@@ -322,30 +324,43 @@ class HostVariability(object):
         self.jitter = jitter_star
         self.rotation_amplitude = Arot
 
-    def total_jitter(self, aperture):
-        jitter_breathing = stis.breathing_rms[aperture]
-        jitters = np.array((self.jitter, jitter_breathing))
-        return utils.quadsum(jitters)
-
 
 class Planet(object):
-    def __init__(self, planet_row, planet_row_order):
+    def __init__(self, planet_row, planet_row_order, host_dbname):
         self.params = copy(planet_row)
         self.sim_letter = get_outflow_sim_letter(planet_row, planet_row_order)
-        _tbl = Table(rows=[dict(planet_row)], masked=True)
+        _tbl = planet_row.table[[planet_row.index]]
         self.stela_suffix, = dbutils.planet_suffixes(_tbl)
         self.optical_transit_duration = planet_row['pl_trandur']
         self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 10 * u.h))  # long egress for tails
+        self.dbname = f'{host_dbname}-{self.stela_suffix}'
 
-
-@dataclass(frozen=True)
-class Transit:
+@dataclass
+class TransitModelSet:
     timegrid : np.ndarray
     wavegrid : np.ndarray
     transmission : np.ndarray
-    search_rvs : u.Quantity
-    x_params: Optional[Mapping[str, np.ndarray]] = field(default_factory=dict)
-    extras : Optional[Dict] = field(default_factory=dict)
+    params: Mapping[str, npt.ArrayLike]
+    df: pd.Series = field(init=False)
+
+    def __post_init__(self):
+        index = pd.MultiIndex.from_arrays(list(self.params.values()),
+                                          names=list(self.params.keys()))
+        self.df = pd.Series(list(self.transmission), index=index)
+
+    def loc_transmission(self, **param_value_pairs):
+        # homogenize units
+        for key, val in param_value_pairs.items():
+            if hasattr(val, 'unit'):
+                param_unit = self.params[key].unit
+                param_value_pairs[key] = val.to_value(param_unit)
+
+        # Create a tuple of keys in the order of the MultiIndex
+        keys = tuple(param_value_pairs.get(name, slice(None)) for name in self.df.index.names)
+        result = self.df.loc[pd.IndexSlice[keys]]
+        if isinstance(result, pd.Series):
+            result = np.vstack(result.to_numpy())
+        return result
 
 
 _temp_simfile, = list(paths.data_targets.rglob(f'hd149026*outflow-tail-model*transit-b.h5'))
@@ -353,7 +368,7 @@ with h5py.File(_temp_simfile) as f:
     _default_sim_wavgrid = f['wavgrid'][:] * 1e8
 
 
-# @lru_cache(maxsize=None)
+@lru_cache(maxsize=None)
 def get_transit_from_simulation(host, planet):
     file, = host.folder.rglob(f'*outflow-tail-model*transit-{planet.sim_letter}.h5')
     # load in the transit models
@@ -390,7 +405,7 @@ def get_transit_from_simulation(host, planet):
     Tion = Tion.to('h')
     x_params = dict(eta=eta, mdot_star=mdot_star, Tion=Tion)
 
-    transitobj = Transit(
+    transitobj = TransitModelSet(
         timegrid,
         wavegrid_earth,
         transmission_corrected,
@@ -407,14 +422,13 @@ def construct_flat_transit(
         exptimes: u.Quantity,
         rv_grid_span: u.Quantity,
         rv_range: u.Quantity,
-        search_rvs: u.Quantity,
 ):
     ta = (obstimes[0] - exptimes[0] / 2)
     tb = (obstimes[-1] + exptimes[-1] / 2)
-    dt = 0.25
-    tgrid = np.arange(ta, tb + dt, dt) * u.h
-    vgrid = np.arange(*rv_grid_span.to_value('km s-1'), 10) * u.km / u.s,
-    wgrid = lya.v2w((vgrid + host.rv).to_value('km s-1'))
+    dt = 0.25 * u.h
+    tgrid = utils.qrange(ta, tb + dt, dt)
+    vgrid = utils.qrange(*rv_grid_span, 10*u.km/u.s)
+    wgrid = lya.v2w((vgrid + host.rv).to_value('km s-1')) * u.AA
     transmission, depth = transit.flat_transit_transmission(
         planet.params,
         tgrid=tgrid,
@@ -423,192 +437,97 @@ def construct_flat_transit(
         rv_star=host.rv,
         rv_range=rv_range
     )
-    x_params = {'injected times': planet.in_transit_range,
-                'injected rvs': rv_range,
-                'depth': depth}
-    transitobj = Transit(tgrid, wgrid, transmission, search_rvs)
+    transmission = transmission[None,...]
+    to1d = lambda x: u.Quantity([x])
+    x_params = {'start': to1d(planet.in_transit_range[0]),
+                'stop': to1d(planet.in_transit_range[1]),
+                'rv_blue': to1d(rv_range[0]),
+                'rv_red': to1d(rv_range[1]),
+                'depth': to1d(depth)}
+    transitobj = TransitModelSet(tgrid.to_value('h'), wgrid.to_value('AA'), transmission, x_params)
     return transitobj
 
 
-def broadcast_lya_and_transmission(
-        lyarecon_object: LyaReconstruction,
-        lya_sigmas_cases: Sequence[float],
-        transmission_ary: np.ndarray,
-        extras: Optional[Dict] = None,
-):
-    """
-    Given N Lya cases and M transmission snapshots, returns tiled/repeated arrays so that
-    you can evaluate all N*M combinations in one call to generic_transit_snr.
-    """
-
-    lya_flux_ary = lyarecon_object.get_ary(lya_sigmas_cases)
-
-    n = np.shape(lya_flux_ary)[0]
-    m = np.shape(transmission_ary)[0]
-
-    x_lya_flux = np.repeat(np.asarray(lya_flux_ary), m, axis=0)
-    x_transmission = np.tile(transmission_ary, (n, 1, 1))
-
-    lya_case_labels = [lyarecon_object.sig2lbl[sig] for sig in lya_sigmas_cases]
-    labels = dict(
-        lya_cases=np.repeat(np.asarray(lya_case_labels), m),
-        lya_sigs=np.repeat(np.asarray(lya_sigmas_cases), m),
-    )
-
-    x_extras = {}
-    if extras:
-        for k, v in extras.items():
-            v = np.asarray(v)
-            if v.ndim == 1 and v.shape[0] == m:
-                x_extras[k] = np.tile(v, n)
-            elif v.ndim == 1 and v.shape[0] == n:
-                x_extras[k] = np.repeat(v, m)
-            else:
-                # default: assume matches transmission row dimension
-                x_extras[k] = np.tile(v, (n,) + (1,) * v.ndim)
-
-    return x_lya_flux, x_transmission, labels, x_extras
-
-
-def run_snr_grid(
-    planet: Planet,
-    host: Host,
-    host_variability: HostVariability,
-    time_offsets: Iterable,
-    grating_apertures: Iterable[Tuple[str, str]],
-    lya_flux_ary: np.ndarray,
-    transit_timegrid: np.ndarray,
-    transit_wavegrid: np.ndarray,
-    transit_transmission_ary: np.ndarray,
-    transit_search_rvs: Tuple[float, float],
-    exptime_fn,
-    obstimes: u.Quantity,
-    baseline_time_range: u.Quantity,
-    normalization_search_rvs: u.Quantity,
-    extra_cols: Optional[Mapping[str, np.ndarray]] = None
-) -> QTable:
-    """
-    Evaluates generic_transit_snr over all (grating, aperture) pairs for given inputs.
-    Appends provenance columns and vertically stacks into a single Table.
-    """
-    tbls: List[QTable] = []
-    for time_offset in time_offsets:
-        for grating, aperture in grating_apertures:
-            ra, dec = host.params['ra'], host.params['dec']
-            spec = get_spectrograph_object(grating, aperture, ra, dec)
-            jit = host_variability.total_jitter(aperture)
-            expt = exptime_fn(aperture) + time_offset
-
-            sigma_tbl = transit.generic_transit_snr(
-                obstimes=obstimes,
-                exptimes=expt,
-                baseline_time_range=baseline_time_range,
-                in_transit_time_range=planet.in_transit_range,
-                normalization_search_rvs=normalization_search_rvs,
-                transit_search_rvs=transit_search_rvs,
-                transit_timegrid=transit_timegrid,
-                transit_wavegrid=transit_wavegrid,
-                transit_transmission_ary=transit_transmission_ary,
-                lya_recon_flux_ary=lya_flux_ary,
-                lya_recon_wavegrid=host.lya_reconstruction.wavegrid_earth,
-                spectrograph_object=spec,
-                rv_star=host.rv,
-                rv_ism=host.rv_ism,
-                rotation_period=host_variability.Prot,
-                rotation_amplitude=host_variability.rotation_amplitude,
-                jitter=jit,
-            )
-            sigma_tbl['time offset'] = time_offset
-            sigma_tbl['grating'] = grating
-            sigma_tbl['aperture'] = aperture
-            if extra_cols:
-                for k, v in extra_cols.items():
-                    sigma_tbl[k] = v
-            tbls.append(sigma_tbl)
-
-    if not tbls:
-        return QTable()
-    else:
-        return vstack(tbls, join_type='exact')
-
-
-def build_snr_sampler_fn(
+def build_snr_sampler_fns(
         planet: Planet,
         host: Host,
         host_variability: HostVariability,
-        transit: Transit,
+        transit_model: TransitModelSet,
         exptime_fn,
         obstimes: u.Quantity,
         baseline_time_range: u.Quantity,
         normalization_search_rvs: u.Quantity,
         transit_search_rvs,
 ):
-    def snr_single_case(offset, grating_aperture, lya_case):
+    ra, dec = host.params['ra'], host.params['dec']
 
+    def snr_single_case(offset, grating, aperture, lya_case, diagnostic_plots=False, transit_keys=None):
 
-    def snr_case_by_case(time_offsets, grating_apertures, lya_cases):
-        lya = host.lya_reconstruction
-        extra_cols = {**transit.extras,
-                      'lya reconstruction case': [lya.sig2lbl[case] for case in lya_cases]}
-        bdcst_data = broadcast_lya_and_transmission(
-            host.lya_reconstruction,
-            lya_cases,
-            transit.transmission,
-            extra_cols
+        if transit_keys is None:
+            transmission = transit_model.transmission
+        else:
+            transmission = transit_model.loc_transmission(**transit_keys)
+
+        spec = get_spectrograph_object(grating, aperture, ra, dec)
+
+        jitter_breathing = 0 if aperture in ['psa', 'boa'] else stis.breathing_rms[aperture]
+        jitters = np.array((host_variability.jitter, jitter_breathing))
+        jitter = utils.quadsum(jitters)
+
+        obstimes_offset = obstimes + offset
+        expt = exptime_fn(aperture)
+        lya_flux = host.lya_reconstruction.fluxes[lya_case]
+
+        result = transit.generic_transit_snr(
+            obstimes=obstimes_offset,
+            exptimes=expt,
+            baseline_time_range=baseline_time_range,
+            in_transit_time_range=planet.in_transit_range,
+            normalization_search_rvs=normalization_search_rvs,
+            transit_search_rvs=transit_search_rvs,
+            transit_timegrid=transit_model.timegrid,
+            transit_wavegrid=transit_model.wavegrid,
+            transit_transmission_ary=transmission,
+            lya_recon_flux=lya_flux,
+            lya_recon_wavegrid=host.lya_reconstruction.wavegrid_earth,
+            spectrograph_object=spec,
+            rv_star=host.rv,
+            rv_ism=host.rv_ism,
+            rotation_period=host_variability.Prot,
+            rotation_amplitude=host_variability.rotation_amplitude,
+            jitter=jitter,
+            diagnostic_plots=diagnostic_plots
         )
-        lya_flux, transmisison, lya_labels, extra_cols = bdcst_data
 
+        # add transit parameter info if a full set was run
+        if transit_keys is None:
+            sigma_tbl = result[0] if diagnostic_plots else result
+            for k, v in transit_model.params.items():
+                sigma_tbl[k] = v
+
+        return result
+
+    def snr_case_by_case(time_offsets, grating_aperture_pairs, lya_cases):
         tbls: List[QTable] = []
         for time_offset in time_offsets:
-            for grating, aperture in grating_apertures:
-                ra, dec = host.params['ra'], host.params['dec']
-                spec = get_spectrograph_object(grating, aperture, ra, dec)
-                jit = host_variability.total_jitter(aperture)
-                obstimes_offset = obstimes + time_offset
-                expt = exptime_fn(aperture)
-
-                sigma_tbl = transit.generic_transit_snr(
-                    obstimes=obstimes,
-                    exptimes=expt,
-                    baseline_time_range=baseline_time_range,
-                    in_transit_time_range=planet.in_transit_range,
-                    normalization_search_rvs=normalization_search_rvs,
-                    transit_search_rvs=transit_search_rvs,
-                    transit_timegrid=transit.timegrid,
-                    transit_wavegrid=transit.wavegrid,
-                    transit_transmission_ary=transmisison,
-                    lya_recon_flux_ary=lya_flux,
-                    lya_recon_wavegrid=host.lya_reconstruction.wavegrid_earth,
-                    spectrograph_object=spec,
-                    rv_star=host.rv,
-                    rv_ism=host.rv_ism,
-                    rotation_period=host_variability.Prot,
-                    rotation_amplitude=host_variability.rotation_amplitude,
-                    jitter=jit,
-                )
-                sigma_tbl['time offset'] = time_offset
-                sigma_tbl['grating'] = grating
-                sigma_tbl['aperture'] = aperture
-                if extra_cols:
-                    for k, v in extra_cols.items():
-                        sigma_tbl[k] = v
-                tbls.append(sigma_tbl)
-
-            if not tbls:
-                return QTable()
-            else:
-                return vstack(tbls, join_type='exact')
-
-        return
-
-
-
+            for grating, aperture in grating_aperture_pairs:
+                for lya_case in lya_cases:
+                    sigma_tbl = snr_single_case(time_offset, grating, aperture, lya_case, False)
+                    sigma_tbl['time offset'] = time_offset
+                    sigma_tbl['grating'] = grating
+                    sigma_tbl['aperture'] = aperture
+                    sigma_tbl['lya reconstruction case'] = host.lya_reconstruction.sig2lbl[lya_case]
+                    tbls.append(sigma_tbl)
+        if not tbls:
+            return QTable()
+        else:
+            return catutils.table_vstack_flexible_shapes(tbls)
 
     return snr_case_by_case, snr_single_case
 
 
 def best_by_mean_snr(tbl: Table, category_column: str) -> str:
-    """Pick the aperture with the highest mean 'transit sigma' across rows."""
+    """Pick the category value with the highest mean 'transit sigma' across rows."""
     xunq = np.unique(tbl[category_column])
     means = [np.nanmean(tbl['transit sigma'][tbl[category_column] == x]) for x in xunq]
     return xunq[int(np.nanargmax(means))]
@@ -622,10 +541,10 @@ def filter_to_obs_choices(snr_tbl):
 
 
 def make_diagnostic_plots(
-    title: str,
-    outprefix: str,
-    case_row: Mapping,
-    snr_fn
+        planet: Planet,
+        transit: TransitModelSet,
+        snr_fn,
+        case_row: Row,
 ):
     """
     Re-run generic_transit_snr with diagnostic_plots=True for a single row selection;
@@ -633,28 +552,55 @@ def make_diagnostic_plots(
     """
     from matplotlib import pyplot as plt
 
+    # keys for the observation case
     grating = case_row['grating']
     aperture = case_row['aperture']
     offset = case_row['time offset']
     lya_case_lbl = case_row['lya reconstruction case']
     lya_case_sigma = LyaReconstruction.lbl2sig[lya_case_lbl]
 
-    _, wfigs, tfigs = snr_fn([offset], [(grating, aperture)], [lya_case_sigma], diagnostic_plots=True)
+    # keys for the transit case
+    transit_param_cols = list(transit.params.keys())
+    transit_keys = {key:case_row[key] for key in transit_param_cols}
+
+    _, wfigs, tfigs = snr_fn(
+        offset, grating, aperture, lya_case_sigma,
+        diagnostic_plots=True, transit_keys=transit_keys
+    )
+
+    title = planet.dbname
 
     wfig, = wfigs
-    wfig.tight_layout()
     wfig.suptitle(title)
-    wname_pdf = f'{outprefix}.plot-spectra-snr.pdf'
-    wname_png = f'{outprefix}.plot-spectra-snr.png'
-    wfig.savefig(wname_pdf)
-    wfig.savefig(wname_png, dpi=300)
+    wfig.tight_layout()
 
     tfig, = tfigs
-    tfig.tight_layout()
     tfig.suptitle(title)
-    tname_pdf = f'{outprefix}.plot-lightcurve-snr.pdf'
-    tname_png = f'{outprefix}.plot-lightcurve-snr.png'
-    tfig.savefig(tname_pdf)
-    tfig.savefig(tname_png, dpi=300)
+    tfig.tight_layout()
 
-    plt.close('all')
+    return wfig, tfig
+
+
+class FileNamer(object):
+    descriptors = {
+        'model': 'outflow-tail-model',
+        'flat': 'simple-opaque-tail'
+    }
+
+    def __init__(self, transit_type: Literal['model', 'flat'], planet):
+        descriptor = self.descriptors[transit_type]
+        self.snr_tbl = f'{planet.dbname}.{descriptor}.detection-sigmas.ecsv'
+        self.corner_basename = self.snr_tbl.replace('.ecsv', f'.plot-snr-corner')
+
+    def diagnostic_plot_basename(
+            self,
+            type: Literal['spectra', 'lightcurve'],
+            snr_case: Literal['max', 'median']):
+        plot_prefix = self.snr_tbl.replace('detection-sigmas', f'detection-sigmas-{snr_case}')
+        return f'{plot_prefix}.plot-{type}'
+
+
+def save_diagnostic_plots(wfig, tfig, snr_case, host, filenamer: FileNamer):
+    get_path = lambda type: host.transit_folder / filenamer.diagnostic_plot_basename(type, snr_case)
+    utils.save_pdf_png(wfig, get_path('spectra'))
+    utils.save_pdf_png(tfig, get_path('lightcurve'))

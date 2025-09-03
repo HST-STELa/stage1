@@ -1,7 +1,6 @@
 from functools import lru_cache
-import warnings
 
-from astropy.table import Table, QTable, vstack
+from astropy.table import Table
 from astropy import units as u
 import numpy as np
 from matplotlib import pyplot as plt
@@ -45,7 +44,7 @@ from lya_prediction_tools import lya
 
 targets = target_lists.eval_no(1)
 mpl.use('Agg') # plots in the backgrounds so new windows don't constantly interrupt my typing
-# mpl.use('qt5gg') # plots are shown
+# mpl.use('qt5agg') # plots are shown
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
 
@@ -75,8 +74,9 @@ def exptime_fn(aperture):
 
 obstimes = [-22.5, -21., -3., -1.5,  0.,  1.5,  3.] * u.h
 exptimes = [2000, 2700, 2000, 2700, 2700, 2700, 2700] * u.s
-baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + 1*u.h))
 offsets = (0, 3)*u.h
+baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + max(offsets) + 1*u.h))
+assert baseline_range[-1] < -12*u.h
 baseline_apertures = dict(g140m='52x0.2', e140m='6x0.2')
 cos_consideration_threshold_flux = 2e-14
 
@@ -109,7 +109,7 @@ planet_catalog.add_index('tic_id')
 
 #%% helper to construct host object and then add variability guesses based on assumptions above
 
-# @lru_cache
+@lru_cache
 def get_host_objects(name):
     host = tutils.Host(name)
     # add variability guesses based on the variability_predictor set earlier in this script
@@ -123,12 +123,12 @@ def explore_snrs(
         planet: tutils.Planet,
         host: tutils.Host,
         host_variability: tutils.HostVariability,
-        transit: tutils.Transit,
+        transit: tutils.TransitModelSet,
         transit_search_rvs: u.Quantity,
         exptime_fn
-) -> QTable:
+):
 
-    snr_cases, snr_single = tutils.build_snr_sampler_fn(
+    snr_cases, snr_single = tutils.build_snr_sampler_fns(
         planet,
         host,
         host_variability,
@@ -154,7 +154,7 @@ def explore_snrs(
     grating_apertures = [(grating, ap) for ap in apertures]
     tbl2 = snr_cases([offset], grating_apertures, [0])
     aperture = tutils.best_by_mean_snr(tbl2, 'aperture')
-    tbl2.meta['best stis aperture'] = aperture
+    tbl2.meta['best stis aperture'] = str(aperture)
 
     # run for all lya cases
     print('Running for the plausible Lya range.')
@@ -169,16 +169,13 @@ def explore_snrs(
     if Flya > cos_consideration_threshold_flux:
         print('Target Lya flux makes it eligible for COS: adding estimates for COS SNRs.')
         tbl3.meta['COS considered'] = True
-        tbl4 = snr_cases([offset], [('cos', 'psa')], cases)
+        tbl4 = snr_cases([offset], [('g130m', 'psa')], cases)
         tbls.append(tbl4)
     else:
         tbl3.meta['COS considered'] = False
         tbl3.meta['notes'] = 'COS not considered because flux too low.'
 
-    def diagnostic_plot_fn(offset, grating, aperture, lya_sigma):
-
-
-    return vstack(tbls), diagnostic_plot_fn
+    return catutils.table_vstack_flexible_shapes(tbls), snr_single
 
 
 #%% loop through planets and targets and compute transit sigmas
@@ -186,9 +183,9 @@ def explore_snrs(
 for target in utils.printprogress(targets):
     host, host_variability = get_host_objects(target)
 
-    for planet in host.planets:
+    for planet in utils.printprogress(host.planets, 'dbname'):
         transit = tutils.get_transit_from_simulation(host, planet)
-        snrs, daignostic_plot_fn = explore_snrs(
+        snrs, get_snr = explore_snrs(
             planet,
             host,
             host_variability,
@@ -196,8 +193,9 @@ for target in utils.printprogress(targets):
             search_model_transit_within_rvs,
             exptime_fn)
 
-        snr_tbl_name = f'{planet.dbname}.outflow-tail-model.detection-sigmas.ecsv'
-        snrs.write(host.transit_folder / snr_tbl_name, overwrite=True)
+        filenamer = tutils.FileNamer('model', planet)
+
+        snrs.write(host.transit_folder / filenamer.snr_tbl, overwrite=True)
 
         # diagnostic plots
         best_snrs = tutils.filter_to_obs_choices(snrs)
@@ -205,32 +203,24 @@ for target in utils.printprogress(targets):
         cases = {'max': isort[-1],
                  'median': isort[len(isort) // 2]}
         for case, k in cases.items():
-            tutils.make_diagnostic_plots(
-                title=planet.dbname,
-                outprefix=snr_tbl_name.replace('.ecsv', f'{case}-snr'),
-                case_row=best_snrs[k],
-                snr_fn=get_snr
-            )
+            wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, best_snrs[k])
+            tutils.save_diagnostic_plots(wfig, tfig, case, host, filenamer)
 
         # corner-like plot
         labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],σ_Lya'.split(',')
-        lTion = np.log10(best_snrs['Tion'])
-        Mdot = best_snrs['mdot_star']
-        lMdot = np.log10(Mdot)
-        eta = best_snrs['eta']
-        leta = np.log10(eta)
+        lTion = best_snrs['Tion'].to_value('dex(h)')
+        lMdot = best_snrs['mdot_star'].to_value('dex(g s-1)')
+        leta = np.log10(best_snrs['eta'])
         lya_sigma = [tutils.LyaReconstruction.lbl2sig[lbl] for lbl in best_snrs['lya reconstruction case']]
         param_vecs = [leta, lTion, lMdot, lya_sigma]
         snr_vec = best_snrs['transit sigma']
         cfig, _ = pu.detection_sigma_corner(param_vecs, snr_vec, labels=labels,
                                             levels=(3,), levels_kws=dict(colors='w'))
         cfig.suptitle(planet.dbname)
-        cname_pdf = snr_tbl_name.replace('.ecsv', f'.plot-snr-corner.pdf')
-        cname_png = snr_tbl_name.replace('.ecsv', f'.plot-snr_corner.png')
-        cfig.savefig(host.transit_folder / cname_pdf)
-        cfig.savefig(host.transit_folder / cname_png, dpi=300)
+        utils.save_pdf_png(cfig, host.transit_folder / filenamer.corner_basename)
 
         plt.close('all')
+
 
 #%% flat opaque tail transit
 
@@ -238,32 +228,26 @@ for target in utils.printprogress(targets):
             planet, host, obstimes, exptimes,
             rv_grid_span=(-500, 500) * u.km/u.s,
             rv_range=simple_transit_range,
-            search_rvs=search_simple_transit_within_rvs
         )
 
         flat_snrs, get_flat_snr = explore_snrs(
             planet,
             host,
             host_variability,
-            transit,
+            flat_transit,
             search_simple_transit_within_rvs,
             exptime_fn
         )
 
-        flat_name = f'{planet.dbname}.simple-opaque-tail.detection-sigmas.ecsv'
-        snrs.write(host.transit_folder / flat_name, overwrite=True)
+        flat_filenamer = tutils.FileNamer('flat', planet)
+        flat_snrs.write(host.transit_folder / flat_filenamer.snr_tbl, overwrite=True)
 
         # diagnostic plots
-        best_snrs = tutils.filter_to_obs_choices(snrs)
-        isort = np.argsort(best_snrs['transit sigma'])
+        best_flat_snrs = tutils.filter_to_obs_choices(flat_snrs)
+        isort = np.argsort(best_flat_snrs['transit sigma'])
         i_med = isort[len(isort) // 2]
-        tutils.make_diagnostic_plots(
-            title=planet.dbname,
-            outprefix=flat_name.replace('.ecsv', 'median-snr'),
-            case_row=best_snrs[i_med],
-            snr_fn=get_snr
-        )
-
+        wfig, tfig = tutils.make_diagnostic_plots(planet, flat_transit, get_flat_snr, best_flat_snrs[i_med])
+        tutils.save_diagnostic_plots(wfig, tfig, 'median', host, flat_filenamer)
         plt.close('all')
 
 
@@ -275,104 +259,122 @@ lya_bins = (-150, -50, 50, 150) * u.km/u.s
 eval_rows = []
 for target in targets:
     host, host_variability = get_host_objects(target)
-    for i, planet in host.planets:
+    for planet in host.planets:
+        # add entries to the row in the order they should appear in the table
         row = {}
         
         row['hostname'] = host.hostname
-        row['obsvtn\ngrating'] = host.anticipated_grating
-        row['stellar\neff temp (K)'] = host.params['st_teff'] * preloads.col_units['st_teff']
-        row['age\nlimit'] = host.age_limit
-        row['age'] = host.age
-
         row['planet'] = planet.stela_suffix
-        row['planet\nradius (Re)'] = planet['pl_rade'] * preloads.col_units['pl_rade']
-        row['orbital\nperiod (d)'] = planet['pl_orbper'] * preloads.col_units['pl_orbper']
+
+        def add_config_info(snr_table, label):
+            row[f'{label}\nbest aperture'] = snr_table.meta['best stis aperture']
+            row[f'{label}\nbest offset'] = snr_table.meta['best time offset']
+
+        def add_detection_stats(snr_table, label, fraction=False):
+            maxsnr = np.max(snr_table['transit sigma'])
+            row[f'{label}\nmax snr'] = maxsnr
+            if fraction:
+                detectable = snr_table['transit sigma'] > sigma_threshold
+                detectability_fraction = np.sum(detectable) / len(snr_table)
+                row[f'{label}\nfrac w snr > {sigma_threshold}'] = detectability_fraction
+                return maxsnr, detectability_fraction
+            return maxsnr
+
+        # region model snrs
+        modlbl = 'outflow model'
+
+        # load model snr table
+        filenamer = tutils.FileNamer('model', planet)
+        sigma_tbl_path = host.transit_folder / filenamer.snr_tbl
+        snrs = Table.read(sigma_tbl_path)
+
+        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs)
+        maxsnr, frac = add_detection_stats(chosen_mode_snrs, modlbl, fraction=True)
+
+        cos = snrs.meta['COS considered']
+        row['COS\nconsidered?'] = cos
+        if cos:
+            cos_snrs = snrs[snrs['aperture'] == 'psa']
+            maxcossnr, cosfrac = add_detection_stats(cos_snrs, modlbl + ' COS', fraction=True)
+            if frac > 0:
+                row['cos det\nfrac ratio'] = cosfrac/frac
+            row['cos snr\nratio'] = maxcossnr/maxsnr
+
+        add_config_info(snrs, modlbl)
+        # endregion
+
+        # region flat transit
+        # load snr table
+        flat_filenamer = tutils.FileNamer('flat', planet)
+        flat_sigma_tbl_path = host.transit_folder / filenamer.snr_tbl
+        flat_sigma_tbl = Table.read(flat_sigma_tbl_path)
+
+        flatlbl = f'flat transit \n[{simple_transit_range[0].value:.0f}, {simple_transit_range[1].value:.0f}]'
+        flat_obs_snrs = tutils.filter_to_obs_choices(flat_sigma_tbl)
+        add_detection_stats(flat_obs_snrs, 'flat transit', fraction=False)
+        add_config_info(flat_sigma_tbl, flatlbl)
+        # endregion
+
+        wlya = host.lya_reconstruction.wavegrid_earth
+        y = host.lya_reconstruction.fluxes[0]
+        Flya = np.trapz(y, wlya)
+        row['Lya Flux\n(erg s-1 cm-2)'] = Flya
+
+        row['planet\nradius (Re)'] = planet.params['pl_rade'].to_value('Rearth')
+        row['orbital\nperiod (d)'] = planet.params['pl_orbper'].to_value('d')
+        row['stellar\neff temp (K)'] = host.params['st_teff'].to_value('K')
+        age = host.params['st_age'].to_value('Gyr')
+        if not np.ma.is_masked(age):
+            agelim_int = host.params['st_agelim']
+            if not np.ma.is_masked(agelim_int):
+                row['age\nlimit'] = catutils.limit_int2str[agelim_int]
+            row['age (Gyr)'] = host.params['st_age'].to_value('Gyr')
+
+        row['obsvtn\ngrating'] = host.anticipated_grating
 
         flag_cols = [name for name in planet_catalog.colnames if 'flag_' in name]
         for col in flag_cols:
-            row[col] = planet[col]
+            row[col] = planet.params[col]
 
         transit = tutils.get_transit_from_simulation(host, planet)
-        row['H ionztn\ntime (h)'] = (1/transit.x_params['phion']).to('h')
-
-        sigma_tbl_path, = host.folder.rglob(f'*outflow-tail*transit-{planet.stela_suffix}*sigmas.ecsv')
-        snrs = Table.read(sigma_tbl_path)
-        detectable = snrs['transit sigma'] > sigma_threshold
-        detectability_fraction = np.sum(detectable)/len(snrs)
-        row[f'frac models\nw snr > {sigma_threshold}'] = detectability_fraction
-        row['outflow model\nmax snr'] = np.max(snrs['transit sigma'])
-
-        # aperture that yields the best average snr
-        apertures = np.unique(snrs['aperture'])
-        snrs.add_index('aperture')
-        mean_snrs = [np.mean(snrs.loc[aperture]['transit sigma']) for aperture in apertures]
-        ibest = np.argmax(mean_snrs)
-        row['outflow model\nbest aperture'] = apertures[ibest]
-
-        flat_sigma_tbl_path, = host.folder.rglob(f'*simple-opaque-tail*transit-{planet.stela_suffix}*sigmas.ecsv')
-        flat_sigma_tbl = Table.read(flat_sigma_tbl_path)
-        snr = np.max(flat_sigma_tbl['transit sigma'])
-        colname = f'flat transit snr\n[{simple_transit_range[0].value:.0f}, {simple_transit_range[1].value:.0f}]'
-        row[colname] = snr
-        ibest = np.argmax(flat_sigma_tbl['transit sigma'])
-        aperture = flat_sigma_tbl['aperture'][ibest]
-        row['flat transit\nbest aperture'] = aperture
+        row['H ionztn\ntime (h)'] = np.median(transit.params['Tion']).to_value('h')
 
         eval_rows.append(row)
 
-eval_table = Table(rows=eval_rows)
+# get column ordering from longest row
+imax = np.argmax([len(row) for row in eval_rows])
+ordered_cols = list(eval_rows[imax].keys())
 
-column_order_and_names = {
-    'hostname' : '',
-    'planet' : '',
-    f'frac models\nw snr > {sigma_threshold}' : '',
-    'outflow model\nmax snr' : '',
-    f'flat transit snr\n[-150, 100]' : '',
-    'lya recnstcnt flag' : '',
-    'planet\nradius (Re)': '',
-    'H ionztn\ntime (h)': '',
-    'orbital\nperiod (d)': '',
-    'stellar\neff temp (K)': '',
-    'age\nlimit': '',
-    'age': '',
-    'flag_measured_mass': 'planet has\nmsrd mass',
-    'flag_high_TSM': 'high\nTSM',
-    'flag_gaseous': 'gaseous',
-    'flag_gas_and_rocky_in_sys': 'system has\ngaseous & rocky',
-    'flag_water_world': 'water\nworld',
-    'flag_gap_upper_cusp': 'on upper cusp\nof radius valley',
-    'flag_super_puff': 'super\npuff',
-    'lya flux\n[-150, -50]' : '',
-    'lya flux\n[-150, -50] +err' : '',
-    'lya flux\n[-150, -50] -err' : '',
-    'lya flux\n[-50, 50]' : '',
-    'lya flux\n[-50, 50] +err' : '',
-    'lya flux\n[-50, 50] -err' : '',
-    'lya flux\n[50, 150]' : '',
-    'lya flux\n[50, 150] +err' : '',
-    'lya flux\n[50, 150] -err' : '',
-    'lya flux\ncore' : '',
-    'lya flux\ncore +err' : '',
-    'lya flux\ncore -err' : '',
-    'obsvtn\ngrating' : '',
-    'outflow model\nbest aperture' : '',
-    'flat transit\nbest aperture' : ''
-}
-eval_table = eval_table[list(column_order_and_names.keys())]
-for oldcol, newcol in column_order_and_names.items():
-    if newcol != '':
-        eval_table.rename_column(oldcol, newcol)
+eval_table = Table(rows=eval_rows)
+eval_table = eval_table[ordered_cols]
 
 # some grooming
 for col in eval_table.colnames:
     if 'flag_' in col:
         eval_table[col] = eval_table[col].astype(bool)
+formats_general = {
+    'period': '.1f',
+    'frac w': '.3f',
+    'max snr': '.2f',
+    'ratio': '.2f',
+    'flux': '.1e',
+    'radius': '.2f',
+    'temp': '.0f',
+    'ionztn': '.2f'
+}
+formats = {}
+for substr, fmt in formats_general.items():
+    for name in eval_table.colnames:
+        if substr in name.lower():
+            eval_table[name].format = fmt
+            formats[name] = fmt
 
-# save
-eval_filename = 'stage2_evalution_metrics.csv'
+# save csv to open in spreadsheet viewers
+eval_filename = 'stage2_evaluation_metrics.csv'
 eval_path = paths.catalogs / eval_filename
-eval_table.write(eval_path, overwrite=True)
+eval_table.write(eval_path, overwrite=True, formats=formats)
 
+# save as an ecsv too for round tripping
 eval_table_ecsv = eval_table.copy()
 for name in eval_table_ecsv.colnames:
     eval_table_ecsv.rename_column(name, name.replace('\n', ' '))

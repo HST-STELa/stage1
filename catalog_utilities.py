@@ -315,11 +315,37 @@ def loc_indices_and_unmatched(catalog, values):
     return idx, i_matched, i_unmatched
 
 
-def get_quantity(colname, row, cat):
-    if np.ma.is_masked(row[colname]):
-        return row[colname]
+def get_value_or_col_filled(key, tbl_or_row, fillvalue=nan):
+    isrow = isinstance(tbl_or_row, table.Row)
+    x = tbl_or_row[key]
+    if isrow:
+        if np.ma.is_masked(x):
+            return fillvalue
+        else:
+            return x
     else:
-        return row[colname] * cat[colname].unit
+        return x.filled(fillvalue)
+
+
+def get_quantity_flexible(key, tbl_or_row, tbl=None, fill=False, fillvalue=nan):
+    isrow = isinstance(tbl_or_row, table.Row)
+    if fill:
+        x = get_value_or_col_filled(key, tbl_or_row, fillvalue)
+    else:
+        x = tbl_or_row[key]
+    if isrow:
+        if np.ma.is_masked(x):
+                return x
+        if hasattr(x, 'unit'):
+            return x
+        else:
+            if tbl is None:
+                raise ValueError('If you want to get a value with units from a row, either supply the source table'
+                                 'so the units can be determined from the table or use a row from an astropy QTable'
+                                 'instead of a Table.')
+            return x * tbl[key].unit
+    else:
+        return x.quantity
 
 
 def merge_tables_with_update(old, new, key):
@@ -385,15 +411,27 @@ def merge_tables_with_update(old, new, key):
     return merged
 
 
-class UnitAwareRow(table.Row):
-    def __init__(self, row: table.Row, source_table: table.Table):
-        self.row = row
-        self.src = source_table
+def table_vstack_flexible_shapes(tables, join_type='outer'):
+    """Stacks tables while avoiding shape and type mismatch errors, at the cost of possibly creating frankentables."""
 
-    def __getitem__(self, item):
-        unit = self.src[item].unit
-        return super().__getitem__(item) * unit
+    tables = [tbl.copy() for tbl in tables]
 
+    allnames = set()
+    for tbl in tables:
+        allnames |= set(tbl.colnames)
+
+    for name in allnames:
+        shapes = [tbl[name].shape[1:] for tbl in tables if name in tbl.colnames]
+        # the shape[1:] is because the first dim is just the length of the table, and it's fine if those vary
+
+        # is some tables have conflicting shapes recast as object type with no shape restriction
+        if len(set(shapes)) > 1:
+            for tbl in tables:
+                if name in tbl.colnames:
+                    x = table.Column(list(tbl[name]) + [nan], dtype='object')
+                    tbl[name] = x[:-1]
+
+    return table.vstack(tables, join_type=join_type)
 
 @contextmanager
 def catch_QTable_unit_warnings():
@@ -420,3 +458,6 @@ def catch_QTable_unit_warnings():
         warnings.filterwarnings(**shared_kws, category=AstropyUserWarning)
 
         yield
+
+
+limit_int2str = {-1:'>', 0:'', 1:'<'}

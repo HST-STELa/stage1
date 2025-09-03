@@ -267,7 +267,7 @@ while True:
 
 #%% Prot-based XUV
 
-    getprop = lambda key: catutils.get_quantity(key, props, hosts)
+    getprop = lambda key: catutils.get_quantity_flexible(key, props, hosts)
     if props['st_rotp']:
         Prot = getprop('st_rotp')
         print(f'{target} has measured Prot of {Prot:.1f}')
