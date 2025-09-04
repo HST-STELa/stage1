@@ -359,7 +359,7 @@ def test_airglow_models(three_trace_files):
     cts_per_flux_factors = []
     for file in three_trace_files:
         h = fits.open(file)
-        w, f, e, cps = [h[1].data_targets[s][0] for s in ['wavelength', 'flux', 'error', 'gross']]
+        w, f, e, cps = [h[1].data[s][0] for s in ['wavelength', 'flux', 'error', 'gross']]
         exptime = h[1].header['exptime']
         keep = (w > fit_range[0]) & (w < fit_range[1])
         fluxes.append(f[keep])

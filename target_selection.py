@@ -351,7 +351,7 @@ unique_tois.remove_rows(i_remove)
 catutils.add_filled_masked_column(unique_tois, 'hostname','', dtype='object', mask=True)
 in_cat = np.in1d(unique_tois['tic_id'], cat['tic_id'])
 tic_ids_in_cat = unique_tois['tic_id'][in_cat]
-tic_ids_in_cat = np.unique(tic_ids_in_cat.data_targets)
+tic_ids_in_cat = np.unique(tic_ids_in_cat.data)
 catutils.set_index(cat, 'tic_id')
 catutils.set_index(unique_tois, 'tic_id')
 for tic_id_ in tic_ids_in_cat:
@@ -1314,8 +1314,8 @@ cat = catutils.make_a_cut(cat, 'stage1', keepers=('requested_target', 'flag_mult
 
 #%% estimate EUV
 
-Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data_targets
-Teff = cat['st_teff'].filled(nan).data_targets
+Flya_1au = cat['Flya_1AU_adopted'].filled(nan).data
+Teff = cat['st_teff'].filled(nan).data
 Feuv_1au = empirical.EUV_Linsky14(Flya_1au, Teff)
 assert np.all(Feuv_1au > 0)
 Feuv_1au *= erg_s_cm2

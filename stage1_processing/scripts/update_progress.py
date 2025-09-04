@@ -5,8 +5,6 @@ import warnings
 
 import numpy as np
 from matplotlib import pyplot as plt
-import mpld3
-from mpld3 import plugins
 from scipy.optimize import minimize
 
 from astropy import table
@@ -43,7 +41,9 @@ prog_update = preloads.progress_table.copy()
 
 #%% load and filter latest target build
 
-cat = preloads.planets.copy()
+with catutils.catch_QTable_unit_warnings():
+    cat = preloads.planets.copy()
+
 mask = (cat['stage1'].filled(False) # either selected for stage1
         | cat['stage1_backup'].filled(False) # backup for stage1
         | cat['external_lya'].filled(False)) # or archival
@@ -61,13 +61,15 @@ roster['n_tnst'] = np.array(n_tnst)[i_inverse]
 roster['n_tnst_gas'] = np.array(n_tnst_gas)[i_inverse]
 
 # pick the highest transit SNR of planets in system
-roster_picked_transit = roster.copy()
+with catutils.catch_QTable_unit_warnings():
+    roster_picked_transit = roster.copy()
 catutils.pick_planet_parameters(roster_picked_transit, 'transit_snr_nominal', np.max, 'transit_snr_nominal')
 catutils.pick_planet_parameters(roster_picked_transit, 'transit_snr_optimistic', np.max, 'transit_snr_optimistic')
 
 # slim down to just the hosts
 catutils.scrub_indices(roster_picked_transit)
-roster_hosts = catutils.planets2hosts(roster_picked_transit)
+with catutils.catch_QTable_unit_warnings():
+    roster_hosts = catutils.planets2hosts(roster_picked_transit)
 roster_picked_transit.add_index('tic_id')
 roster_hosts.add_index('tic_id')
 target_info = roster_hosts[['tic_id']].copy()
@@ -169,7 +171,7 @@ for tic_id in target_info['TIC ID']:
     _, _, grating = config.split('-')
 
     h = fits.open(specfile, ext=1)
-    data = h[1].data_targets
+    data = h[1].data
     spec = {}
     for name in data.names:
         spec[name.lower()] = data[name][0]

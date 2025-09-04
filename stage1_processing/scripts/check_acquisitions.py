@@ -18,6 +18,7 @@ import stistools as stis
 
 import database_utilities as dbutils
 import utilities as utils
+import catalog_utilities as catutils
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
@@ -26,19 +27,20 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 #%% batch mode or single runs?
 
-batch_mode = False
+batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 
 #%% get targets
 
-targets = target_lists.observed_since('2025-06-05')
+targets = target_lists.observed_since('2025-07-14')
 itertargets = iter(targets)
 
 
 #%% properties table
 
-targprops = preloads.hosts.copy()
+with catutils.catch_QTable_unit_warnings():
+    targprops = preloads.hosts.copy()
 targprops.add_index('tic_id')
 
 
@@ -123,11 +125,11 @@ while True:
     I figured this out just by comparing coordinates for hd95338"""
     props = targprops.loc[tic_id]
     coords = SkyCoord(
-        props['ra'] * u.deg,
-        props['dec'] * u.deg,
-        pm_ra_cosdec=props['sy_pmra'] * u.mas / u.yr,
-        pm_dec=props['sy_pmdec'] * u.mas / u.yr,
-        distance=Distance(parallax=1/props['sy_dist'] * u.arcsec),
+        props['ra'],
+        props['dec'],
+        pm_ra_cosdec=props['sy_pmra'],
+        pm_dec=props['sy_pmdec'],
+        distance=props['sy_dist'],
         obstime=Time(2015.5, format='jyear')
     )
 
@@ -194,13 +196,13 @@ while True:
                 raise NotImplementedError
             if h[0].header['exptype'] == 'ACQ/PEAKXD':
                 print('PEAKXD acq')
-                print(f'\txdisp offsets: {h[1].data_targets['XDISP_OFFSET']}')
-                print(f'\tcounts: {h[1].data_targets['counts']}')
+                print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data['counts']}')
                 print(f'\tslew: {h[0].header['ACQSLEWY']}')
             if h[0].header['exptype'] == 'ACQ/PEAKD':
                 print('PEAKD acq')
-                print(f'\tdisp offsets: {h[1].data_targets['DISP_OFFSET']}')
-                print(f'\tcounts: {h[1].data_targets['counts']}')
+                print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
+                print(f'\tcounts: {h[1].data['counts']}')
                 print(f'\tslew: {h[0].header['ACQSLEWX']}')
             if h[0].header['exptype'] == 'ACQ/IMAGE':
                 fig = plt.figure(figsize=[5,3])

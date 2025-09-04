@@ -34,7 +34,7 @@ xf, = dbutils.find_data_files('x1d', instruments='hst-stis', directory=data_dir)
 
 #%%
 h = fits.open(xf, ext=1)
-data = h[1].data_targets
+data = h[1].data
 spec = {}
 exp = 13
 for name in data.names:

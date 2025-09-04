@@ -226,7 +226,7 @@ for i, row in enumerate(obs_tbl):
         counts = 0
         for file in scifiles:
             h = fits.open(file)
-            counts += len(h[1].data_targets['time'])
+            counts += len(h[1].data['time'])
             if counts <= 100:
                 reject = True
                 reason = reasons['nodata']
@@ -249,14 +249,14 @@ for i, row in enumerate(obs_tbl):
         note = ''
         for shortname, file in zip(shortnames, scifiles):
             with fits.open(file, mode='update') as h:
-                if len(h[2].data_targets['start']):
+                if len(h[2].data['start']):
                     raise NotImplementedError
                 if h[1].header['exptime'] == 0:
-                    start, stop = h[1].data_targets['time'][[0, -1]]
+                    start, stop = h[1].data['time'][[0, -1]]
                     data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
                     data['START'] = start
                     data['STOP'] = stop
-                    h[2].data_targets = data
+                    h[2].data = data
                     h[1].header['EXPTIME'] = stop - start
                     h[0].header['TEXPTIME'] = stop - start
                     h.flush()
@@ -304,7 +304,7 @@ for i in stis_indices:
                 h = fits.open(file)
                 fig, axs = plt.subplots(1, 3, figsize=[7,3])
                 for j, ax in enumerate(axs):
-                    data = h['sci', j+1].data_targets
+                    data = h['sci', j+1].data
                     ax.imshow(data)
                     ax.set_title('')
                 fig.suptitle(file.name)
@@ -439,7 +439,7 @@ for ff in fltfiles:
     id = h[0].header['asn_id'].lower()
     ids.append(id)
 
-    img = h[1].data_targets
+    img = h[1].data
     plt.figure()
     plt.title(Path(ff).name)
     plt.imshow(np.cbrt(img), aspect='auto')
@@ -447,7 +447,7 @@ for ff in fltfiles:
     fx = dbutils.modify_file_label(ff, 'x1d')
     if fx.exists():
         hx = fits.open(fx)
-        y = hx[1].data_targets['extrlocy']
+        y = hx[1].data['extrlocy']
         x = np.arange(img.shape[1]) + 0.5
         iln, = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')
     else:
@@ -467,7 +467,7 @@ for ff in fltfiles:
     xclick, yclick = xy[-1]
 
     if xclick < 100:
-        xclick, yclick = hx[1].data_targets['a2center'], y_predicted
+        xclick, yclick = hx[1].data['a2center'], y_predicted
         plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
     if fx.exists():
         # find offset to nearest trace
@@ -475,7 +475,7 @@ for ff in fltfiles:
         dist = np.abs(yt - yclick)
         imin = np.argmin(dist)
         dy = yclick - yt[imin]
-        a2 = hx[1].data_targets['a2center'] + dy
+        a2 = hx[1].data['a2center'] + dy
     else:
         a2 = yclick
 
@@ -662,7 +662,7 @@ if len(x1dfiles) == 0:
 
 for xf in x1dfiles:
     h = fits.open(xf, ext=1)
-    data = h[1].data_targets
+    data = h[1].data
     order = 36 if 'e140m' in xf.name else 0
     spec = {}
     for name in data.names:
@@ -713,7 +713,7 @@ for xf in x1dfiles:
         pltflux[~int_mask] = np.nan
         O, E = utils.flux_integral(w[int_rng], flux[int_rng], error[int_rng])
         if 'coadd' in xf.name:
-            E *= np.sqrt(h[1].data_targets['eff_exptime'].max() / 2000)
+            E *= np.sqrt(h[1].data['eff_exptime'].max() / 2000)
         snr = O/E
         plt.fill_between(v, pltflux, step='mid', color='C0', alpha=0.3)
     else:

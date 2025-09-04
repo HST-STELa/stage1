@@ -127,7 +127,7 @@ def match_by_tic_id(catalog0, catalog1):
         bad = ~np.isfinite(tic_ids)
         tic_ids[bad] = [next(unmatchable_ids) for _ in range(sum(bad))]
 
-        tic_ids = tic_ids.data_targets.reshape((-1, 1))
+        tic_ids = tic_ids.data.reshape((-1, 1))
         kd = KDTree(tic_ids)
         kds.append(kd)
     return kds[1].query_ball_tree(kds[0], 0.5)
@@ -238,7 +238,7 @@ def flag_cut(catalog, mask, decision_str, colname='stage1'):
 
 
 def find_duplicates(catalog, distlimit=0.2*u.pc):
-    fake_distance = (1000 + catalog['pl_orbper'].data_targets) * u.pc
+    fake_distance = (1000 + catalog['pl_orbper'].data) * u.pc
     positions = coord.SkyCoord(catalog['ra'], catalog['dec'], fake_distance)
     i_match, _, _, _ = positions.search_around_3d(positions, distlimit=distlimit)
     _, i_match_unique, match_count = np.unique(i_match, return_index=True, return_counts=True)
@@ -317,7 +317,7 @@ def loc_indices_and_unmatched(catalog, values):
 
 def get_value_or_col_filled(key, tbl_or_row, fillvalue=nan):
     isrow = isinstance(tbl_or_row, table.Row)
-    x = tbl_or_row[key]
+    x = tbl_or_row[key].copy()
     if isrow:
         if np.ma.is_masked(x):
             return fillvalue
@@ -332,7 +332,7 @@ def get_quantity_flexible(key, tbl_or_row, tbl=None, fill=False, fillvalue=nan):
     if fill:
         x = get_value_or_col_filled(key, tbl_or_row, fillvalue)
     else:
-        x = tbl_or_row[key]
+        x = tbl_or_row[key].copy()
     if isrow:
         if np.ma.is_masked(x):
                 return x
@@ -345,7 +345,12 @@ def get_quantity_flexible(key, tbl_or_row, tbl=None, fill=False, fillvalue=nan):
                                  'instead of a Table.')
             return x * tbl[key].unit
     else:
-        return x.quantity
+        if isinstance(x, u.Quantity):
+            return x
+        elif hasattr(x, 'quantity'):
+            return x.quantity
+        else:
+            raise ValueError('Column neither is a quantity or has a quantity attribute.')
 
 
 def merge_tables_with_update(old, new, key):

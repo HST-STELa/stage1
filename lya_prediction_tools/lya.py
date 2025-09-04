@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from lya_prediction_tools import ism
 
+import catalog_utilities as catutils
 
 # region intrinsic lya line shape
 fwhm_broad = 400*u.km/u.s # rough average from youngblood+ 2016
@@ -31,6 +32,10 @@ f = 4.1641e-01
 A = 6.2649e8 / u.s
 mH, mD = 1 * u.u, 2 * u.u
 #endregion
+
+
+def get_nanfilled(colname, tbl):
+    return catutils.get_quantity_flexible(colname, tbl, tbl, True, nan)
 
 
 def lya_factor_percentile(percentile):
@@ -104,8 +109,8 @@ def lya_with_ISM(wgrid, Flya, rv_star, rv_ism, Nh, Tism):
 wgrid_std = np.arange(1210., 1220., 0.005) * u.AA
 def lya_at_earth_auto(catalog, n_H, default_rv=nan, lya_factor=1.0, lya_1AU_colname='Flya_1AU_adopted',
                       show_progress=False):
-    get_nanfilled = lambda colname: catalog[colname].filled(np.nan).quantity
-    ra, dec, d, Flya_1AU = map(get_nanfilled, ('ra', 'dec', 'sy_dist', lya_1AU_colname))
+    get = lambda name: get_nanfilled(name, catalog)
+    ra, dec, d, Flya_1AU = map(get, ('ra', 'dec', 'sy_dist', lya_1AU_colname))
     Flya_at_earth_no_ISM = Flya_1AU * (u.AU/d)**2 * lya_factor
     Nh = n_H * d
     rv_ism = ism.ism_velocity(ra, dec)
@@ -123,21 +128,18 @@ def lya_at_earth_auto(catalog, n_H, default_rv=nan, lya_factor=1.0, lya_1AU_coln
 
 
 def __default_rv_handler(catalog, default_rv):
-    ra = catalog['ra'].filled(nan).quantity
-    dec = catalog['dec'].filled(nan).quantity
+    ra = get_nanfilled('ra', catalog)
+    dec = get_nanfilled('dec', catalog)
     rv_ism = ism.ism_velocity(ra, dec)
-    rv_col = catalog['st_radv']
     if type(default_rv) in (float, int):
-        rv_star = rv_col.filled(default_rv).quantity
-        if np.any(rv_col.mask) and np.isnan(default_rv):
-            warnings.warn('Some st_radv values are missing and are being filled with NaN. NaN output will result. '
-                          'Set default_rv to a real value if you want to avoid this.')
+        fill_value = np.ones(len(catalog)) * default_rv
     elif default_rv == 'ism':
-        rv_star = rv_col.filled(nan).quantity
-        mask = rv_col.mask
-        rv_star[mask] = rv_ism[mask]
+        fill_value = rv_ism
     else:
         raise ValueError
+    mask = catalog['st_radv'].mask
+    rv_star = catutils.get_quantity_flexible('st_radv', catalog, catalog)
+    rv_star[mask] = fill_value[mask]
     return rv_star
 
 

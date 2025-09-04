@@ -35,14 +35,15 @@ redo_extractions = False
 # delete the files produced by the extraction (including intermediates)
 
 
-#%% get targets
+#%% define what you want to extract
 
-targets = target_lists.observed_since('2025-06-05')
+targets = target_lists.observed_since('2025-07-14')
+instruments = 'hst-stis'
 
 
 #%% set extraction parameters
 
-# note that the G140L traces get as low as 100 and G140M as low as 150, so I can't go hog wild with the backgroun regions
+# note that traces can be as low as 100 pixels if using the D1 apertures, so don't go wild with the background offsets
 # x1d_params = dict()
 def get_x1dparams(file):
     min_params = dict(maxsrch=0.01,
@@ -132,9 +133,9 @@ while True:
     )
 
     data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
+    if not data_dir.exists():
+        os.makedirs(data_dir)
     os.chdir(data_dir)
-
-
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
     print(f'\n{target} observation table:\n')
@@ -144,7 +145,7 @@ while True:
     for row in obs_tbl:
         if 'hst-stis' in row['science config']:
             stis_tag_files_in_tbl.extend(row['key science files'])
-    stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments='hst-stis')
+    stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments=instruments)
     stis_tag_files_in_dir = list(map(str, stis_tag_files_in_dir))
 
     n_tbl = len(stis_tag_files_in_tbl)
@@ -231,7 +232,7 @@ while True:
         id = h[0].header['asn_id'].lower()
         ids.append(id)
 
-        img = h[1].data_targets
+        img = h[1].data
         plt.figure()
         plt.title(Path(ff).name)
         plt.imshow(np.cbrt(img), aspect='auto')
@@ -239,7 +240,7 @@ while True:
         fx = dbutils.modify_file_label(ff, 'x1d')
         if fx.exists():
             hx = fits.open(fx)
-            y = hx[1].data_targets['extrlocy']
+            y = hx[1].data['extrlocy']
             x = np.arange(img.shape[1]) + 0.5
             iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
         else:
@@ -259,7 +260,7 @@ while True:
         xclick, yclick = xy[-1]
 
         if xclick < 100:
-            xclick, yclick = hx[1].data_targets['a2center'], y_predicted
+            xclick, yclick = hx[1].data['a2center'], y_predicted
             plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
         if fx.exists():
             # find offset to nearest trace
@@ -267,7 +268,7 @@ while True:
             dist = np.abs(yt - yclick)
             imin = np.argmin(dist)
             dy = yclick - yt[imin]
-            a2 = hx[1].data_targets['a2center'] + dy
+            a2 = hx[1].data['a2center'] + dy
         else:
             a2 = yclick
 

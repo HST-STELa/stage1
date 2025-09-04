@@ -20,14 +20,14 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 #%% batch mode or single runs?
 
-batch_mode = False
-care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+batch_mode = True
+care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = True
 
 
 #%% get targets
 
-targets = target_lists.observed_since('2025-06-05')
+targets = target_lists.observed_since('2025-07-14')
 itertargets = iter(targets)
 
 
@@ -61,6 +61,8 @@ while True:
 
     tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
     data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
+    if not data_dir.exists():
+        os.makedirs(data_dir)
 
 
 #%% find key science files already downloaded
@@ -319,7 +321,7 @@ while True:
             counts = 0
             for file_info in scifiles:
                 h = fits.open(file_info)
-                counts += len(h[1].data_targets['time'])
+                counts += len(h[1].data['time'])
                 if counts <= 100:
                     reject = True
                     reason = reasons['nodata']
@@ -342,14 +344,14 @@ while True:
             note = ''
             for shortname, file_info in zip(shortnames, scifiles):
                 with fits.open(file_info, mode='update') as h:
-                    if len(h[2].data_targets['start']):
+                    if len(h[2].data['start']):
                         raise NotImplementedError
                     if h[1].header['exptime'] == 0:
-                        start, stop = h[1].data_targets['time'][[0, -1]]
+                        start, stop = h[1].data['time'][[0, -1]]
                         data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
                         data['START'] = start
                         data['STOP'] = stop
-                        h[2].data_targets = data
+                        h[2].data = data
                         h[1].header['EXPTIME'] = stop - start
                         h[0].header['TEXPTIME'] = stop - start
                         h.flush()
