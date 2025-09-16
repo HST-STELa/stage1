@@ -167,15 +167,6 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     vsys_data = (spec['wavelength'] / 1215.67 - 1) * const.c - rv
     vsys_data = vsys_data.to_value('km s-1')
 
-    # set an error floor to deal with zero errors
-    floor_mask = utils.is_in_range(vsys_data, *error_floor_window)
-    floor_data = flux_data[floor_mask]
-    floor_flux = np.mean(floor_data)
-    floor_std = np.std(floor_data)
-    outlier_mask = np.abs(floor_data - floor_flux) > 3 * floor_std
-    floor_error = np.std(floor_data[~outlier_mask])
-    error_data = np.clip(error_data, floor_error, np.inf)
-
     # get information on airglow location and aperture from contributing x1ds
     v_helios = []
     apertures = []
@@ -279,21 +270,24 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     plt.step(vsys_data, flux_fit_plot, color='C0', where='mid', lw=2, label='used in fit')
 
     flux_fit = flux_data[data_fit_mask]
-    error_fit = error_data[data_fit_mask]
-    def norm_scatter(ymod):
-        return (ymod[mod_fit_mask] - flux_fit)/ error_fit
-    def data_loglike(ymod):
-        return np.sum(-norm_scatter(ymod)**2)
+    def estimate_uncties(ymod):
+        return utils.estimate_poisson_std(flux_fit, ymod[mod_fit_mask])
+    def data_loglike(ymod, uncties='estimate'):
+        if isinstance(uncties, str) and uncties == 'estimate':
+            # use estimated uncertainties to avoid issues in pipeline-generated errors
+            uncties = estimate_uncties(ymod)
+        O_C_s = (flux_fit - ymod[mod_fit_mask]) / uncties
+        return np.sum(-O_C_s**2)
 
     # find best fitting lya prediction
-    def neg_loglike(params):
+    def neg_loglike(params, uncties):
         _, ymod = predict_lya(*params)
-        loglike = data_loglike(ymod)
+        loglike = data_loglike(ymod, uncties)
         return -loglike
     min_lya, max_lya = lya.lya_factor_percentile(1), lya.lya_factor_percentile(99)
     min_nH, max_nH = ism.ism_n_H_percentile(0).value, ism.ism_n_H_percentile(100).value
     def fit_lya():
-        result = minimize(neg_loglike, (1.0, 0.03),
+        result = minimize(neg_loglike, (1.0, 0.03), args='estimate',
                           bounds=((min_lya, max_lya),
                                   (min_nH, max_nH)))
         assert result.success
@@ -307,10 +301,11 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     plt.step(vsys_data[compute_mask], prof_lsf_best, color='0.4', label='prelim fit')
 
     # scale up and down as a simple means of sampling likelihood of different fluxes
-    loglike_best = data_loglike(prof_lsf_best)
+    error_fit = estimate_uncties(prof_lsf_best)
+    loglike_best = data_loglike(prof_lsf_best, error_fit)
     def loglike_diff(scalefac):
         prof_lsf = prof_lsf_best * scalefac
-        loglike = data_loglike(prof_lsf)
+        loglike = data_loglike(prof_lsf, error_fit)
         return loglike_best - loglike
     def get_1sigma(bracket):
         result = root_scalar(lambda x: loglike_diff(x) - 1, bracket=bracket)
@@ -342,7 +337,7 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     leg = plt.legend(loc='upper right')
     plt.annotate(flux_lbl, xy=(0.02, 0.98), xycoords='axes fraction', va='top')
 
-    ylo = -10 * floor_error
+    ylo = -2 * np.std(flux_fit)
     yhi = 1.2 * max(np.max(predict_lya_pctl(84)[1]),
                     np.max(flux_fit))
     plt.ylim(ylo, yhi)

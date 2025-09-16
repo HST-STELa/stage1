@@ -465,7 +465,7 @@ def contiguous_true_range(arr, start):
     return left, right
 
 
-def estimate_poisson_err(flux_data, flux_model):
+def estimate_poisson_std(flux_data, flux_model):
     """
     Guess 1σ Poisson errors based on a model fit to a flux.
 
@@ -485,5 +485,26 @@ def estimate_poisson_err(flux_data, flux_model):
     scalefac = np.sqrt(flux_model)
     o_c_normed = o_c / scalefac
     std = np.std(o_c_normed)
-    uncty_estimate = std * scalefac
-    return uncty_estimate
+    return std * scalefac
+
+
+def estimate_poisson_mu(flux_data, flux_model):
+    """
+    Guess 1σ Poisson errors based on a model fit to a flux.
+
+    Approach: scale differences between observed and computed flux by the computed flux as Poisson errors are expected
+    to scale, then estimate the scatter, then scale back.
+
+    Parameters
+    ----------
+    flux_data
+    flux_model
+
+    Returns
+    -------
+
+    """
+    std = estimate_poisson_std(flux_data, flux_model)
+    # snr = flux_model / std = sqrt(mu) --> mu = (flux_model / std)**2
+    mu = (flux_model / std) ** 2
+    return mu
