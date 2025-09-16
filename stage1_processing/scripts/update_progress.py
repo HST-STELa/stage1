@@ -5,7 +5,7 @@ import warnings
 
 import numpy as np
 from matplotlib import pyplot as plt
-from scipy.optimize import minimize
+from scipy.optimize import minimize, root_scalar
 
 from astropy import table
 from astropy import time
@@ -17,6 +17,7 @@ import database_utilities as dbutils
 import paths
 import catalog_utilities as catutils
 import utilities as utils
+import hst_utilities as hutils
 
 from lya_prediction_tools import lya, ism, stis
 from stage1_processing import preloads
@@ -25,9 +26,10 @@ from stage1_processing import target_lists
 
 #%% settings
 
-saveplots = False
+saveplots = True
 
 targets = target_lists.observed_since('2025-06-05')
+targets = target_lists.observed_since('2025-01-01')
 obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
 
 
@@ -120,45 +122,31 @@ for col in ('base', 'pair'):
     target_info[progname] = joined_label_col
 
 
-#%% TBR: tabulate predicted lya fluxes
-
-params = dict(default_rv="ism", show_progress=True)
-wgrid = lya.wgrid_std
-sets = (('nominal', 0),
-        ('optimistic', 34))
-lya_fluxes_earth = []
-for lbl, pcntl in sets:
-    n_H = ism.ism_n_H_percentile(50 - pcntl)
-    lya_factor = lya.lya_factor_percentile(50 + pcntl)
-    observed = lya.lya_at_earth_auto(roster_hosts, n_H, lya_factor=lya_factor, **params)
-    _fluxes = np.trapz(observed, wgrid[None, :], axis=1)
-    lya_fluxes_earth.append(_fluxes)
-target_info['Nominal\nLya Flux'] = lya_fluxes_earth[0]
-target_info['Optimistic\nLya Flux'] = lya_fluxes_earth[1]
-
-
 #%% tabulate measured lya fluxes, save diagnostic plots
 
 measured = []
 msmt_error = []
-predicted_nom = []
-predicted_opt = []
-predicted_nom_same_range = []
-predicted_opt_same_range = []
+prediction_pctls = [16, 50, 84]
+predicted_flux_records = {pctl:[] for pctl in prediction_pctls}
 
-insts=['hst-stis-g140m', 'hst-stis-e140m']
+fit_window = np.array([-400, 400])
+compute_window = fit_window + [-100, 100] # need to encompass full LSF and avoid edge effects
+error_floor_window = [1500, 5000]
+insts = ['hst-stis-g140m', 'hst-stis-e140m']
 vstd = (lya.wgrid_std/1215.67/u.AA - 1)*const.c.to('km s-1')
 
-for tic_id in target_info['TIC ID']:
+# for tic_id in target_info['TIC ID']:
+for tic_id in target_info['TIC ID'][tempstart:]:
     target_filename = preloads.stela_names.loc['tic_id', tic_id]['hostname_file']
     data_dir = paths.target_hst_data(target_filename)
-    if target_filename not in targets:
-        continue
+    # if target_filename not in targets:
+    #     continue
 
     # find the appropriate file
     files = dbutils.find_coadd_or_x1ds(target_filename, instruments=insts, directory=data_dir)
     if len(files) == 0:
         print(f'No x1d file found for {target_filename}. Moving on.')
+        continue
     if len(files) > 1:
         warnings.warn(f'Multiple x1d files found for {target_filename}, but no coadds.')
     specfile = files[0]
@@ -170,169 +158,194 @@ for tic_id in target_info['TIC ID']:
     config = file_info['config']
     _, _, grating = config.split('-')
 
-    h = fits.open(specfile, ext=1)
-    data = h[1].data
-    spec = {}
-    for name in data.names:
-        spec[name.lower()] = data[name][0]
-    w, flux, error = spec['wavelength'], spec['flux'], spec['error']
+    x1d_hdu = fits.open(specfile, ext=1)
+    spec = x1d_hdu[1].data[0]
+    wearth_data, flux_data, error_data = spec['wavelength'], spec['flux'], spec['error']
 
     # shift to velocity frame
-    rv = roster_hosts.loc[tic_id]['st_radv'] * u.km/u.s
-    v = (spec['wavelength']/1215.67 - 1) * const.c - rv
-    v = v.to_value('km s-1')
+    rv = roster_hosts.loc[tic_id]['st_radv'].filled(0)
+    vsys_data = (spec['wavelength'] / 1215.67 - 1) * const.c - rv
+    vsys_data = vsys_data.to_value('km s-1')
+
+    # set an error floor to deal with zero errors
+    floor_mask = utils.is_in_range(vsys_data, *error_floor_window)
+    floor_data = flux_data[floor_mask]
+    floor_flux = np.mean(floor_data)
+    floor_std = np.std(floor_data)
+    outlier_mask = np.abs(floor_data - floor_flux) > 3 * floor_std
+    floor_error = np.std(floor_data[~outlier_mask])
+    error_data = np.clip(error_data, floor_error, np.inf)
 
     # get information on airglow location and aperture from contributing x1ds
     v_helios = []
     apertures = []
     for xf in x1dfiles:
-        h = fits.open(xf)
-        v_helios.append(h[1].header['v_helio'])
-        apertures.append(h[0].header['aperture'])
-    v_helio_range = np.array([min(v_helios), max(v_helios)])
+        component_hdu = fits.open(xf)
+        v_helios.append(component_hdu[1].header['v_helio'])
+        apertures.append(component_hdu[0].header['aperture'])
+    v_helio_range = -np.array([max(v_helios), min(v_helios)])
     v_helio_range_sys = v_helio_range - rv.to_value('km s-1')
     unique_apertures, aperture_counts = np.unique(apertures, return_counts=True)
     main_aperture = unique_apertures[np.argmax(aperture_counts)]
 
     # infer range where airglow is significant
-    ag_width_scale_factor_dic = dict(g140m=0.26, e140m=0.07)
+    ag_width_scale_factor_dic = dict(g140m=0.26, e140m=0.07) # 0.07 value determined by eye from looking at E140M spec
     ag_width_scale_factor = ag_width_scale_factor_dic[grating]
     ap_width = float(main_aperture.split('X')[1])
     dw = np.interp(1215.67, spec['wavelength'][:-1], np.diff(spec['wavelength']))
-    dv = np.interp(1215.67, spec['wavelength'][:-1], np.diff(v))
-    vbuffer = ag_width_scale_factor * dv / dw * ap_width / 0.2  # 0.07 value determined by eye from looking at E140M spec
-    airglow_contam_range = v_helio_range_sys + np.array((-vbuffer, vbuffer))
+    dv = np.interp(1215.67, spec['wavelength'][:-1], np.diff(vsys_data))
+    vbuffer = (ag_width_scale_factor * dv / dw * ap_width / 0.2
+               + 7.5) # hst orbital velocity
+    vbuffer_safe = 125
+    airglow_contam_range_sys = v_helio_range_sys + np.array((-vbuffer, vbuffer))
+    airglow_contam_range_sys_safe = v_helio_range_sys + np.array((-vbuffer_safe, vbuffer_safe))
 
     # plot spectrum
     fig = plt.figure()
-    plt.title(specfile.name)
-    plt.step(v, spec['flux'], color='C0', where='mid')
-    plt.xlim(-500, 500)
-    ylim = plt.ylim()
+    plt.title(specfile.name, fontsize='small')
+    plt.step(vsys_data, flux_data, color='C0', where='mid', label='signal', alpha=0.5)
+    plt.step(vsys_data, error_data, color='C0', ls=':', where='mid', label='uncty', alpha=0.5)
+    plt.xlim(fit_window*1.5)
 
-    # get ranges to use in fit
-    if grating == 'g140m':
-        above_bk = flux > bk_flux
-        snr = flux / error
-        neighbors_above_bk = (np.append(above_bk[1:], False)
-                                   & np.insert(above_bk[:-1], 0, False))
-        uncontaminated = ((bk_flux < 1e-15) | (above_bk & neighbors_above_bk) | (snr > 2))
-    elif grating == 'e140m':
-        uncontaminated = (v < airglow_contam_range[0]) | (v > airglow_contam_range[1])
+    # plot airglow
+    if grating == 'g140m' and 'coadd' not in specfile.name:
+        bk_flux = hutils.get_background_flux(spec)
+        plt.step(vsys_data, bk_flux, color='C2', where='mid', label='bkgnd', alpha=0.5)
     else:
-        raise NotImplementedError
-    fit_rng = (v > -400) & (v < 400) & uncontaminated
-    assert sum(fit_rng) > 4
-
-    def data_loglike(ymod):
-        terms = -(ymod - flux)**2/error**2
-        return np.sum(terms[fit_rng])
+        spn = plt.axvspan(*airglow_contam_range_sys, color='0.5', alpha=0.2)
 
     # function for lya predictions
-    optic = getattr(stis, grating)
+    compute_mask = utils.is_in_range(vsys_data, *compute_window)
+    dw = wearth_data[1] - wearth_data[0]
+    wave_compute_window = wearth_data[compute_mask][[0,-1]] + [-dw/2, dw/2]
+    optic = stis.Spectrograph.from_x1d(x1d_hdu, wave_window=wave_compute_window,
+                                       grating=grating, aperture=main_aperture.lower())
     itarget = roster_hosts.loc_indices[tic_id]
-    broaden_and_bin = optic.fast_observe_function(w, lya.wgrid_std.value, main_aperture)
+    broaden_and_bin = optic.fast_observe_function(lya.wgrid_std.to_value('AA'))
     def predict_lya(lya_factor, n_H):
         profile, = lya.lya_at_earth_auto(
             roster_hosts[[itarget]],
             n_H*u.cm**-3,
             lya_factor=lya_factor,
             default_rv='ism')
-        flux_lsf = broaden_and_bin(profile)
+        flux_lsf, _ = broaden_and_bin(profile.to_value('erg s-1 cm-2 AA-1'), 1000.)
         return profile, flux_lsf
+    def integrate_profile(profile):
+        return np.trapz(profile, lya.wgrid_std)
 
-    # plot 16th, 50th, 84th profiles
-    #todo
+    # plot 16th, 50th, 84th profiles, store fluxes
+    labelmap = {pctl:lbl for pctl, lbl in zip(prediction_pctls, range(-1,2))}
+    def predict_lya_pctl(pctl):
+        lya_factor = lya.lya_factor_percentile(pctl)
+        n_H = ism.ism_n_H_percentile(100 - pctl)
+        return predict_lya(lya_factor, n_H.to_value('cm-3'))
+    def predict_plot_and_integrate(pctl):
+        profile, flux_lsf = predict_lya_pctl(pctl)
+        plt.step(vsys_data[compute_mask], flux_lsf, color='0.8', label=f'{labelmap[pctl]:+}σ pdctn')
+        F = integrate_profile(profile)
+        return F
+    Flya_predicted = {pctl:predict_plot_and_integrate(pctl) for pctl in prediction_pctls}
+    for pctl in prediction_pctls:
+        predicted_flux_records[pctl].append(Flya_predicted[pctl])
+
+    # get ranges to use in fit
+    if grating == 'g140m':
+        snr = flux_data / error_data
+        n_smooth = 10
+        smoothed_snr = np.convolve(snr, np.ones(n_smooth)/n_smooth, mode='same')
+
+        # find contiguous range near airglow where smoothed snr is v low
+        suspect_pixels = smoothed_snr < 1
+        i_start = np.searchsorted(vsys_data, np.mean(v_helio_range_sys))
+        jump = 1
+        while not suspect_pixels[i_start]:
+            i_start += jump
+            jump = -jump if jump > 0 else -jump - 1
+        contam_slice = utils.contiguous_true_range(suspect_pixels, i_start)
+
+        # dont let contaminated range extend beyond plausible range of airglow
+        contam_range = vsys_data[list(contam_slice)]
+        contam_range = np.clip(contam_range, *airglow_contam_range_sys_safe)
+    elif grating == 'e140m':
+        contam_range = airglow_contam_range_sys_safe
+    else:
+        raise NotImplementedError
+    uncontaminated = ~utils.is_in_range(vsys_data, *contam_range)
+    data_fit_mask = utils.is_in_range(vsys_data, *fit_window) & uncontaminated
+    assert sum(data_fit_mask) > 4
+    mod_fit_mask = np.isin(optic.wavegrid, wearth_data[data_fit_mask])
+    flux_fit_plot = flux_data.copy()
+    flux_fit_plot[~data_fit_mask] = np.nan
+    plt.step(vsys_data, flux_fit_plot, color='C0', where='mid', lw=2, label='used in fit')
+
+    flux_fit = flux_data[data_fit_mask]
+    error_fit = error_data[data_fit_mask]
+    def norm_scatter(ymod):
+        return (ymod[mod_fit_mask] - flux_fit)/ error_fit
+    def data_loglike(ymod):
+        return np.sum(-norm_scatter(ymod)**2)
 
     # find best fitting lya prediction
     def neg_loglike(params):
         _, ymod = predict_lya(*params)
-        loglike = data_loglike(ymod.value)
-        return - loglike
+        loglike = data_loglike(ymod)
+        return -loglike
     min_lya, max_lya = lya.lya_factor_percentile(1), lya.lya_factor_percentile(99)
     min_nH, max_nH = ism.ism_n_H_percentile(0).value, ism.ism_n_H_percentile(100).value
-    result = minimize(neg_loglike, (1.0, 0.03),
-                      bounds=((min_lya, max_lya),
-                              (min_nH, max_nH)))
-    profile_best, prof_lsf_best = predict_lya(*result.x)
+    def fit_lya():
+        result = minimize(neg_loglike, (1.0, 0.03),
+                          bounds=((min_lya, max_lya),
+                                  (min_nH, max_nH)))
+        assert result.success
+        return predict_lya(*result.x)
 
-    # use scale fac and delta chi2 to get a sigma
+    profile_best, prof_lsf_best = fit_lya()
+    Flya = integrate_profile(profile_best)
+    measured.append(Flya)
+
+    # plot best fit
+    plt.step(vsys_data[compute_mask], prof_lsf_best, color='0.4', label='prelim fit')
+
     # scale up and down as a simple means of sampling likelihood of different fluxes
-    scale_facs = np.arange(0.9, 1.1, 0.0001)
-    Fs, loglikes = [], []
-    for fac in scale_facs:
-        profile = profile_best * fac
-        F = np.trapz(profile, lya.wgrid_std)
-        Fs.append(F.value)
+    loglike_best = data_loglike(prof_lsf_best)
+    def loglike_diff(scalefac):
+        prof_lsf = prof_lsf_best * scalefac
+        loglike = data_loglike(prof_lsf)
+        return loglike_best - loglike
+    def get_1sigma(bracket):
+        result = root_scalar(lambda x: loglike_diff(x) - 1, bracket=bracket)
+        assert result.converged
+        return result.root
+    lofac = get_1sigma((-10,1))
+    hifac = get_1sigma((1,10))
+    sigfac = (hifac - lofac)/2
+    snr = 1/sigfac
+    Flya_err = sigfac*Flya
+    msmt_error.append(Flya_err)
 
-        prof_lsf = prof_lsf_best * fac
-        loglike = data_loglike(prof_lsf.value)
-        loglikes.append(loglike)
-    Fs = np.asarray(Fs)
-    loglikes = np.asarray(loglikes)
-    loglikes = loglikes - np.nanmax(loglikes)
-
-    # predicted line likelihoods and fluxes
-
-
-    pct_grid = np.arange(1, 100, 5)
-    pdct_fluxes = []
-    pdct_loglikes = []
-    for pct in pct_grid:
-        n_H = ism.ism_n_H_percentile(100 - pct)
-        lya_factor = lya.lya_factor_percentile(pct)
-
-
-        if pct in [15, 50, 85]:
-            plt.plot(vstd - rv, profile, color='0.5', lw=1, ls=':')
-            plt.step(v, flux_lsf, color='0.5', lw=1, where='mid')
-
-        F = np.trapz(profile, lya.wgrid_std)
-        pdct_fluxes.append(F)
-        loglike = data_loglike(flux_lsf)
-        pdct_loglikes.append(loglike)
-    pdct_fluxes = np.asarray(pdct_fluxes)
-    pdct_loglikes = np.asarray(pdct_loglikes)
-    pdct_loglikes = pdct_loglikes - np.nanmax(pdct_loglikes)
-
-    # plot airglow
-    if 'extrsize' in spec:
-        size_scale = spec['extrsize'] / (spec['bk1size'] + spec['bk2size'])
-        flux_factor = spec['flux'] / spec['net']
-        z = spec['net'] == 0
-        if np.any(z):
-            raise NotImplementedError
-        bk_flux = spec['background'] * flux_factor * size_scale
-        plt.step(v, bk_flux, color='C2', where='mid')
-    else:
-        #fixme get v_helio from all xfs and plot, do this earlier so can use for e140m integral too? except about to change up integration scheme
-
-    C = pdct_same_range[1]
-    sigma_hi = max(pdct_same_range) - pdct_same_range[1]
-    sigma_lo = pdct_same_range[1] - min(pdct_same_range)
-    O_C_s = (O - C) / sigma_hi
+    # print some diagnostics on the plot
     disposition = 'PASS' if snr >= 3 else 'DROP'
-
-    predicted_nom.append(pdct_full_range[1])
-    predicted_opt.append(max(pdct_full_range))
-    predicted_nom_same_range.append(C)
-    predicted_opt_same_range.append(max(pdct_same_range))
-    measured.append(O)
-    msmt_error.append(E)
-
+    O_C = (Flya - Flya_predicted[50])
+    pred_uncty_hi = Flya_predicted[84] - Flya_predicted[50]
+    pred_uncty_lo = Flya_predicted[50] - Flya_predicted[16]
+    pred_uncty = pred_uncty_lo if O_C < 0 else pred_uncty_hi
+    O_C_s = O_C / pred_uncty
     flux_lbl = (f'{disposition}\n'
                 f'\n'
                 f'measured flux:\n'
-                f'  {O:.2e} ± {E:.1e} ({snr:.1f}σ)\n'
+                f'  {Flya.value:.2e} ± {Flya_err.value:.1e} ({snr:.1f}σ)\n'
                 f'predicted flux:\n'
-                f'  {C:.1e} +{sigma_hi:.1e} / -{sigma_lo:.1e}\n' 
-                f'(O-C)/sigma:\n'
+                f'  {Flya_predicted[50].value:.1e} +{pred_uncty_hi.value:.1e} / -{pred_uncty_lo.value:.1e}\n' 
+                f'(measured - predicted)/sigma:\n'
                 f'  {O_C_s:.1f}\n'
                 )
-    leg = plt.legend(('signal', 'background', '-1,0,+1 σ predictions'), loc='upper right')
+    leg = plt.legend(loc='upper right')
     plt.annotate(flux_lbl, xy=(0.02, 0.98), xycoords='axes fraction', va='top')
 
-    plt.ylim(ylim)
+    ylo = -10 * floor_error
+    yhi = 1.2 * max(np.max(predict_lya_pctl(84)[1]),
+                    np.max(flux_fit))
+    plt.ylim(ylo, yhi)
     plt.xlabel('Velocity in System Frame (km s-1)')
     plt.ylabel('Flux Density (cgs)')
 
@@ -343,14 +356,16 @@ for tic_id in target_info['TIC ID']:
         htmlfile = str(specfile).replace('.fits', '.plot.html')
         utils.save_standard_mpld3(fig, htmlfile)
 
-    # plt.close()
+    _ = utils.click_coords(timeout=0.01)
+    utils.query_next_step(True, 0, 0)
 
-# target_info['Nominal\nLya Flux'] = predicted_nom
-# target_info['Optimistic\nLya Flux'] = predicted_opt
-# target_info["Nom Lya\nSame Range"] = predicted_nom_same_range
-# target_info["Opt Lya\nSame Range"] = predicted_opt_same_range
-# target_info["Integrated\nLya Flux"] = measured
-# target_info["Integrated\nLya Flux Error"] = msmt_error
+    plt.close()
+
+for pctl in prediction_pctls:
+    target_info[f'Predicted\nLya Flux {pctl}%'] = predicted_flux_records[pctl]
+target_info["Integrated\nLya Flux"] = measured
+target_info["Integrated\nLya Flux Error"] = msmt_error
+
 
 #%% join with the existing table
 

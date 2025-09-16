@@ -20,13 +20,12 @@ class Spectrograph(object):
 
     def flux_uncty(self, pixel_flux, exptime):
         etc = self.etc
-        w = etc['wavelength'] * u.AA
         src = pixel_flux * etc['flux2cps'] * exptime
         bkgnd = etc['bkgnd_cps'] * exptime
         total = bkgnd + src
         err_counts = np.sqrt(total)
         err_flux = err_counts / exptime / etc['flux2cps']
-        return err_flux
+        return err_flux.data
 
     def observe(self, mod_w, mod_f, exptime):
         mod_dw = np.diff(mod_w)

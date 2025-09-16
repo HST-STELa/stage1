@@ -25,9 +25,17 @@ care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 =
 confirm_file_moves = True
 
 
+#%% setup for MAST query
+
+hst_database = MastMissions(mission='hst')
+hst_database.login() # note that you need to have created and stored a token for this, see
+# https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
+
+
+
 #%% get targets
 
-targets = target_lists.observed_since('2025-07-14')
+targets = target_lists.observed_since('2025-09-01')
 itertargets = iter(targets)
 
 
@@ -104,9 +112,8 @@ while True:
     utils.query_next_step(batch_mode, care_level, 2)
 
 
-#%% setup for MAST query
+#%% set download directory
 
-    hst_database = MastMissions(mission='hst')
     dnld_dir = data_dir / 'downloads'
     os.makedirs(dnld_dir, exist_ok=True)
 

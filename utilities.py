@@ -445,3 +445,102 @@ def qrange(a: Quantity, b: Quantity, step: Quantity):
     u = a.unit
     x = np.arange(a.to_value(u), b.to_value(u), step.to_value(u))
     return x * u
+
+
+def contiguous_true_range(arr, start):
+    n = len(arr)
+    if not arr[start]:
+        return None  # or raise an error
+
+    # expand left
+    left = start
+    while left > 0 and arr[left - 1]:
+        left -= 1
+
+    # expand right
+    right = start
+    while right < n - 1 and arr[right + 1]:
+        right += 1
+
+    return left, right
+
+
+def peak_crossings(x, y, y_level):
+    """
+    Return the two x-values where a unimodal y(x) at level `y_level` is
+    reached on either side of its single peak.
+
+    Assumptions:
+      - x is 1D and strictly increasing
+      - y is 1D, same length as x
+      - y increases monotonically up to a single peak, then decreases monotonically
+      - y_level is between y[0]..y_peak on the left and y[-1]..y_peak on the right
+
+    Parameters
+    ----------
+    x : array_like
+    y : array_like
+    y_level : float
+
+    Returns
+    -------
+    x_left, x_right : float, float
+        Interpolated x positions where y(x) == y_level on the left and right
+        sides of the peak, respectively.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    i_peak = int(np.argmax(y))
+    y_peak = y[i_peak]
+
+    # Minimal sanity checks (keep it simple)
+    if i_peak == 0 or i_peak == len(y) - 1:
+        raise ValueError("Peak must be interior.")
+    if not (min(y[0], y[i_peak]) <= y_level <= y_peak and
+            min(y[-1], y[i_peak]) <= y_level <= y_peak):
+        raise ValueError("y_level must lie between endpoint values and the peak on both sides.")
+
+    def lerp_x(x0, y0, x1, y1, yt):
+        # Linear interpolation in (x,y) to find x at y=yt
+        t = (yt - y0) / (y1 - y0)
+        return x0 + t * (x1 - x0)
+
+    # LEFT side (y is increasing): use searchsorted on the increasing left segment
+    y_left = y[:i_peak+1]  # inclusive of peak
+    k = np.searchsorted(y_left, y_level)  # index of first y >= y_level
+    # bracket is (k-1, k)
+    xL = lerp_x(x[k-1], y[k-1], x[k], y[k], y_level)
+
+    # RIGHT side (y is decreasing): search on the negated (which is increasing)
+    y_right = y[i_peak:]  # peak to end
+    idx = np.searchsorted(-y_right, -y_level)  # first -y >= -y_level  <=> y <= y_level
+    # bracket in the full arrays is (i_peak+idx-1, i_peak+idx)
+    j0 = i_peak + idx - 1
+    j1 = i_peak + idx
+    xR = lerp_x(x[j0], y[j0], x[j1], y[j1], y_level)
+
+    return float(xL), float(xR)
+
+
+def estimate_poisson_err(flux_data, flux_model):
+    """
+    Guess 1σ Poisson errors based on a model fit to a flux.
+
+    Approach: scale differences between observed and computed flux by the computed flux as Poisson errors are expected
+    to scale, then estimate the scatter, then scale back.
+
+    Parameters
+    ----------
+    flux_data
+    flux_model
+
+    Returns
+    -------
+
+    """
+    o_c = flux_data - flux_model
+    scalefac = np.sqrt(flux_model)
+    o_c_normed = o_c / scalefac
+    std = np.std(o_c_normed)
+    uncty_estimate = std * scalefac
+    return uncty_estimate

@@ -80,7 +80,7 @@ for config in configs:
 #%% load data
 
         spec = fits.getdata(file, 1)
-        spec.w = spec['wavelength'].T
+        spec.wearth_data = spec['wavelength'].T
         spec.f = spec['flux'].T
         spec.e = spec['error'].T
 
@@ -98,8 +98,8 @@ for config in configs:
 #%% plot data
         fig = plt.figure(figsize=(14,5))
         plt.title(file.name)
-        plt.step(spec.w, spec.f, where='mid')
-        plt.step(spec.w, spec.emod, where='mid', lw=0.5, color='C0', alpha=0.5)
+        plt.step(spec.wearth_data, spec.f, where='mid')
+        plt.step(spec.wearth_data, spec.emod, where='mid', lw=0.5, color='C0', alpha=0.5)
         plt.tight_layout()
         ax, = fig.get_axes()
 
@@ -159,12 +159,12 @@ for config in configs:
             print(f'{line['name']} {line['wave']}')
             xlim = line['wave'] - wbuf, line['wave'] + wbuf
             plt.xlim(xlim)
-            inplt = (spec.w > xlim[0]) & (spec.w < xlim[1])
+            inplt = (spec.wearth_data > xlim[0]) & (spec.wearth_data < xlim[1])
             ymx = spec.f[inplt].max()
             plt.ylim(-0.05*ymx, 1.5*ymx)
             plt.draw()
             band, _ = utils.interactive_click_loop(fig, bandplot)
-            if np.diff(band) < np.diff(spec.w, axis=0)[0]:
+            if np.diff(band) < np.diff(spec.wearth_data, axis=0)[0]:
                 continue
             obslines['wa'][i] = band[0]
             obslines['wb'][i] = band[1]
@@ -237,14 +237,14 @@ for config in configs:
             for band in fitbands:
                 wave = np.sum(band)/2
                 dw = np.diff(band)[0]
-                m = (spec.w > band[0]) & (spec.w < band[1])
+                m = (spec.wearth_data > band[0]) & (spec.wearth_data < band[1])
                 n = np.sum(m)
                 if n == 0:
                     continue
                 elif n == 1:
                     F, E = spec.f[m][0], spec.emod[m][0]
                 else:
-                    F, E = utils.flux_integral(spec.w[m], spec.f[m], spec.emod[m])
+                    F, E = utils.flux_integral(spec.wearth_data[m], spec.f[m], spec.emod[m])
                 Fs.append(F)
                 Es.append(E)
                 dws.append(dw)
@@ -289,8 +289,8 @@ for config in configs:
             obslines['conterror'][i] = cE
 
             # line + cont flux and uncty
-            m = (spec.w > line['wa']) & (spec.w < line['wb'])
-            flux, err = utils.flux_integral(spec.w[m], spec.f[m], spec.emod[m])
+            m = (spec.wearth_data > line['wa']) & (spec.wearth_data < line['wb'])
+            flux, err = utils.flux_integral(spec.wearth_data[m], spec.f[m], spec.emod[m])
             F = flux * dw
             E = err * dw
 

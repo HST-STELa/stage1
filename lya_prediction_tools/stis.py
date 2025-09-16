@@ -7,7 +7,7 @@ import utilities as utils
 from hst_utilities import read_etc_output
 
 from lya_prediction_tools import lya
-from lya_prediction_tools.spectrograph import Spectrograph
+from lya_prediction_tools.spectrograph import Spectrograph as GenericSpectrograph
 
 
 def read_lsf(path_lsf, aperture):
@@ -82,28 +82,55 @@ proxy_lsf_apertures = dict(
     g140l = {}
 )
 
-preloaded_spectrographs = {grating:{} for grating in ['g140m', 'e140m', 'g140l']}
-for grating in preloaded_spectrographs.keys():
-    for aperture in default_etc_filenames[grating].keys():
-        # load in spectrograph info
-        etc_file = paths.stis / default_etc_filenames[grating][aperture]
-        lsf_file = paths.stis / f'lsf.hst-stis-{grating}-1200.txt'
-        proxy_aperture = proxy_lsf_apertures[grating].get(aperture, aperture)
-        etc = read_etc_output(etc_file)
-        lsf_x, lsf_y = read_lsf(lsf_file, aperture=proxy_aperture)
 
-        # slim down to just around the lya line for speed
-        window = lya.v2w((-500, 500))
-        in_window = utils.is_in_range(etc['wavelength'], *window)
+def load_etc_and_lsf(grating, aperture):
+    # load in spectrograph info
+    etc_file = paths.stis / default_etc_filenames[grating][aperture]
+    lsf_file = paths.stis / f'lsf.hst-stis-{grating}-1200.txt'
+    proxy_aperture = proxy_lsf_apertures[grating].get(aperture, aperture)
+    etc = read_etc_output(etc_file)
+    lsf_x, lsf_y = read_lsf(lsf_file, aperture=proxy_aperture)
+    return etc, lsf_x, lsf_y
+
+
+class Spectrograph(GenericSpectrograph):
+    @classmethod
+    def from_grating_aperture(cls, grating, aperture, wave_window=None):
+        etc, lsf_x, lsf_y = load_etc_and_lsf(grating, aperture)
+        etc = cls._window_etc(etc, wave_window)
+        return cls(lsf_x, lsf_y, etc)
+
+    @classmethod
+    def _window_etc(cls, etc, wave_window):
+        if wave_window is None:
+            return etc
+
+        in_window = utils.is_in_range(etc['wavelength'], *wave_window)
         etc = etc[in_window]
+        return etc
 
-        # initialize spectrograph object
-        spec = Spectrograph(lsf_x, lsf_y, etc)
+    @classmethod
+    def from_x1d(cls, x1d_hdu, order=1, wave_window=None, grating='infer', aperture='infer'):
+        hdr = x1d_hdu[0].header
+        if grating == 'infer':
+            grating = hdr['opt_elem'].lower()
+        if aperture == 'infer':
+            aperture = hdr['aperture'].lower()
+        wdata = x1d_hdu[1].data['wavelength'][order - 1]
 
-        preloaded_spectrographs[grating][aperture] = spec
-g140m = preloaded_spectrographs['g140m']['52x0.2']
-e140m = preloaded_spectrographs['e140m']['0.2x0.2']
-g140l = preloaded_spectrographs['g140l']['52x0.2']
+        # interpolate etc data onto the wavelength grid of the x1d
+        etc, lsf_x, lsf_y = load_etc_and_lsf(grating, aperture)
+        ycols = set(etc.colnames) - {'wavelength'}
+        wetc = etc['wavelength']
+        etc_x1d = table.Table([wdata], names=['wavelength'], meta=etc.meta)
+        for ycol in ycols:
+            ynew = np.interp(wdata, wetc, etc[ycol])
+            etc_x1d[ycol] = ynew
+
+        etc_x1d = cls._window_etc(etc_x1d, wave_window)
+
+        return cls(lsf_x, lsf_y, etc_x1d)
+
 
 etc_acq_times = table.Table.read(paths.stis / 'ACQ_snr40_and_saturation_times.csv')
 etc_g140m_times = table.Table.read(paths.stis / 'G140M_maxrates_and_buffer.csv')
@@ -138,3 +165,7 @@ def shorten_exposures_by_peakups(aperture, acq_exptime, exptimes, visit_start_in
     else:
         exptimes_mod = exptimes.copy()
     return exptimes_mod
+
+
+
+

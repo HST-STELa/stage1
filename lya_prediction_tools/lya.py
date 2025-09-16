@@ -109,6 +109,7 @@ def lya_with_ISM(wgrid, Flya, rv_star, rv_ism, Nh, Tism):
 wgrid_std = np.arange(1210., 1220., 0.005) * u.AA
 def lya_at_earth_auto(catalog, n_H, default_rv=nan, lya_factor=1.0, lya_1AU_colname='Flya_1AU_adopted',
                       show_progress=False):
+    """returns Lya as seen from earth in barycentric velocity frame"""
     get = lambda name: get_nanfilled(name, catalog)
     ra, dec, d, Flya_1AU = map(get, ('ra', 'dec', 'sy_dist', lya_1AU_colname))
     Flya_at_earth_no_ISM = Flya_1AU * (u.AU/d)**2 * lya_factor

@@ -96,3 +96,21 @@ def read_etc_output(etc_output_file):
     etc['flux2cps'] = etc['target_counts'] / etc.meta['exptime'] / etc.meta['flux']
     etc['bkgnd_cps'] = (etc['total_counts'] - etc['target_counts']) / etc.meta['exptime']
     return etc
+
+
+def get_extraction_strip_ratio(x1d_spec_hdu):
+    """ratio of trace extraction width to sum of background extraction strip widths"""
+    return x1d_spec_hdu['extrsize'] / (x1d_spec_hdu['bk1size'] + x1d_spec_hdu['bk2size'])
+
+
+def get_flux_factor(x1d_spec_hdu):
+    z = x1d_spec_hdu['net'] == 0
+    if np.any(z):
+        raise NotImplementedError
+    return x1d_spec_hdu['flux'] / x1d_spec_hdu['net']
+
+
+def get_background_flux(x1d_spec_hdu):
+    size_scale = get_extraction_strip_ratio(x1d_spec_hdu)
+    flux_factor = get_flux_factor(x1d_spec_hdu)
+    return x1d_spec_hdu['background'] * flux_factor * size_scale
