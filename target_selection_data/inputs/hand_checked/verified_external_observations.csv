@@ -10,7 +10,7 @@ HD 189733,256364928,pass,pass
 TOI-776,306996324,pass,pass
 GJ 436,138819293,pass,pass
 HD 209458,420814525,pass,pass
-HD 73583,101011575,pass,unchecked
+HD 73583,101011575,pass,pass
 TRAPPIST-1,278892590,pass,pass
 HD 63433,130181866,pass,tentative
 GJ 143,279741379,none,tentative
@@ -21,7 +21,7 @@ HD 110067,347332255,none,fail
 TOI-836,440887364,pass,pass
 TOI-2076,27491137,pass,pass
 TOI-1774,4897275,pass,none
-HD 63935,453211454,pass,unchecked
+HD 63935,453211454,pass,pass
 HD 97658,82308728,pass,pass
 TOI-712,150151262,none,unchecked
 HD 39091,261136679,pass,pass
@@ -48,11 +48,11 @@ TOI-700,150428135,none,pass
 TOI-561,377064495,pass,pass
 K2-3,173103335,fail,pass
 TOI-178,251848941,pass,pass
-TOI-270,259377017,pass,pass
+TOI-270,259377017,fail,pass
 TOI-1231,447061717,pass,none
 HAT-P-20,26826078,pass,none
 TOI-1203,23434737,pass,none
 HD 260655,307809773,pass,pass
 WASP-69,248853232,pass,pass
 WASP-8,183532609,none,tentative
-TOI-1898,91987762,none,unchecked
+TOI-1898,91987762,none,pass

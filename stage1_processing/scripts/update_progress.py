@@ -5,7 +5,8 @@ import warnings
 
 import numpy as np
 from matplotlib import pyplot as plt
-from scipy.optimize import minimize, root_scalar
+import matplotlib as mpl
+from scipy.optimize import root_scalar, least_squares
 
 from astropy import table
 from astropy import time
@@ -27,10 +28,19 @@ from stage1_processing import target_lists
 #%% settings
 
 saveplots = True
+have_a_look = False
 
-targets = target_lists.observed_since('2025-06-05')
-targets = target_lists.observed_since('2025-01-01')
+# targets = target_lists.observed_since('2025-06-05')
+# targets = target_lists.observed_since('2025-01-01')
+targets = target_lists.everything_in_progress_table()
 obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
+
+#%% plot backend
+
+if have_a_look:
+    mpl.use('qt5agg') # plots are shown
+else:
+    mpl.use('Agg') # plots in the backgrounds so new windows don't constantly interrupt my typing
 
 
 #%% --- PROGRESS TABLE UPDATES ---
@@ -91,16 +101,13 @@ target_info["Optimistic Lya\nTransit SNR"] = roster_hosts['transit_snr_optimisti
 
 # set Status to selected, backup, or archival
 n = len(roster_hosts)
-lya_obs_mask = roster_hosts['lya_verified'].filled('') == 'pass'
-fuv_obs_mask = roster_hosts['fuv_verified'].filled('') == 'pass'
+ext_lya_mask = roster_hosts['external_lya'].filled(False) == True
 selected_mask = roster_hosts['stage1'].filled(False)
 backup_mask = roster_hosts['stage1_backup'].filled(False)
 target_info['Status'] = table.MaskedColumn(length=n, dtype='object', mask=True)
-target_info['Status'][lya_obs_mask & fuv_obs_mask] = '2 candidate'
-target_info['Status'][lya_obs_mask & ~fuv_obs_mask] = '1b candidate'
-target_info['Status'][selected_mask & ~lya_obs_mask] = '1a target'
-target_info['Status'][backup_mask & ~lya_obs_mask] = '1a backup'
-target_info['Status'][~selected_mask & ~backup_mask & lya_obs_mask] = 'archival lya'
+target_info['Status'][selected_mask] = 'target'
+target_info['Status'][backup_mask] = 'backup'
+target_info['Status'][target_info['Status'].mask & ext_lya_mask] = 'external data'
 target_info['External\nLya'] = roster_hosts['external_lya']
 target_info['External\nFUV'] = roster_hosts['external_fuv']
 
@@ -128,24 +135,30 @@ measured = []
 msmt_error = []
 prediction_pctls = [16, 50, 84]
 predicted_flux_records = {pctl:[] for pctl in prediction_pctls}
+def add_empty_lya_row():
+    measured.append(np.ma.masked)
+    msmt_error.append(np.ma.masked)
+    for pctl in prediction_pctls:
+        predicted_flux_records[pctl].append(np.ma.masked)
 
-fit_window = np.array([-400, 400])
-compute_window = fit_window + [-100, 100] # need to encompass full LSF and avoid edge effects
+fit_window_vcty = np.array([-400, 400])
+compute_window = fit_window_vcty + [-100, 100] # need to encompass full LSF and avoid edge effects
 error_floor_window = [1500, 5000]
 insts = ['hst-stis-g140m', 'hst-stis-e140m']
 vstd = (lya.wgrid_std/1215.67/u.AA - 1)*const.c.to('km s-1')
+flux_units = u.Unit('erg s-1 cm-2')
 
-# for tic_id in target_info['TIC ID']:
-for tic_id in target_info['TIC ID'][tempstart:]:
+for tic_id in target_info['TIC ID']:
     target_filename = preloads.stela_names.loc['tic_id', tic_id]['hostname_file']
     data_dir = paths.target_hst_data(target_filename)
-    # if target_filename not in targets:
-    #     continue
+    if target_filename not in targets:
+        continue
 
     # find the appropriate file
     files = dbutils.find_coadd_or_x1ds(target_filename, instruments=insts, directory=data_dir)
     if len(files) == 0:
         print(f'No x1d file found for {target_filename}. Moving on.')
+        add_empty_lya_row()
         continue
     if len(files) > 1:
         warnings.warn(f'Multiple x1d files found for {target_filename}, but no coadds.')
@@ -196,7 +209,7 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     plt.title(specfile.name, fontsize='small')
     plt.step(vsys_data, flux_data, color='C0', where='mid', label='signal', alpha=0.5)
     plt.step(vsys_data, error_data, color='C0', ls=':', where='mid', label='uncty', alpha=0.5)
-    plt.xlim(fit_window*1.5)
+    plt.xlim(fit_window_vcty * 1.5)
 
     # plot airglow
     if grating == 'g140m' and 'coadd' not in specfile.name:
@@ -213,7 +226,7 @@ for tic_id in target_info['TIC ID'][tempstart:]:
                                        grating=grating, aperture=main_aperture.lower())
     itarget = roster_hosts.loc_indices[tic_id]
     broaden_and_bin = optic.fast_observe_function(lya.wgrid_std.to_value('AA'))
-    def predict_lya(lya_factor, n_H):
+    def predict_lya(lya_factor, n_H,):
         profile, = lya.lya_at_earth_auto(
             roster_hosts[[itarget]],
             n_H*u.cm**-3,
@@ -237,16 +250,16 @@ for tic_id in target_info['TIC ID'][tempstart:]:
         return F
     Flya_predicted = {pctl:predict_plot_and_integrate(pctl) for pctl in prediction_pctls}
     for pctl in prediction_pctls:
-        predicted_flux_records[pctl].append(Flya_predicted[pctl])
+        predicted_flux_records[pctl].append(Flya_predicted[pctl].to_value(flux_units))
 
     # get ranges to use in fit
     if grating == 'g140m':
         snr = flux_data / error_data
-        n_smooth = 10
+        n_smooth = 3
         smoothed_snr = np.convolve(snr, np.ones(n_smooth)/n_smooth, mode='same')
 
         # find contiguous range near airglow where smoothed snr is v low
-        suspect_pixels = smoothed_snr < 1
+        suspect_pixels = smoothed_snr < 2
         i_start = np.searchsorted(vsys_data, np.mean(v_helio_range_sys))
         jump = 1
         while not suspect_pixels[i_start]:
@@ -262,7 +275,8 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     else:
         raise NotImplementedError
     uncontaminated = ~utils.is_in_range(vsys_data, *contam_range)
-    data_fit_mask = utils.is_in_range(vsys_data, *fit_window) & uncontaminated
+    in_window = utils.is_in_range(vsys_data, *fit_window_vcty)
+    data_fit_mask = in_window & uncontaminated
     assert sum(data_fit_mask) > 4
     mod_fit_mask = np.isin(optic.wavegrid, wearth_data[data_fit_mask])
     flux_fit_plot = flux_data.copy()
@@ -270,56 +284,52 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     plt.step(vsys_data, flux_fit_plot, color='C0', where='mid', lw=2, label='used in fit')
 
     flux_fit = flux_data[data_fit_mask]
-    def estimate_uncties(ymod):
-        return utils.estimate_poisson_std(flux_fit, ymod[mod_fit_mask])
-    def data_loglike(ymod, uncties='estimate'):
-        if isinstance(uncties, str) and uncties == 'estimate':
-            # use estimated uncertainties to avoid issues in pipeline-generated errors
-            uncties = estimate_uncties(ymod)
-        O_C_s = (flux_fit - ymod[mod_fit_mask]) / uncties
-        return np.sum(-O_C_s**2)
+
+    def get_residuals(logparams):
+        params = np.power(10, logparams)
+        _, ymod = predict_lya(*params)
+        return (flux_fit - ymod[mod_fit_mask]) / flux_fit.max()
 
     # find best fitting lya prediction
-    def neg_loglike(params, uncties):
-        _, ymod = predict_lya(*params)
-        loglike = data_loglike(ymod, uncties)
-        return -loglike
-    min_lya, max_lya = lya.lya_factor_percentile(1), lya.lya_factor_percentile(99)
-    min_nH, max_nH = ism.ism_n_H_percentile(0).value, ism.ism_n_H_percentile(100).value
     def fit_lya():
-        result = minimize(neg_loglike, (1.0, 0.03), args='estimate',
-                          bounds=((min_lya, max_lya),
-                                  (min_nH, max_nH)))
+        result = least_squares(get_residuals, (0, -1.5), bounds=((-2, -3), (2, 0)))
         assert result.success
-        return predict_lya(*result.x)
+        lyafac, nH = 10**result.x
+        return predict_lya(lyafac, nH)
 
     profile_best, prof_lsf_best = fit_lya()
     Flya = integrate_profile(profile_best)
-    measured.append(Flya)
+    measured.append(Flya.to_value(flux_units))
 
     # plot best fit
     plt.step(vsys_data[compute_mask], prof_lsf_best, color='0.4', label='prelim fit')
 
-    # scale up and down as a simple means of sampling likelihood of different fluxes
-    error_fit = estimate_uncties(prof_lsf_best)
-    loglike_best = data_loglike(prof_lsf_best, error_fit)
-    def loglike_diff(scalefac):
+    # estimate data errors (thus avoiding known pipeline bugs)
+    errors_est = np.std(flux_fit - prof_lsf_best[mod_fit_mask])
+    def get_chi2(ymod):
+        residuals = (flux_fit - ymod[mod_fit_mask]) / errors_est
+        return np.sum(residuals**2)
+
+    # scale up and down to ∆chi2 of ± 1 as a simple means of sampling uncty range of different fluxes
+    chi2_best = get_chi2(prof_lsf_best)
+    def chi2_diff(scalefac):
         prof_lsf = prof_lsf_best * scalefac
-        loglike = data_loglike(prof_lsf, error_fit)
-        return loglike_best - loglike
+        chi2 = get_chi2(prof_lsf)
+        return chi2 - chi2_best
     def get_1sigma(bracket):
-        result = root_scalar(lambda x: loglike_diff(x) - 1, bracket=bracket)
+        result = root_scalar(lambda x: chi2_diff(x) - 1, bracket=bracket)
         assert result.converged
         return result.root
-    lofac = get_1sigma((-10,1))
-    hifac = get_1sigma((1,10))
+    peak_sigma_above_zero = max(prof_lsf_best) / errors_est
+    lofac = get_1sigma((1 - 10/peak_sigma_above_zero, 1))
+    hifac = get_1sigma((1, 1 + 10/peak_sigma_above_zero))
     sigfac = (hifac - lofac)/2
-    snr = 1/sigfac
+    Fsnr = 1/sigfac
     Flya_err = sigfac*Flya
-    msmt_error.append(Flya_err)
+    msmt_error.append(Flya_err.to_value(flux_units))
 
     # print some diagnostics on the plot
-    disposition = 'PASS' if snr >= 3 else 'DROP'
+    disposition = 'PASS' if Fsnr >= 3 else 'DROP'
     O_C = (Flya - Flya_predicted[50])
     pred_uncty_hi = Flya_predicted[84] - Flya_predicted[50]
     pred_uncty_lo = Flya_predicted[50] - Flya_predicted[16]
@@ -328,18 +338,24 @@ for tic_id in target_info['TIC ID'][tempstart:]:
     flux_lbl = (f'{disposition}\n'
                 f'\n'
                 f'measured flux:\n'
-                f'  {Flya.value:.2e} ± {Flya_err.value:.1e} ({snr:.1f}σ)\n'
+                f'  {Flya.to_value(flux_units):.2e} ± {Flya_err.to_value(flux_units):.1e} ({Fsnr:.1f}σ)\n'
                 f'predicted flux:\n'
-                f'  {Flya_predicted[50].value:.1e} +{pred_uncty_hi.value:.1e} / -{pred_uncty_lo.value:.1e}\n' 
+                f'  {Flya_predicted[50].to_value(flux_units):.1e} +{pred_uncty_hi.to_value(flux_units):.1e} / -{pred_uncty_lo.to_value(flux_units):.1e}\n' 
                 f'(measured - predicted)/sigma:\n'
                 f'  {O_C_s:.1f}\n'
                 )
     leg = plt.legend(loc='upper right')
-    plt.annotate(flux_lbl, xy=(0.02, 0.98), xycoords='axes fraction', va='top')
+    plt.annotate(flux_lbl, xy=(0.02, 0.98), xycoords='axes fraction', va='top',
+                 bbox=dict(fc='w', ls='none', pad=1, alpha=0.7))
 
-    ylo = -2 * np.std(flux_fit)
-    yhi = 1.2 * max(np.max(predict_lya_pctl(84)[1]),
-                    np.max(flux_fit))
+    ylo = -2 * np.std(flux_fit - prof_lsf_best[mod_fit_mask])
+    pred_maxs = np.array([np.max(predict_lya_pctl(pctl)[1]) for pctl in prediction_pctls])
+    fit_max = np.max(flux_fit)
+    if np.any(pred_maxs > fit_max):
+        plot_max = min(pred_maxs[pred_maxs > fit_max])
+    else:
+        plot_max = fit_max
+    yhi = 1.2 * plot_max
     plt.ylim(ylo, yhi)
     plt.xlabel('Velocity in System Frame (km s-1)')
     plt.ylabel('Flux Density (cgs)')
@@ -351,15 +367,20 @@ for tic_id in target_info['TIC ID'][tempstart:]:
         htmlfile = str(specfile).replace('.fits', '.plot.html')
         utils.save_standard_mpld3(fig, htmlfile)
 
-    _ = utils.click_coords(timeout=0.01)
-    utils.query_next_step(True, 0, 0)
+    if have_a_look:
+        _ = utils.click_coords() # script will pause until user clicks off the plot
 
     plt.close()
 
+#%% add Lya flux info to target_info table
+
 for pctl in prediction_pctls:
     target_info[f'Predicted\nLya Flux {pctl}%'] = predicted_flux_records[pctl]
+    target_info[f'Predicted\nLya Flux {pctl}%'].unit = flux_units
 target_info["Integrated\nLya Flux"] = measured
+target_info["Integrated\nLya Flux"].unit = flux_units
 target_info["Integrated\nLya Flux Error"] = msmt_error
+target_info["Integrated\nLya Flux Error"].unit = flux_units
 
 
 #%% join with the existing table
@@ -367,25 +388,8 @@ target_info["Integrated\nLya Flux Error"] = msmt_error
 prog_update = table.join(prog_update, target_info, keys='TIC ID', join_type='outer')
 
 
-#%% setup for plan date updates
-pass
+#%% setup visit info cols
 
-# parse the xml visit status export from STScI
-latest_status_path = dbutils.pathname_max(paths.status_input, 'HST-17804-visit-status*.xml')
-tree = ET.parse(latest_status_path)
-root = tree.getroot()
-
-# utility to extract earliest date from PlanWindow string
-def parse_planwindow_date(text):
-    """ Extracts the left-most date from a planWindow string. Expected input example: "Mar 31, 2025 - Apr 1, 2025 (2025.090 - 2025.091)" This function takes the first date (e.g. "Mar 31, 2025") and returns a datetime object. """
-    try: # Split on the hyphen and take the first part
-        date_part = text.split(" - ")[0].strip() # Parse the date; expected format e.g. "Mar 31, 2025"
-        parsed_date = datetime.strptime(date_part, "%b %d, %Y")
-        return parsed_date
-    except Exception as e:
-        return None
-
-# setup new cols
 cols_to_update = 'Lya Visit\nin Phase II, Planned\nLya Obs, Last Lya\nObs, FUV Visit\nin Phase II, Planned\nFUV Obs, Last FUV\nObs'.split(', ')
 for name in cols_to_update:
     name1 = name + '_1'
@@ -394,63 +398,54 @@ for name in cols_to_update:
     prog_update[name2] = ''
     prog_update[name2] = prog_update[name2].astype('object')
 
-#%% parse xml to update plan dates
+for stage in ('Lya', 'FUV'):
+    prog_update[f'{stage} Visit\nin Phase II_2'] = False
 
-"""Iterate over each visit element in the visit status, find the appropriate row, and update dates
-this can't be done with a standard table join given a row can be associated with multiple visits 
-if there are redos"""
-records = []
-prog_update[f'Lya Visit\nin Phase II_2'] = False
-prog_update[f'FUV Visit\nin Phase II_2'] = False
-for visit in root.findall('visit'):
-    visit_label = visit.attrib.get('visit')
-    if visit_label in ['BH', 'OH']: # kludge FIXME delete after HD 118 is back in
-        continue
-    lya_mask = np.char.count(prog_update['Lya Visit\nLabels_2'], visit_label)
-    fuv_mask = np.char.count(prog_update['FUV Visit\nLabels_2'], visit_label)
-    if sum(lya_mask) > 0:
-        stage = 'Lya'
-        i, = np.nonzero(lya_mask)
-    elif sum(fuv_mask) > 0:
-        stage = 'FUV'
-        i, = np.nonzero(fuv_mask)
-    else:
-        raise ValueError('Visit label not found.')
 
-    # mark observation as in the phase II
-    prog_update[f'{stage} Visit\nin Phase II_2'][i] = True
+#%% merge observation detailts from STScI visit status
 
-    plancol = f'Planned\n{stage} Obs_2'
-    obscol = f'Last {stage}\nObs_2'
+status = preloads.visit_status.copy()
+status.add_index('visit')
+used = np.zeros(len(status), bool) # for tracking that all visits are accounted for in progress table
 
-    # Get the status text (if available)
-    status_elem = visit.find('status')
-    status = status_elem.text.strip() if status_elem is not None else ""
+# go row by row rather than doing a cross match because there may be multiple Lya or FUV visits
+# for the same target due to repeats
+for i, row in enumerate(prog_update):
+    for stage in ('Lya', 'FUV'):
+        visit_labels = row[f'{stage} Visit\nLabels_2']
+        visit_labels = visit_labels.split(',')
 
-    # Get all planWindow elements (if any)
-    plan_windows = visit.findall('planWindow')
+        if not np.any(np.isin(visit_labels, status['visit'])):
+            continue
+        prog_update[f'{stage} Visit\nin Phase II_2'][i] = True
 
-    # Check if this visit is flagged as "not a candidate..."
-    if status in ["Executed", "Failed"]:
-        # For executed visits use the startTime as the actual observation date.
-        start_time_elem = visit.find('startTime')
-        if start_time_elem is not None and start_time_elem.text:
-            actual_obs, = re.findall(r'\w{3} \d+, \d{4}', start_time_elem.text)
-            prog_update[obscol][i] = actual_obs
-    elif status != "Executed":
-        # For visits that have not executed or that failed (Scheduled, Flight Ready, Implementation, etc.)
-        # if planWindow elements exist, extract the earliest possible observation date.
-        dates = []
-        for pw in plan_windows:
-            if pw.text:
-                dt = parse_planwindow_date(pw.text)
-                if dt:
-                    dates.append(dt)
-        if dates:
-            earliest_date = min(dates)
+        j = status.loc_indices[visit_labels]
+        j = np.atleast_1d(j)
+        n_visits = len(j)
+        # note that not all visit labels in the progress update table will be in HST's status report, such as
+        # FUV visits we removed from the plan or backup targets
+        used[j] = True
+        status_rows = status[j]
+
+        # update dates
+        date_info_sets = (('obsdate', f'Last {stage}\nObs_2', max, datetime(1, 1, 1)),
+                          ('next', f'Planned\n{stage} Obs_2', min, datetime(3000, 1, 1)))
+        for status_col, prog_col, slctn_fn, date_fill in date_info_sets:
+            if np.all(status_rows[status_col].mask):
+                continue
+            if n_visits > 1:
+                slctd_date = slctn_fn(status_rows[status_col].filled(date_fill))
+            else:
+                slctd_date, = status_rows[status_col]
             # Format the date as "Mon DD, YYYY" (e.g., "Mar 31, 2025")
-            earliest_possible = earliest_date.strftime("%b %d, %Y")
-            prog_update[plancol][i] = earliest_possible
+            prog_update[prog_col][i] = slctd_date.strftime("%b %d, %Y")
+
+if not np.all(used):
+    msg = ("The following visits didn't get added to the prog_update table: "
+           f"{', '.join(status['visit'][~used])}"
+           "\nYou probably need to add some repeat visits by hand to the target_visit_labels.ecsv table.")
+    warnings.warn(msg)
+
 
 #%% sort progress table columns for easy comparison
 sorted_names = []
@@ -480,7 +475,7 @@ isort = idx + i_new.tolist()
 prog_update = prog_update[isort]
 
 today = datetime.today().strftime("%Y-%m-%d")
-prog_update.write(paths.status_input / f'progress_table_updates_{today}.csv', overwrite=True)
+prog_update.write(paths.status_output / f'progress_table_updates_{today}.csv', overwrite=True)
 
 
 #%% --- PROGRESS PLOTS ---
@@ -488,8 +483,6 @@ prog_update.write(paths.status_input / f'progress_table_updates_{today}.csv', ov
 for stage in ['Lya', 'FUV']:
     mask = prog_update[f'{stage} Visit\nin Phase II_2']
     mask = mask.astype(bool)
-    n = np.sum(mask)
-    ivec = np.arange(n) + 1
     datelists = []
     for datekey in ['Planned\n{} Obs_2', 'Last {}\nObs_2']:
         date_strings = prog_update[datekey.format(stage)][mask]
@@ -511,6 +504,7 @@ for stage in ['Lya', 'FUV']:
     plt.figure()
     nobs = len(obsdates)
     nplan = len(plandates)
+    ivec = np.arange(nobs + nplan) + 1
     if obsdates:
         plt.plot(obsdates.decimalyear, ivec[:nobs], 'k-', lw=2)
     if plandates:
@@ -521,8 +515,25 @@ for stage in ['Lya', 'FUV']:
     plt.xlabel('Date')
     plt.ylabel(f'{stage.upper()} Observations Executed')
     plt.tight_layout()
-    plt.savefig(paths.stage1_processing / f'{stage} progress chart.pdf')
-    plt.savefig(paths.stage1_processing / f'{stage} progress chart.png', dpi=300)
+    plt.savefig(paths.status_output / f'{stage} progress chart.pdf')
+    plt.savefig(paths.status_output / f'{stage} progress chart.png', dpi=300)
 
 
+#%% ISR table cycle 32 status columns
 
+from target_selection_tools import reference_tables as ref
+
+combo = table.join(ref.mdwarf_isr, prog_update, join_type='left', keys_left='Target', keys_right='Target_1')
+for stage in ('Lya', 'FUV'):
+    in_phase2 = combo[f"{stage} Visit\nin Phase II_2"].filled(False).astype(bool)
+    observed = combo[f"Last {stage}\nObs_2"].filled('') != ''
+    obs_status = table.MaskedColumn(length=len(combo), mask=True, dtype=object)
+    obs_status[:] = 'not in plan'
+    obs_status[in_phase2] = 'planned'
+    obs_status[observed] = 'observed'
+
+    print(f"{stage}:")
+    for x in obs_status:
+        print(x)
+    print("")
+    print("")

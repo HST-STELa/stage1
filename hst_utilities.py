@@ -78,7 +78,7 @@ def is_raw_science(file):
 
 def read_etc_output(etc_output_file):
     try:
-        pattern = r'etc.hst-\w+-(.*?)\..*(.*?)exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
+        pattern = r'etc.hst-\w+-(.*?)\.(.*?)\..*exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
         result, = re.findall(pattern, etc_output_file.name)
         grating, date, expt, flux, aperture = result
     except ValueError as e:
@@ -103,14 +103,42 @@ def get_extraction_strip_ratio(x1d_spec_hdu):
     return x1d_spec_hdu['extrsize'] / (x1d_spec_hdu['bk1size'] + x1d_spec_hdu['bk2size'])
 
 
-def get_flux_factor(x1d_spec_hdu):
-    z = x1d_spec_hdu['net'] == 0
+def get_flux_factor(x1d_data):
+    z = x1d_data['net'] == 0
     if np.any(z):
         raise NotImplementedError
-    return x1d_spec_hdu['flux'] / x1d_spec_hdu['net']
+    return x1d_data['flux'] / x1d_data['net']
 
 
-def get_background_flux(x1d_spec_hdu):
-    size_scale = get_extraction_strip_ratio(x1d_spec_hdu)
-    flux_factor = get_flux_factor(x1d_spec_hdu)
-    return x1d_spec_hdu['background'] * flux_factor * size_scale
+def get_background_flux(x1d_data):
+    size_scale = get_extraction_strip_ratio(x1d_data)
+    flux_factor = get_flux_factor(x1d_data)
+    return x1d_data['background'] * flux_factor * size_scale
+
+
+def construct_error_predictor(x1d_hdu, data_mask=None, order=None):
+    x1d_data = x1d_hdu[1].data[order]
+
+    if data_mask is None:
+        data_mask = np.ones_like(x1d_data['flux'], bool)
+
+    fluxfac = get_flux_factor(x1d_data)
+    T = x1d_hdu[1].header['exptime']
+
+    bk_cntrate = x1d_data['background']
+    bk_cnts = bk_cntrate*T
+
+    bk_cnts = bk_cnts[data_mask]
+    fluxfac = fluxfac[data_mask]
+
+    def predict_errors_fn(flux_model):
+        mod_cntrate = flux_model / fluxfac
+        mod_cnts = mod_cntrate * T
+
+        tot_cnts = mod_cnts + bk_cnts
+        poiss_err_cnts = np.sqrt(tot_cnts)
+        poiss_err_flux = poiss_err_cnts / T * fluxfac
+
+        return poiss_err_flux
+
+    return predict_errors_fn

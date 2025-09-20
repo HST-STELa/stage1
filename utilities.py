@@ -465,46 +465,42 @@ def contiguous_true_range(arr, start):
     return left, right
 
 
-def estimate_poisson_std(flux_data, flux_model):
+def estimate_gain_sigma_eff(flux_data, sigma_data, flux_model, snr_min=2.0):
     """
-    Guess 1σ Poisson errors based on a model fit to a flux.
-
-    Approach: scale differences between observed and computed flux by the computed flux as Poisson errors are expected
-    to scale, then estimate the scatter, then scale back.
-
-    Parameters
-    ----------
-    flux_data
-    flux_model
-
-    Returns
-    -------
-
+    flux, sigma_data, model_flux: arrays (same shape)
+    snr_min: use only pixels with flux/sigma_data >= snr_min and flux>0 to estimate gain
+    Returns:
+      sigma_eff: effective per-pixel uncertainties incorporating model-based Poisson floor
+      g_used: per-pixel gain used (scalar if global)
     """
-    o_c = flux_data - flux_model
-    scalefac = np.sqrt(flux_model)
-    o_c_normed = o_c / scalefac
-    std = np.std(o_c_normed)
-    return std * scalefac
+    flux_data = np.asarray(flux_data, float)
+    sig  = np.asarray(sigma_data, float)
+    var = sig ** 2
+    mod    = np.asarray(flux_model, float)
 
+    # robust gain estimate from good, positive-SNR pixels
+    with np.errstate(divide='ignore', invalid='ignore'):
+        snr = flux_data / sig
+        good = (flux_data > 0) & (sig > 0) & (snr >= snr_min)
+        if not np.any(good):
+            raise ValueError('No pixels have sufficient flux for a gain estimate.')
+        gain = var / flux_data
+        gain_pix = np.where(good, gain, np.nan)
+    gain = np.nanmedian(gain_pix)
 
-def estimate_poisson_mu(flux_data, flux_model):
-    """
-    Guess 1σ Poisson errors based on a model fit to a flux.
+    # estimate Poisson variance from observed flux
+    var_obs_pois = gain * np.clip(flux_data, 0, None)
 
-    Approach: scale differences between observed and computed flux by the computed flux as Poisson errors are expected
-    to scale, then estimate the scatter, then scale back.
+    # estimate excess variance due to background flux
+    var_bk = np.clip(var - var_obs_pois, 0, None)
 
-    Parameters
-    ----------
-    flux_data
-    flux_model
+    # Model-based Poisson variance in flux units
+    var_mod_pois = gain * np.clip(mod, 0, None)
 
-    Returns
-    -------
+    # Combine with background variance
+    var_eff = var_bk + var_mod_pois
 
-    """
-    std = estimate_poisson_std(flux_data, flux_model)
-    # snr = flux_model / std = sqrt(mu) --> mu = (flux_model / std)**2
-    mu = (flux_model / std) ** 2
-    return mu
+    # avoid zeros
+    var_eff = np.maximum(var_eff, np.finfo(float).tiny)
+
+    return np.sqrt(var_eff), gain

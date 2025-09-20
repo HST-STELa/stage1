@@ -120,7 +120,7 @@ def opaque_tail_transit_plots(catalog, default_rv=nan, add_jitter=False,
         plt.annotate(infobox, xy=(0.05, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize='small', )
 
 
-def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan, add_jitter=False,
+def opaque_tail_transit_SNR(catalog, expt_out=3500*u.s, expt_in=6000*u.s, default_rv=nan, add_jitter=False,
                             n_H_percentile=50, lya_percentile=50, lya_1AU_colname='Flya_1AU_adopted',
                             transit_range=(-100,30), integrate_range='best', show_progress=False):
 
@@ -134,8 +134,8 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
         if show_progress:
             specs = tqdm(specs)
         result = [stis.simple_sim_g140m_obs(spec, expt) for spec in specs]
-        result = np.asarray(result)
-        result = np.moveaxis(result, 1, 0)
+        result = list(zip(*result))
+        result = list(map(u.Quantity, result))
         return result
 
     if show_progress:
@@ -143,7 +143,7 @@ def opaque_tail_transit_SNR(catalog, expt_out=3500, expt_in=6000, default_rv=nan
     w, we, fo, eo = estimate_flux_err(observed, expt_out)
     if show_progress:
         print('And now the-in-transit spectra.')
-    fi, ei = estimate_flux_err(intransit, expt_in)
+    _, _, fi, ei = estimate_flux_err(intransit, expt_in)
     d = fo - fi
     e = np.sqrt(eo ** 2 + ei ** 2)
 

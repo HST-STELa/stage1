@@ -386,7 +386,7 @@ def does_mdwarf_isr_require_e140m(name, type='lya'):
     result = False
     if name in ref.mdwarf_isr['Target']:
         isr_config = ref.mdwarf_isr.loc[name][f'SCIENCE SETUP {type.upper()}']
-        if 'E140M' in isr_config.upper():
+        if not np.ma.is_masked(isr_config) and 'E140M' in isr_config.upper():
             result = True
     return result
 

@@ -109,7 +109,7 @@ def groom_hst_names_for_simbad(hst_names):
         elif hn.startswith('BD') or hn.startswith('CD'):
             sn = re.sub(r'([BC])D', r'\1D ', hn)
             sn = re.sub(r'(\d)[-D](\d)', r'\1 \2', sn)
-        elif hn.startswith('K2') or hn.startswith('HATS') or hn.startswith('TOI-'):
+        elif hn.startswith('K2') or hn.startswith('HATS') or hn.startswith('TOI-') or hn.startswith('MASCARA-'):
             sn = hn
         elif hn.startswith('L-'):
             sn = hn.replace('L-', 'L ')

@@ -19,7 +19,7 @@ import empirical
 import paths
 import catalog_utilities as catutils
 from stage1_processing import visit_status_xml_parser
-from lya_prediction_tools import transit, lya
+from lya_prediction_tools import transit
 from target_selection_tools import galex_query
 from target_selection_tools import duplication_checking as dc
 from target_selection_tools import reference_tables as ref
@@ -42,8 +42,15 @@ toggle_mid_cycle_update = True
 # use thes to specify visits we are going to add back in or remove for whatever reason
 # for example, in the May update I wanted to remove the K2-72 fuv visit Z2 because of an error in the clearance sheet
 # and add in NB for TOI-2015 due to revised pass through cut
-hand_remove_visits = 'J7'.split()
-hand_add_visits = 'W1 W6 OO OP'.split()
+hand_remove_visits = []
+hand_add_visits = []
+
+# these switched from fail to pass for stage 1b after last Lya estimation update in 2025-09. this should be deleted
+# for the next backfill
+# hand_add_visits = 'P3 R5 NE'.split()
+
+# DO NOT REMOVE. these are planets with external transit obs but no FUV. we want FUV to analyze later.
+# hand_add_visits.extend('W6 OO OP W1'.split()) # K2-18, K2-25, Kepler-444, HD 219134
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
 backup_orbits = 5
@@ -51,16 +58,16 @@ backup_orbits = 5
 
 toggle_plots = True
 
-toggle_save_outputs = False
-toggle_save_galex = False
-toggle_save_difftbl = False
-toggle_save_visit_labels = False
+toggle_save_outputs = True
+toggle_save_galex = True
+toggle_save_difftbl = True
+toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
-toggle_remake_filtered_hst_archive = False  # only needed if archive file redownloaded
+toggle_remake_filtered_hst_archive = True  # only needed if archive file redownloaded
 
-diff_label = 'target-backfill-2025-06'
-toggle_checkpoint_saves = False
+diff_label = 'target-backfill-2025-09'
+toggle_checkpoint_saves = True
 toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
 default_sys_rv = "ism"
@@ -468,9 +475,6 @@ _ = catutils.requested_target_lists_loop(check_and_mark)
 
 #%% clean duplicates
 
-# TODO at some point we might start to see this program's observations show up in the duplication checking table
-# need to modify things so they are excluded in the search
-
 # I'm mainly concerned about some planets showing up in both the confirmed and TOI tables,
 # though this didnt't seem to have happened when I first ran this.
 
@@ -521,9 +525,10 @@ Make sure that all these planets transit, on the off chance someone suggested a 
 
 catutils.set_index(cat, 'id')
 
-cat.loc['HD 60779 b']['st_teff'] = 5860 # not sure where I got this. vizier, maybe
-cat.loc['HD 60779 b']['pl_orbper'] = 30 # FIXME made up
-cat.loc['HD 60779 b']['pl_rade'] = 3 # FIXME made up
+# from the discovery paper
+cat.loc['HD 60779 b']['st_teff'] = 6081
+cat.loc['HD 60779 b']['pl_orbper'] = 29.986175
+cat.loc['HD 60779 b']['pl_rade'] = 3.25
 
 # check that all the manually added targets have their key values present
 manual_mask = cat['manually_added'].filled(False)
@@ -713,7 +718,7 @@ if toggle_remake_filtered_hst_archive:
     hst_filtered.write(paths.hst_observations / 'hst_observations_filtered.ecsv', overwrite=True)
 
 
-#%% load observation tables
+#%% load HST observation tables
 
 hst_filtered = table.Table.read(paths.hst_observations / 'hst_observations_filtered.ecsv')
 our_observations = hst_filtered['prop'] == 17804
@@ -721,7 +726,7 @@ hst_filtered = hst_filtered[~our_observations]
 verified = table.Table.read(paths.checked / 'verified_external_observations.csv')
 
 
-#%% mark observations
+#%% mark external HST observations
 
 """we should keep these in the table so that we can go back later and hand check targets that are good candidates
 to be sure that the lya and FUV observations did not fail"""
@@ -774,6 +779,12 @@ n_bad_st_mass = np.sum(cat['st_mass'].mask)
 n_bad_st_teff = np.sum(cat['st_teff'].mask)
 n_bad_st_lum = np.sum(cat['st_lum'].mask)
 
+
+def add_source_tracking_column(colname, transfer_mask, label):
+    srcname = colname + 'src'
+    cat[srcname] = table.MaskedColumn(['catalog']*len(cat), mask=cat[colname].mask, dtype='object')
+    cat[srcname][transfer_mask] = label
+
 # R from Teff
 R = catutils.safe_interp_table(cat['st_teff'].filled(0), 'Teff', 'R_Rsun', ref.mamajek) * u.Rsun
 transfer = (R > 0) & cat['st_rad'].mask
@@ -781,6 +792,7 @@ print(f'{np.sum(transfer)} of {n_bad_st_rad} bad stellar radius values filled ba
 if toggle_plots:
     hist_compare('st_rad', R, 'Rstar from Teff')
 cat['st_rad'][transfer] = R[transfer]
+add_source_tracking_column('st_rad', transfer, 'inferred from Teff')
 
 # M from Teff
 M = catutils.safe_interp_table(cat['st_teff'].filled(0), 'Teff', 'Msun', ref.mamajek) * u.Msun
@@ -789,6 +801,7 @@ print(f'{np.sum(transfer)} of {n_bad_st_mass} bad stellar mass values filled bas
 if toggle_plots:
     hist_compare('st_mass', M, 'Mstar from Teff')
 cat['st_mass'][transfer] = M[transfer]
+add_source_tracking_column('st_mass', transfer, 'inferred from Teff')
 
 # M from R
 M = catutils.safe_interp_table(cat['st_rad'].filled(0), 'R_Rsun', 'Msun', ref.mamajek) * u.Msun
@@ -797,6 +810,7 @@ print(f'{np.sum(transfer)} of {n_bad_st_mass} bad stellar mass values filled bas
 if toggle_plots:
     hist_compare('st_mass', M, 'Mstar from R')
 cat['st_mass'][transfer] = M[transfer]
+cat['st_masssrc'][transfer] = 'inferred from R'
 
 # Teff from R
 T = catutils.safe_interp_table(cat['st_rad'].filled(0), 'R_Rsun', 'Teff', ref.mamajek) * u.K
@@ -805,6 +819,7 @@ print(f'{np.sum(transfer)} of {n_bad_st_teff} bad stellar teff values filled bas
 if toggle_plots:
     hist_compare('st_teff', T, 'Mstar from Teff')
 cat['st_teff'][transfer] = T[transfer]
+add_source_tracking_column('st_teff', transfer, 'inferred from R')
 
 # Lbol from Teff
 logL = catutils.safe_interp_table(cat['st_teff'].filled(0), 'Teff', 'logL', ref.mamajek)
@@ -813,6 +828,7 @@ print(f'{np.sum(transfer)} of {n_bad_st_lum} bad stellar luminosity values fille
 if toggle_plots:
     hist_compare('st_lum', logL, 'logL from Teff')
 cat['st_lum'][transfer] = logL[transfer]
+add_source_tracking_column('st_lum', transfer, 'inferred from Teff')
 
 
 ### planet params ###
@@ -843,6 +859,7 @@ assert np.all(a[transfer] > 0)
 if toggle_plots:
     hist_compare('pl_orbsmax', a, 'a from period', bins=100)
 cat['pl_orbsmax'][transfer] = a[transfer]
+add_source_tracking_column('pl_orbsmax', transfer, 'inferred from P, Mstar')
 
 # a using stellar Teff, rad, and planet Teq
 transfer = isgood('st_teff') & isgood('st_rad') & isgood('pl_eqt') & isbad('pl_orbsmax')
@@ -857,6 +874,7 @@ print(f'{np.sum(transfer)} of {n_bad_orbsmax} bad planet orbsmax values filled b
 if toggle_plots:
     hist_compare('pl_orbsmax', a, 'a from Teq')
 cat['pl_orbsmax'][transfer] = a[transfer]
+cat['pl_orbsmaxsrc'] = 'inferred from Teff, Rstar, Teq'
 
 # Teq using Lstar and a
 goodLum = np.isfinite(cat['st_lum'].filled(np.nan))
@@ -871,6 +889,7 @@ print(f'{np.sum(transfer)} of {n_bad_orbsmax} bad planet Teq values filled based
 if toggle_plots:
     hist_compare('pl_eqt', Teq, 'Teq from Lstar and a')
 cat['pl_eqt'][transfer] = Teq[transfer]
+add_source_tracking_column('pl_eqt', transfer, 'inferred from Lstar, a')
 
 # Teq using Teff and Rstar and a
 transfer = isgood('st_teff') & isgood('st_rad') & isgood('pl_orbsmax') & isbad('pl_eqt')
@@ -882,6 +901,7 @@ print(f'{np.sum(transfer)} of {n_bad_orbsmax} bad planet Teq values filled based
 if toggle_plots:
     hist_compare('pl_eqt', Teq, 'Teq from Teff, Rstar, and a')
 cat['pl_eqt'][transfer] = Teq[transfer]
+cat['pl_eqtsrc'][transfer] = 'inferred from Teff, Rstar, a'
 
 ## Mplanet from Rplanet
 # note that whenever there is a massj there is a masse -- I checked
@@ -904,6 +924,7 @@ if toggle_plots:
     med_compare = M[medium]/cat['pl_bmasse'][medium].filled(nan)
     _ = plt.hist(med_compare, np.linspace(0.7,1.3,100))
 cat['pl_bmasse'][transfer] = M[transfer]
+add_source_tracking_column('pl_bmasse', transfer, 'inferred from Rp')
 
 # J values from Teff
 transfer = isgood('st_teff') & isgood('sy_dist') & cat['sy_jmag'].mask
@@ -913,6 +934,8 @@ J = Mj + 5*np.log10(d) - 5
 if toggle_plots:
     hist_compare('sy_jmag', J, 'J mag from Teff')
 cat['sy_jmag'][transfer] = J[transfer]
+add_source_tracking_column('sy_jmag', transfer, 'inferred from Teff')
+
 
 
 #%% flag missing or suspect params to cut
@@ -956,13 +979,19 @@ catutils.flag_cut(cat, suspect_b, suspect_b_str)
 min_logg = 3.5
 max_logg = 5.5
 logg = cat['st_logg'].filled(4)
-# spTs = cat['st_spectype'].filled('V').astype('str')
-# off_MS = ((logg > max_logg) | (logg < min_logg)
-#           | (np.char.count(spTs, 'I') > 0))
 off_MS = (logg > max_logg) | (logg < min_logg)
-off_MS_str = (f'Cut because star assumed not on main sequence due to logg outside of [{min_logg}, {max_logg}] range or'
-              f'SpT had an "I" in it.')
+off_MS_str = (f'Cut because star assumed not on main sequence due to logg outside of [{min_logg}, {max_logg}] range')
 catutils.flag_cut(cat, off_MS, off_MS_str)
+
+# subgiants where R and L weren't cataloged (i.e., where we might get bad transit depth estimates)
+spTs = cat['st_spectype'].filled('V').astype('str')
+radsrc = cat['st_radsrc'].filled('inferred').astype('str')
+lumsrc = cat['st_lumsrc'].filled('inferred').astype('str')
+subgiant = np.char.count(spTs, 'IV') > 0
+unknown_stellar_props = ((np.char.count(radsrc, 'inferred') > 0) |
+                         (np.char.count(lumsrc, 'inferred') > 0))
+subgiant_str = 'Cut because star is a subgiant and its fundamental properties were not cataloged.'
+catutils.flag_cut(cat, (subgiant & unknown_stellar_props), subgiant_str)
 
 # hot stars
 max_Teff = 6500
@@ -1248,7 +1277,7 @@ transit detectability for existing known transits. Because we want to encourage 
 basis of our target selection.
 """
 
-params = dict(expt_out=3500, expt_in=6000, default_rv=default_sys_rv, transit_range=assumed_transit_range, integrate_range='best', show_progress=True)
+params = dict(expt_out=3500*u.s, expt_in=6000*u.s, default_rv=default_sys_rv, transit_range=assumed_transit_range, integrate_range='best', show_progress=True)
 SNR_optimistic = transit.opaque_tail_transit_SNR(cat, n_H_percentile=16, lya_percentile=84, **params)
 assert np.all(SNR_optimistic > 0)
 # if this fails, check for valid values of sy_dist, Flya_at_1AU, pl_bmasse, st_rad
@@ -1582,7 +1611,8 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     lya_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'lya')
     fuv_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'fuv')
 
-    # mark for verification if target would have been included but for having been already observed
+    # if target would have been included but for having been already observed,
+    # mark so those observations can be verified later
     if available_free > 0:
         for band in ('lya', 'fuv'):
             if host[f'external_{band}_status'] == 'unverified':
@@ -1612,10 +1642,17 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     elif name in planned_targets:
         iplan = plantbl.loc_indices[name]
         planned = plantbl[iplan]
-        if stela_orbits > available_planned:
+        if e140m:
+            plan_cost = 1
+        else:
+            plan_cost = int(planned['lya']) + int(planned['fuv'])
+        free_cost = stela_orbits - plan_cost
+
+        if plan_cost > available_planned:
             raise ValueError('Trying to allocate more planned orbits than expected.')
         status = 'planned'
-        available_planned -= stela_orbits
+        available_planned -= plan_cost
+        available_free -= free_cost
 
         # record for accounting
         if not e140m:
@@ -1686,9 +1723,11 @@ print('\n\n')
 
 #%% check for discrepancies
 if toggle_mid_cycle_update:
+    # first col indicates if it is currently in our APT file
+    # second col indicates if the orbit was assinged in the target selection process
     discrepant = ((plantbl['lya'] ^ plantbl['lya_registered'])  # ^ is the xor operator (returns true if the two differ)
                   | (plantbl['fuv'] & ~plantbl['fuv_registered'] & ~plantbl['lemon'])
-                  | (~plantbl['fuv'] & plantbl['fuv_registered']))
+                  | (~plantbl['fuv'] & plantbl['fuv_registered'] & plantbl['lemon']))
     if np.any(discrepant):
         print('Disrepancies present! Resolve these.')
         print('')

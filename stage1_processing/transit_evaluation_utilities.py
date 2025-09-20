@@ -384,11 +384,6 @@ def get_transit_from_simulation(host, planet):
         phion_scaling = f['phion_scaling'][:]
         params = dict(f['system_parameters'].attrs)
 
-    # there seem to be odd "zero-point" offsets in some of the transmission vectors. correct these
-    transmaxs = np.max(transmission_array, axis=2)
-    offsets = 1 - transmaxs
-    transmission_corrected = transmission_array + offsets[:, :, None]
-
     # verify that I got the right planet
     a_sim = params['semimajoraxis'] * u.cm
     a_cat = planet.params['pl_orbsmax']
@@ -408,7 +403,7 @@ def get_transit_from_simulation(host, planet):
     transitobj = TransitModelSet(
         timegrid,
         wavegrid_earth,
-        transmission_corrected,
+        transmission_array,
         x_params
     )
 

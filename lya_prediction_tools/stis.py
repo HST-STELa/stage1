@@ -51,11 +51,12 @@ def simple_sim_g140m_obs(f, expt, etc_run_date='2021-09-28'):
     w = etc['wavelength'] * u.AA
     we = utils.mids2bins(w.value) * u.AA
     fpix = utils.intergolate(we, lya.wgrid_std, f)
-    src = fpix * etc['flux2cps'] * expt
-    bkgnd = etc['bkgnd_cps'] * expt
+    flux2cps = etc['flux2cps'] * u.Unit('erg-1 cm2 AA')
+    src = fpix * flux2cps * expt
+    bkgnd = etc['bkgnd_cps'] / u.s * expt
     total = bkgnd + src
     err_counts = np.sqrt(total)
-    err_flux = err_counts / expt / etc['flux2cps']
+    err_flux = err_counts / expt / flux2cps
     return w, we, fpix, err_flux
 
 

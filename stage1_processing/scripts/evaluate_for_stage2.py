@@ -19,6 +19,10 @@ from lya_prediction_tools import stis
 from lya_prediction_tools import lya
 
 
+# TODO add flags to alert us if the mass value for a planet is suspect because it was inferred from radius and either
+# - the system is young, so gaseous planets are still contracting (mass overestimated)
+# - the planet is a giant, so mass can be almost anything (mass underestimated)
+
 #%% occasional use: move model transit spectra into target folders
 
 # from pathlib import Path

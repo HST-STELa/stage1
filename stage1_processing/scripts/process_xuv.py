@@ -251,7 +251,7 @@ while True:
 
     Flya = pcutils.get_intrinsic_lya_flux(target)
     Flya_1au = Flya * (d/u.au)**2
-    w, dw, f = empirical.EUV_linsky14(Flya_1au.to_value(''), Teff.to_value('K'), return_spec=True)
+    w, dw, f = empirical.EUV_Linsky14(Flya_1au.to_value(''), Teff.to_value('K'), return_spec=True)
     f *= (u.au/d).to_value('')**2
     linsky_spec = table.Table(
         (w, dw, f),

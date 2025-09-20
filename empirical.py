@@ -67,7 +67,7 @@ def Lya_from_Teff_linsky13(Teff, Prot):
     return 10**logFlya
 
 
-def EUV_linsky14(Flya_at_1AU, Teff, return_spec=False):
+def EUV_Linsky14(Flya_at_1AU, Teff, return_spec=False):
     if type(Teff) is not np.ndarray:
         Teff = np.array([Teff])
         Flya_at_1AU = np.array([Flya_at_1AU])

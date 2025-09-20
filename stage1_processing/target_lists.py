@@ -20,9 +20,15 @@ def observed_since(isot_date_string):
     date = datetime.fromisoformat(isot_date_string)
     status = preloads.visit_status
     fillvalue = datetime.fromisoformat('0001-01-01')
-    mask = (status['obsdate'].filled(fillvalue) >= date) & (status['status'] == 'Executed')
+    mask = (status['obsdate'].filled(fillvalue) >= date) & (status['status'] == 'Archived')
     hst_names = status['target'][mask]
     selected = preloads.stela_names.loc['hostname_hst', hst_names]
+    return selected['hostname_file'].tolist()
+
+
+def everything_in_progress_table():
+    tics =  preloads.progress_table['TIC ID']
+    selected = preloads.stela_names.loc['tic_id', tics]
     return selected['hostname_file'].tolist()
 
 

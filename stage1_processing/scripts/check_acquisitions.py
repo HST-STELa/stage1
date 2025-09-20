@@ -1,6 +1,7 @@
 import warnings
 from pathlib import Path
 from datetime import datetime
+from math import nan
 
 import numpy as np
 from astropy.io import fits
@@ -28,13 +29,13 @@ from stage1_processing import observation_table as obs_tbl_tools
 #%% batch mode or single runs?
 
 batch_mode = True
-care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 
 #%% get targets
 
-targets = target_lists.observed_since('2025-07-14')
-itertargets = iter(targets)
+# targets = target_lists.observed_since('2025-07-14')
+targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
 
 
 #%% properties table
@@ -77,11 +78,33 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         (x1, y1) = wcs.world_to_pixel(coord1)
         (x2, y2) = wcs.world_to_pixel(coord2)
 
+        # avoid reversed pixel coords
+        xlo = min(x1, x2)
+        xhi = max(x1, x2)
+        ylo = min(y1, y2)
+        yhi = max(y1, y2)
+
+        # avoid skinny images
+        dx = xhi - xlo
+        dy = yhi - ylo
+        dmx = max(dx, dy)
+        if dx < dmx/2:
+            xlo -= dmx/2
+            xhi += dmx/2
+        if dy < dmx/2:
+            ylo -= dmx/2
+            yhi += dmx/2
+
         # Set the limits using pixel coordinates
-        ax.set_xlim(min(x1, x2), max(x1, x2))
-        ax.set_ylim(min(y1, y2), max(y1, y2))
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
 
     return ax
+
+
+#%% target iterator
+
+itertargets = iter(targets)
 
 
 #%% SKIP? set up batch processing (skip if not in batch mode)
@@ -125,11 +148,11 @@ while True:
     I figured this out just by comparing coordinates for hd95338"""
     props = targprops.loc[tic_id]
     coords = SkyCoord(
-        props['ra'],
-        props['dec'],
-        pm_ra_cosdec=props['sy_pmra'],
-        pm_dec=props['sy_pmdec'],
-        distance=props['sy_dist'],
+        props['ra'].filled(nan),
+        props['dec'].filled(nan),
+        pm_ra_cosdec=props['sy_pmra'].filled(nan),
+        pm_dec=props['sy_pmdec'].filled(nan),
+        distance=props['sy_dist'].filled(nan),
         obstime=Time(2015.5, format='jyear')
     )
 
@@ -209,7 +232,7 @@ while True:
                 for j in range(2):
                     hh = h['sci', j+1]
                     ax = plot_acq_image(hh, coords, fig, (1, 2, j+1),
-                                        zoom_region=1.5*u.arcsec)
+                                        zoom_region=3*u.arcsec)
                     ax.set_title(stages[j])
                 fig.suptitle(acq_file.name)
                 fig.tight_layout()

@@ -21,23 +21,30 @@ from stage1_processing import observation_table as obs_tbl_tools
 #%% batch mode or single runs?
 
 batch_mode = True
-care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
-confirm_file_moves = True
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+confirm_file_moves = False
 
 
 #%% setup for MAST query
 
 hst_database = MastMissions(mission='hst')
-hst_database.login() # note that you need to have created and stored a token for this, see
+# hst_database.login() # note that you need to have created and stored a token for this, see
 # https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
 
 
 
 #%% get targets
 
-targets = target_lists.observed_since('2025-09-01')
-itertargets = iter(targets)
+# targets = target_lists.observed_since('2025-09-04')
 
+# other lists
+# targets = ['toi-4307', 'toi-6713', 'toi-802', 'hip67522', 'lhs3844', 'v1298tau']
+# targets = ['toi-2094', 'hat-p-26']
+targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
+
+#%% target iterator
+
+itertargets = iter(targets)
 
 #%% SKIP? set up batch processing (skip if not in batch mode)
 
@@ -258,6 +265,7 @@ while True:
             elif 'STIS' in inst:
                 if acq_type == 'ACQ/PEAK':
                     files = acq_tbl.loc[acq_type]['filename']
+                    files = np.atleast_1d(files)
                     assert len(files) <= 2
                     aqt = 'acq/peakd' if min(files) == acq_row['filename'] else 'acq/peakxd'
                 else:
@@ -314,7 +322,8 @@ while True:
 #%% identify files missing data
 
     print(f'\nChecking for empty science files for {target}.')
-    reasons = dict(nodata='No data taken.',
+    reasons = dict(no_data='No data taken.',
+                   shutter_closed='Shutter closed.',
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
         usable = row['usable']
@@ -331,12 +340,12 @@ while True:
                 counts += len(h[1].data['time'])
                 if counts <= 100:
                     reject = True
-                    reason = reasons['nodata']
+                    reason = reasons['no_data']
         elif 'raw' in pieces['type']:
             exptimes = [fits.getval(f, 'exptime', 1) for f in scifiles]
             if np.all(np.array(exptimes) == 0):
                 reject = True
-                reason = reasons['nodata']
+                reason = reasons['no_data']
 
         # alert if there are odd header flags
         h = fits.open(scifiles[0])
@@ -344,7 +353,13 @@ while True:
         if hdr['FGSLOCK'] != 'FINE':
             reject = True
             reason = reasons['no_gs_lock']
-        if hdr['expflag'] != 'NORMAL':
+        if hdr['expflag'] == 'NO DATA':
+            reject = True
+            reason = reasons['no_data']
+        elif hdr['expflag'] == 'SHUTTER CLOSED':
+            reject = True
+            reason = reasons['shutter_closed']
+        elif hdr['expflag'] != 'NORMAL':
             print(f'!! Odd exposure flag value of {hdr['expflag']} for {shortnames[0]}.')
         if hdr['exptime'] == 0 and not reject:
             print(f'!! Exposure time of zero for {shortnames[0]} despite apparently having data.')

@@ -28,7 +28,7 @@ from data_reduction_tools import stis_extraction as stx
 #%% settings (incl. batch mode)
 
 batch_mode = True
-care_level = 2 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 redo_extractions = False
 # note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
@@ -39,6 +39,9 @@ redo_extractions = False
 
 targets = target_lists.observed_since('2025-07-14')
 instruments = 'hst-stis'
+
+targets = ['hd73583']
+
 
 
 #%% set extraction parameters
@@ -138,11 +141,13 @@ while True:
     os.chdir(data_dir)
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+
+    obs_tbl_usbl = obs_tbl[obs_tbl['usable'].filled(True)]
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
 
     stis_tag_files_in_tbl = []
-    for row in obs_tbl:
+    for row in obs_tbl_usbl:
         if 'hst-stis' in row['science config']:
             stis_tag_files_in_tbl.extend(row['key science files'])
     stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments=instruments)
@@ -157,13 +162,13 @@ while True:
 
 #%% identify existing STIS extractions
 
-    obs_tbl['skip_extraction'] = False
-    obs_tbl['skip_extraction'].description = (
+    obs_tbl_usbl['skip_extraction'] = False
+    obs_tbl_usbl['skip_extraction'].description = (
         "Temporary column telling the extraction scrip whether to extract the data or not. Can likely be deleted if"
         "still present later."
     )
 
-    for row in obs_tbl:
+    for row in obs_tbl_usbl:
         sci_names = row['key science files']
         for name in sci_names:
             sci_file, = dbutils.find_stela_files_from_hst_filenames(name, data_dir)
@@ -183,8 +188,7 @@ while True:
 #%% update calibration files and perform initial extraction
 
     overwrite_consent = False
-    for row in obs_tbl:
-        sci_tf_name, = row['key science files']
+    for sci_tf_name in stis_tag_files_in_tbl:
         stis_tf, = dbutils.find_stela_files_from_hst_filenames(sci_tf_name, '.')
         stis_tf = str(stis_tf)
 
@@ -431,13 +435,13 @@ while True:
 #%% revise uncertainties
 
     #todo utils.shift_floor_to_zero(spec.e, window_size=50) helpful
-
+    pass
 
 #%% coadd multiple exposures or orders
 
     use_tbl = dbutils.filter_observations(
         obs_tbl,
-        config_substrings=['e140m', 'g130m', 'g160m', 'g140l'],
+        config_substrings=['g140m', 'e140m', 'g130m', 'g160m', 'g140l'],
         usable=True,
         usability_fill_value=True,
         exclude_flags=['flare'])
