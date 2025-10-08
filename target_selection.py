@@ -42,15 +42,10 @@ toggle_mid_cycle_update = True
 # use thes to specify visits we are going to add back in or remove for whatever reason
 # for example, in the May update I wanted to remove the K2-72 fuv visit Z2 because of an error in the clearance sheet
 # and add in NB for TOI-2015 due to revised pass through cut
-hand_remove_visits = []
 hand_add_visits = []
 
-# these switched from fail to pass for stage 1b after last Lya estimation update in 2025-09. this should be deleted
-# for the next backfill
-# hand_add_visits = 'P3 R5 NE'.split()
-
-# DO NOT REMOVE. these are planets with external transit obs but no FUV. we want FUV to analyze later.
-# hand_add_visits.extend('W6 OO OP W1'.split()) # K2-18, K2-25, Kepler-444, HD 219134
+# low ranking targets not flight ready, not Lya bright, and without archival lya transit
+hand_remove_visits = 'BS OS BR'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
 backup_orbits = 5
@@ -61,6 +56,7 @@ toggle_plots = True
 toggle_save_outputs = True
 toggle_save_galex = True
 toggle_save_difftbl = True
+toggle_save_new_stela_names = True # necessary to avoid errors if, e.g., new hosts have shown up in exoplanet archvive
 toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
@@ -1659,7 +1655,7 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
             plantbl['lya_registered'][iplan] = g140m
             plantbl['fuv_registered'][iplan] = g140l
         else:
-            # if e140m is the only mode used, things get trick bc we messed up some labels in the plan
+            # if e140m is the only mode used, things get tricky bc we messed up some labels in the plan
             if g140m and g140l:
                 raise ValueError('Trying to use all three modes for planned target.')
             elif not (g140m or g140l):
@@ -1890,6 +1886,31 @@ if toggle_save_outputs:
 
 
 
+#%% add any new potential targets to STELa name table
+
+if toggle_save_new_stela_names:
+    nametbl = ref.stela_names.copy()
+    not_in_namtbl_mask = ~np.in1d(roster['tic_id'], nametbl['tic_id'])
+    newtargrows = roster[not_in_namtbl_mask]
+    newtargrows = catutils.planets2hosts(newtargrows)
+    for targrow in newtargrows:
+        hostname = targrow['hostname']
+        hstname, = dbutils.target_names_stela2hst([hostname])
+        filename, = dbutils.target_names_stela2file([hostname])
+        namerow = dict(tic_id=targrow['tic_id'],
+                       hostname=hostname,
+                       hostname_hst=hstname,
+                       hostname_file=filename)
+        assert set(namerow.keys()) == set(nametbl.colnames)
+        nametbl.add_row(namerow)
+    nametbl.write(paths.stela_name_tbl, format='ascii.csv', overwrite=True)
+
+    # need to reload some things so the name table used by helper functions gets updated
+    from importlib import reload
+    reload(ref)
+    reload(dbutils)
+
+
 #%% APT info
 
 targets = catutils.planets2hosts(roster)
@@ -1901,8 +1922,9 @@ assert n_orbits_check in [allocated_orbits, allocated_orbits + 1]
 assert n_orbits_check == selected['stage1_orbit_total'].max()
 
 # start compact table for hand input to APT
-apt_info = targets[['hostname']]
-apt_info.rename_column('hostname', 'name')
+apt_info = targets[['tic_id', 'stage1_rank']]
+apt_info['name'] = dbutils.target_names_tic2stela(targets['tic_id'])
+apt_info = apt_info[['name', 'tic_id', 'stage1_rank']]
 apt_info['GM'] = targets['stage1_g140m']
 apt_info['GL'] = targets['stage1_g140l']
 apt_info['EM'] = targets['stage1_e140m']
@@ -1986,7 +2008,7 @@ labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
 
 # be sure all targets have (or had, prior to cuts) a match
 # if not, fix it
-unmatched = catutils.unmatched_names(labeltbl['target'], merged['hostname'])
+unmatched = catutils.unmatched_names(labeltbl['tic_id'], merged['tic_id'])
 if len(unmatched) > 0:
     raise KeyError(f'These targets in the visit label table have no match: {unmatched.tolist()}')
 
@@ -2004,7 +2026,7 @@ for row in targets_selected:
         labeltbl.add_row(new_row)
 
 catutils.set_index(labeltbl, 'target')
-in_labeltbl = np.in1d(apt_info['name'], labeltbl['target'])
+in_labeltbl = np.in1d(apt_info['tic_id'], labeltbl['tic_id'])
 apt_info['lbl1'] = table.MaskedColumn(length=len(apt_info), mask=True, dtype='object')
 apt_info['lbl2'] = table.MaskedColumn(length=len(apt_info), mask=True, dtype='object')
 apt_info['lbl1'][in_labeltbl] = labeltbl.loc[apt_info['name'][in_labeltbl]]['base']
@@ -2030,6 +2052,17 @@ if toggle_save_outputs:
 if toggle_save_visit_labels:
     labeltbl.write(paths.locked / 'target_visit_labels.ecsv', overwrite=True)
 
+
+#%% print information on visits not currently in the APT to add
+
+e140m_not_in_apt = ((apt_info['EM'].filled(0) == 1) &
+                    ~(np.in1d(apt_info['lbl1'], labels_in_phase2) |
+                      np.in1d(apt_info['lbl2'], labels_in_phase2)))
+g140m_not_in_apt = (apt_info['GM'].filled(0) == 1) & ~np.in1d(apt_info['lbl1'], labels_in_phase2)
+g140l_not_in_apt = (apt_info['GL'].filled(0) == 1) & ~np.in1d(apt_info['lbl2'], labels_in_phase2)
+to_add_apt = e140m_not_in_apt | g140m_not_in_apt | g140l_not_in_apt
+
+apt_info[to_add_apt].pprint(-1,-1)
 
 #%% examples for printing apt info
 

@@ -40,7 +40,7 @@ redo_extractions = False
 targets = target_lists.observed_since('2025-07-14')
 instruments = 'hst-stis'
 
-targets = ['hd73583']
+targets = ['lp714-47']
 
 
 
@@ -362,9 +362,14 @@ while True:
 
         plt.close('all')
 
-    obs_tbl['usable'][obs_tbl['usable'].mask] = True
-
     utils.query_next_step(batch_mode, care_level, 2)
+
+
+#%% mark files not listed as unusable and without flags as usuable
+
+    no_flags = [len(flags) == 0 for flags in obs_tbl['flags'].filled([])]
+    mark_usable = no_flags & obs_tbl['usable'].mask
+    obs_tbl['usable'][mark_usable] = True
 
 
 #%% clean up unusable files
@@ -498,7 +503,7 @@ while True:
 
 #%% delete skip column
 
-    obs_tbl.remove_column('skip_extraction')
+    obs_tbl_usbl.remove_column('skip_extraction')
 
 #%% check obs_tbl
 

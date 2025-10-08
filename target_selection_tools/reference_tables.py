@@ -17,4 +17,4 @@ mdwarf_isr = mdwarf_isr[1:i_footer[0]]
 mdwarf_isr = table.Table.from_pandas(mdwarf_isr)
 mdwarf_isr.add_index('Target')
 
-stela_names = table.Table.read(paths.locked / 'stela_names.csv')
+stela_names = table.Table.read(paths.stela_name_tbl)

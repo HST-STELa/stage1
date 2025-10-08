@@ -28,7 +28,7 @@ from stage1_processing import target_lists
 #%% settings
 
 saveplots = True
-have_a_look = False
+have_a_look = True
 
 # targets = target_lists.observed_since('2025-06-05')
 # targets = target_lists.observed_since('2025-01-01')
@@ -49,6 +49,13 @@ pass
 #%% copy progress table for revision
 
 prog_update = preloads.progress_table.copy()
+
+#%% copy planets table
+
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    planets = preloads.planets.copy()
+planets.add_index('tic_id')
 
 
 #%% load and filter latest target build
@@ -92,7 +99,7 @@ target_info.rename_column('tic_id', 'TIC ID')
 pass
 
 target_info['Global\nRank'] = roster_hosts['stage1_rank']
-target_info['Target'] = roster_hosts['hostname']
+target_info['Target'] = dbutils.target_names_tic2stela(roster_hosts['tic_id'])
 target_info['No.\nPlanets'] = roster_hosts['sy_pnum']
 target_info['No. Tnst\nPlanets'] = roster_hosts['n_tnst']
 target_info['No. Tnst\nGaseous'] = roster_hosts['n_tnst_gas']
@@ -110,6 +117,42 @@ target_info['Status'][backup_mask] = 'backup'
 target_info['Status'][target_info['Status'].mask & ext_lya_mask] = 'external data'
 target_info['External\nLya'] = roster_hosts['external_lya']
 target_info['External\nFUV'] = roster_hosts['external_fuv']
+
+# modes used
+def infer_modes(prioritized_countcol_label_map):
+    col = table.MaskedColumn(length=n, mask=True, dtype='object')
+    for key,lbl in prioritized_countcol_label_map.items():
+        add_lbl = (roster_hosts[key].filled(0) > 0) & col.mask
+        col[add_lbl] = lbl
+    return col
+cols_lbls_ext_lya = dict(
+    n_stis_g140m_lya_obs='STIS-G140M',
+    n_stis_e140m_lya_obs='STIS-E140M',
+    n_cos_g130m_lya_obs='COS-G130M',
+)
+target_info['External\nLya Mode'] = infer_modes(cols_lbls_ext_lya)
+cols_lbls_ext_fuv = dict(
+    n_stis_g140l_obs='STIS-G140L',
+    n_stis_e140m_obs='STIS-E140M',
+    n_cos_g140l_obs='COS-G140L',
+    n_cos_g130m_obs='COS-G130M',
+)
+target_info['External\nFUV Mode'] = infer_modes(cols_lbls_ext_fuv)
+cols_lbls_lya = dict(
+    stage1_g140m='STIS-G140M',
+    stage1_e140m='STIS-E140M',
+)
+target_info['Lya Mode'] = infer_modes(cols_lbls_lya)
+target_info['Lya Mode'].mask[roster_hosts['external_lya'].filled(False)] = True
+cols_lbls_fuv = dict(
+    stage1_g140m='STIS-G140L',
+    stage1_e140m='STIS-E140M',
+)
+target_info['FUV Mode'] = infer_modes(cols_lbls_fuv)
+target_info['FUV Mode'].mask[roster_hosts['external_fuv'].filled(False)] = True
+e140m_for_lya = np.char.count(target_info['Lya Mode'].astype(str), 'E140M') > 0
+e140m_for_lya_mask = roster_hosts['external_lya'].filled(False)
+target_info["E140M Used\nfor Lya?"] = table.MaskedColumn(e140m_for_lya, mask=e140m_for_lya_mask, dtype=bool)
 
 # tabulate labels (in case new targets added)
 labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
@@ -129,15 +172,22 @@ for col in ('base', 'pair'):
     target_info[progname] = joined_label_col
 
 
-#%% tabulate measured lya fluxes, save diagnostic plots
+#%% tabulate measured lya fluxes and updated transit SNRs, save diagnostic plots
 
 measured = []
 msmt_error = []
+lya_factor_rcds = []
+nH_rcds = []
+updated_transit_snr_rcds = [] # TODO add this calculation. goals is to compare with archival transits,
+# so need to get archival transit lya lines first
 prediction_pctls = [16, 50, 84]
 predicted_flux_records = {pctl:[] for pctl in prediction_pctls}
 def add_empty_lya_row():
     measured.append(np.ma.masked)
     msmt_error.append(np.ma.masked)
+    lya_factor_rcds.append(np.ma.masked)
+    nH_rcds.append(np.ma.masked)
+    updated_transit_snr_rcds.append(np.ma.masked)
     for pctl in prediction_pctls:
         predicted_flux_records[pctl].append(np.ma.masked)
 
@@ -151,6 +201,7 @@ flux_units = u.Unit('erg s-1 cm-2')
 for tic_id in target_info['TIC ID']:
     target_filename = preloads.stela_names.loc['tic_id', tic_id]['hostname_file']
     data_dir = paths.target_hst_data(target_filename)
+    sys_planets = planets.loc[tic_id]
     if target_filename not in targets:
         continue
 
@@ -291,15 +342,16 @@ for tic_id in target_info['TIC ID']:
         return (flux_fit - ymod[mod_fit_mask]) / flux_fit.max()
 
     # find best fitting lya prediction
-    def fit_lya():
-        result = least_squares(get_residuals, (0, -1.5), bounds=((-2, -3), (2, 0)))
-        assert result.success
-        lyafac, nH = 10**result.x
-        return predict_lya(lyafac, nH)
-
-    profile_best, prof_lsf_best = fit_lya()
+    result = least_squares(get_residuals, (0, -1.5), bounds=((-2, -3), (2, 0)))
+    assert result.success
+    lyafac, nH = 10**result.x
+    profile_best, prof_lsf_best = predict_lya(lyafac, nH)
     Flya = integrate_profile(profile_best)
+
+    # store results
     measured.append(Flya.to_value(flux_units))
+    lya_factor_rcds.append(lyafac)
+    nH.append(nH)
 
     # plot best fit
     plt.step(vsys_data[compute_mask], prof_lsf_best, color='0.4', label='prelim fit')
@@ -413,7 +465,10 @@ used = np.zeros(len(status), bool) # for tracking that all visits are accounted 
 for i, row in enumerate(prog_update):
     for stage in ('Lya', 'FUV'):
         visit_labels = row[f'{stage} Visit\nLabels_2']
-        visit_labels = visit_labels.split(',')
+        if np.ma.is_masked(visit_labels):
+            visit_labels = [None]
+        else:
+            visit_labels = visit_labels.split(',')
 
         if not np.any(np.isin(visit_labels, status['visit'])):
             continue
@@ -443,7 +498,9 @@ for i, row in enumerate(prog_update):
 if not np.all(used):
     msg = ("The following visits didn't get added to the prog_update table: "
            f"{', '.join(status['visit'][~used])}"
-           "\nYou probably need to add some repeat visits by hand to the target_visit_labels.ecsv table.")
+           "\nYou probably need to add some repeat visits by hand to the target_visit_labels.ecsv table,"
+           "or it might be that these belong to a target removed from the roster in the last build but"
+           "who are still in the visit status xml this script is using (from preloads.status).")
     warnings.warn(msg)
 
 
@@ -509,7 +566,7 @@ for stage in ['Lya', 'FUV']:
         plt.plot(obsdates.decimalyear, ivec[:nobs], 'k-', lw=2)
     if plandates:
         plt.plot(plandates.decimalyear, ivec[nobs:nobs+nplan], '--', lw=2, color='0.5')
-    plt.axhline(n, color='C2', lw=2)
+    plt.axhline(nobs + nplan, color='C2', lw=2)
     plt.xlim(2025.1, 2026.5)
     plt.ylim(-5, 135)
     plt.xlabel('Date')
@@ -523,10 +580,18 @@ for stage in ['Lya', 'FUV']:
 
 from target_selection_tools import reference_tables as ref
 
-combo = table.join(ref.mdwarf_isr, prog_update, join_type='left', keys_left='Target', keys_right='Target_1')
+prog_valid = prog_update[~prog_update['Target_2'].mask]
+
+combo = table.join(ref.mdwarf_isr, prog_valid, join_type='left', keys_left='Target', keys_right='Target_2')
+combo.add_index('Target')
+combo = combo.loc[ref.mdwarf_isr['Target']]
 for stage in ('Lya', 'FUV'):
     in_phase2 = combo[f"{stage} Visit\nin Phase II_2"].filled(False).astype(bool)
     observed = combo[f"Last {stage}\nObs_2"].filled('') != ''
+    if stage == 'FUV':
+        e140m_for_lya = combo["E140M Used\nfor Lya?_2"].filled(False)
+        lya_observed = combo[f"Last Lya\nObs_2"].filled('') != ''
+        observed[e140m_for_lya & lya_observed] = True
     obs_status = table.MaskedColumn(length=len(combo), mask=True, dtype=object)
     obs_status[:] = 'not in plan'
     obs_status[in_phase2] = 'planned'

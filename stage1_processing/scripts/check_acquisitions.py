@@ -28,14 +28,19 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 #%% batch mode or single runs?
 
-batch_mode = True
+batch_mode = False
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 
 #%% get targets
 
 # targets = target_lists.observed_since('2025-07-14')
-targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
+# targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
+targets = ['lp714-47']
+
+#%% rechecking flagged aquisitions
+"""if you want to check aquisitions of a target that has already been flagged unusable, use the
+database_utilities.clear_usability_values function to reset some of the table rows"""
 
 
 #%% properties table
@@ -157,6 +162,7 @@ while True:
     )
 
 
+
 #%% actual checking
 
     acq_filenames = []
@@ -240,8 +246,8 @@ while True:
                 print('Click outside the plots to continue.')
                 xy = utils.click_coords(fig)
 
-        answer = input('Mark acq as good? (enter for yes or n for no)')
-        if answer == 'n':
+        answer = input('Mark acq as bad? (enter for no, b for bad)')
+        if answer in 'by':
             bad_acq = True
         plt.close('all')
 

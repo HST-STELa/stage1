@@ -18,8 +18,9 @@ from stage1_processing import preloads
 from stage1_processing import observation_table as obs_tbl_tools
 
 
-#%% batch mode or single runs?
+#%% settings
 
+ignore_unusable = False
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -40,7 +41,8 @@ hst_database = MastMissions(mission='hst')
 # other lists
 # targets = ['toi-4307', 'toi-6713', 'toi-802', 'hip67522', 'lhs3844', 'v1298tau']
 # targets = ['toi-2094', 'hat-p-26']
-targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
+# targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
+targets = ['lp714-47']
 
 #%% target iterator
 
@@ -158,11 +160,12 @@ while True:
 
     new_files_mask = []
     for file_info in files_in_archive:
-        if file_info['authz_primary_identifier'].lower() in unusable_ids:
-            new_files_mask.append(False)
-        else:
-            files = list(data_dir.glob(f'*{file_info['filename']}'))
-            new_files_mask.append(len(files) == 0)
+        if ignore_unusable:
+            if file_info['authz_primary_identifier'].lower() in unusable_ids:
+                new_files_mask.append(False)
+                continue
+        files = list(data_dir.glob(f'*{file_info['filename']}'))
+        new_files_mask.append(len(files) == 0)
     new_files = files_in_archive[new_files_mask]
 
     if new_files:
@@ -237,7 +240,7 @@ while True:
     new_supporting_files = False
     for row in obs_tbl:
         usable = row['usable']
-        if not np.ma.is_masked(usable) and not usable:
+        if ignore_unusable and not usable.fill(True):
             continue
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
@@ -327,7 +330,7 @@ while True:
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
         usable = row['usable']
-        if not np.ma.is_masked(usable) and not usable:
+        if ignore_unusable and not usable.fill(True):
             continue
         reject = False
         shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table

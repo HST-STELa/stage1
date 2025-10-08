@@ -24,6 +24,8 @@ cos = reference_files / 'cos'
 locked = reference_files / 'locked_choices'
 uv_lines = reference_files / 'uv_lines'
 
+stela_name_tbl = locked / 'stela_names.csv'
+
 ipac = selection_inputs / 'exoplanet_archive'
 checked = selection_inputs / 'hand_checked'
 other = selection_inputs / 'other'
