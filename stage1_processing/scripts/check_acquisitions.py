@@ -11,9 +11,7 @@ from astropy import units as u
 from astropy.time import Time
 
 import matplotlib
-matplotlib.use('Qt5Agg')
 from matplotlib import pyplot as plt
-plt.ion()
 
 import stistools as stis
 
@@ -28,15 +26,22 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 #%% batch mode or single runs?
 
-batch_mode = False
+batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+
+matplotlib.use('Qt5Agg')
+plt.ion()
 
 
 #%% get targets
 
 # targets = target_lists.observed_since('2025-07-14')
+# targets = target_lists.eval_no(2)
 # targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
-targets = ['lp714-47']
+# targets = ['lp714-47']
+targets = ['k2-25', 'wasp-80', 'wasp-29', 'hd219134', 'kepler-444', 'gliese12', 'gj1132', '55cnc']
+targets = ['gj1214']
+
 
 #%% rechecking flagged aquisitions
 """if you want to check aquisitions of a target that has already been flagged unusable, use the
@@ -188,7 +193,7 @@ while True:
         print('\n\n')
 
         # check if the acquisition is an offset acquisition
-        sci_name = obs_tbl[assoc_obs_mask]['key science files'][0]
+        sci_name = obs_tbl[assoc_obs_mask]['key science files'][0][0]
         sci_file, = dbutils.find_stela_files_from_hst_filenames(sci_name, data_dir)
         targname_acq = fits.getval(acq_file, 'targname')
         targname_sci = fits.getval(sci_file, 'targname')
@@ -219,21 +224,29 @@ while True:
                 xy = utils.click_coords(fig)
         else:
             print('\nCOS data, no automatic eval routine\n')
-            stages = ['initial', 'confirmation']
             h = fits.open(acq_file)
+            plate_scale_d = 0.023 # roughly correct for all gratings
+            plate_scale_xd_dic = dict(G130M=100/1000, G160M=90/1000, G140L=90/1000, G230L=24/1000,
+                                      MIRRORA=23.5/1000, MIRRORB=23.5/1000)
+            plate_scale_xd = plate_scale_xd_dic[h[0].header['opt_elem']]
             if h[0].header['exptype'] == 'ACQ/SEARCH':
-                raise NotImplementedError
+                continue # these should always be followed by a more precise acq according to STScI policy
             if h[0].header['exptype'] == 'ACQ/PEAKXD':
                 print('PEAKXD acq')
-                print(f'\txdisp offsets: {h[1].data['XDISP_OFFSET']}')
                 print(f'\tcounts: {h[1].data['counts']}')
-                print(f'\tslew: {h[0].header['ACQSLEWY']}')
+                centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd
+                print(f'\tcentroid offset: {centroid_offset} arcsec')
+                print(f'\tslew: {h[0].header['ACQSLEWY']} arcsec')
+                print(f'\tcounts should be > 0 and the two bottom values should be close for a good acquisition')
             if h[0].header['exptype'] == 'ACQ/PEAKD':
                 print('PEAKD acq')
-                print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']}')
                 print(f'\tcounts: {h[1].data['counts']}')
-                print(f'\tslew: {h[0].header['ACQSLEWX']}')
+                print(f'\tdisp offsets: {h[1].data['DISP_OFFSET']*plate_scale_d} arcsec')
+                print(f'\tslew: {-h[0].header['ACQSLEWX']/2} arcsec') # the factor of 2 is a kludge, values seem consistently off by that amount
+                print(f'\tcounts should be > 0 and slew should be an mount that moves scope from final dwell point'
+                      f'\n\tto the point where counts peak')
             if h[0].header['exptype'] == 'ACQ/IMAGE':
+                stages = ['initial', 'confirmation']
                 fig = plt.figure(figsize=[5,3])
                 for j in range(2):
                     hh = h['sci', j+1]
@@ -247,7 +260,7 @@ while True:
                 xy = utils.click_coords(fig)
 
         answer = input('Mark acq as bad? (enter for no, b for bad)')
-        if answer in 'by':
+        if answer in ['b', 'y']:
             bad_acq = True
         plt.close('all')
 
@@ -263,8 +276,6 @@ while True:
         answer = input('Proceed with file deletion? y/n')
         if answer == 'y':
             dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
-
-        utils.query_next_step(batch_mode, care_level, 1)
 
 
 #%% take a gander

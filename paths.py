@@ -1,7 +1,7 @@
 from pathlib import Path
 
 root = Path('/Users/parke/Google Drive/Research/STELa')
-stage1_code = root / 'public github repo/stage1'
+stage1_code = Path('/Users/parke/Repos/STELa/stage1')
 scratch = root / 'scratch'
 data = root / 'data'
 catalogs = data / 'catalogs'
@@ -11,6 +11,8 @@ def target_data(target):
     return data_targets / target
 def target_hst_data(target):
     return data_targets / target / 'hst'
+def target_epehemerides(target):
+    return data_targets / target / 'ephemerides'
 
 selection_inputs = Path('target_selection_data/inputs')
 selection_intermediates = Path('target_selection_data/intermediates')

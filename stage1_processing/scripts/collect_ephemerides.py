@@ -1,4 +1,5 @@
 import os
+import warnings
 from functools import reduce
 
 import numpy as np
@@ -17,12 +18,17 @@ from target_selection_tools import query
 
 #%% planets to process
 
-planets = target_lists.selected_for_transit(batch_no=1)
+# planets = target_lists.selected_for_transit(batch_no=1)
 
-target_folders = paths.data_targets.glob('*')
-targets = [folder.name for folder in target_folders if folder.is_dir() and not folder.name.startswith('.')]
+# target_folders = paths.data_targets.glob('*')
+# targets = [folder.name for folder in target_folders if folder.is_dir() and not folder.name.startswith('.')]
+
+targets = target_lists.eval_no(2)
+
 tic_ids = preloads.stela_names.loc['hostname_file', targets]['tic_id']
-planetcat = preloads.planets.copy()
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore')
+    planetcat = preloads.planets.copy()
 planetcat.add_index('tic_id')
 planets = planetcat.loc[tic_ids]
 planets['pl_id'] = dbutils.planet_suffixes(planets)
@@ -83,26 +89,34 @@ for planet in tqdm(planets):
         #%% get exofop ephemerides and merge
 
         if has_toi:
-            fop_ephems = query.get_exofop_ephemerides(toi)
-            # this will return ephemerides for all TOIs in the system, so need to filter
-            P = planet['pl_orbper']
-            keep = np.isclose(fop_ephems['per'], P, rtol=0.1)
-            fop_ephems = fop_ephems[keep]
+            try:
+                fop_ephems = query.get_exofop_ephemerides(toi)
+                # this will return ephemerides for all TOIs in the system, so need to filter
+                P = planet['pl_orbper']
+                keep = np.isclose(fop_ephems['per']*u.d, P, rtol=0.1)
+                fop_ephems = fop_ephems[keep]
 
-            fop_groomed = fop_ephems['per per_e epoch epoch_e'.split()].copy()
-            fop_groomed.rename_column('per', 'pl_orbper')
-            fop_groomed.rename_column('per_e', 'pl_orbpererr')
-            fop_groomed.rename_column('epoch', 'pl_tranmid')
-            fop_groomed.rename_column('epoch_e', 'pl_tranmiderr')
-            src = np.char.add(fop_ephems['puser'], ' ')
-            src = np.char.add(src, fop_ephems['pdate'])
-            src = np.char.add('ExoFOP: ', src)
-            fop_groomed['pl_refname'] = src
-            fop_groomed['pl_refname'] = fop_groomed['pl_refname'].astype('object')
+                fop_groomed = fop_ephems['per per_e epoch epoch_e'.split()].copy()
+                fop_groomed.rename_column('per', 'pl_orbper')
+                fop_groomed.rename_column('per_e', 'pl_orbpererr')
+                fop_groomed.rename_column('epoch', 'pl_tranmid')
+                fop_groomed.rename_column('epoch_e', 'pl_tranmiderr')
+                src = np.char.add(fop_ephems['puser'], ' ')
+                src = np.char.add(src, fop_ephems['pdate'])
+                src = np.char.add('ExoFOP: ', src)
+                fop_groomed['pl_refname'] = src
+                fop_groomed['pl_refname'] = fop_groomed['pl_refname'].astype('object')
 
-            ephems = vstack((arx_ephems, fop_groomed))
+                ephems = vstack((arx_ephems, fop_groomed))
+            except Exception as e:
+                if 'No period/epoch found' in str(e):
+                    ephems = arx_ephems
+                else:
+                    raise
         else:
             ephems = arx_ephems
+
+        assert len(ephems) > 0
 
 
         #%% pick the most accurate
@@ -140,8 +154,9 @@ for planet in tqdm(planets):
 
     #%% record exceptions
     except Exception as e:
-        exceptions.append(e)
-        continue
+        # exceptions.append(e)
+        # continue
+        raise
 
 
 #%% print report

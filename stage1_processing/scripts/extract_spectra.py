@@ -2,16 +2,11 @@ import os
 import warnings
 from pathlib import Path
 import glob
-from copy import copy
-import re
 from datetime import datetime
 
 import matplotlib
-matplotlib.use('Qt5Agg')
 from matplotlib import pyplot as plt
-plt.ion()
 from astropy.io import fits
-from astropy import table
 import numpy as np
 
 import stistools as stis
@@ -24,11 +19,14 @@ from stage1_processing import target_lists
 from stage1_processing import observation_table as obs_tbl_tools
 from data_reduction_tools import stis_extraction as stx
 
+matplotlib.use('Qt5Agg')
+plt.ion()
+
 
 #%% settings (incl. batch mode)
 
 batch_mode = True
-care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 redo_extractions = False
 # note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
@@ -37,11 +35,12 @@ redo_extractions = False
 
 #%% define what you want to extract
 
-targets = target_lists.observed_since('2025-07-14')
+# targets = target_lists.observed_since('2025-07-14')
+# targets = target_lists.eval_no(2)
+# targets = ['k2-25', 'wasp-80', 'wasp-29', 'hd219134', 'kepler-444', 'gliese12', 'gj1132', '55cnc']
+targets = ['gj1214']
+
 instruments = 'hst-stis'
-
-targets = ['lp714-47']
-
 
 
 #%% set extraction parameters
@@ -106,12 +105,17 @@ for line in setenvs:
 import crds
 
 
+#%% target iteration
+
+itertargets = iter(targets)
+
+
 #%% SKIP? set up batch processing (skip if not in batch mode)
 
 if batch_mode:
     print("When 'Continue?' prompts appear, hit enter to continue, anything else to break out of the loop.")
 
-itertargets = iter(targets)
+
 while True:
   # I'm being sneaky with 2-space indents here because I want to avoid 8 space indents on the cells
   if not batch_mode:
@@ -169,11 +173,14 @@ while True:
     )
 
     for row in obs_tbl_usbl:
+        if 'hst-cos' in row['science config']:
+            continue
         sci_names = row['key science files']
         for name in sci_names:
             sci_file, = dbutils.find_stela_files_from_hst_filenames(name, data_dir)
-            x1d_file = dbutils.modify_file_label(sci_file, 'x1d')
-            if x1d_file.exists():
+            flt_file = dbutils.modify_file_label(sci_file, 'flt')
+            # need to use flt not x1d bc sometimes calstis can't find trace to make x1d
+            if flt_file.exists():
                 if redo_extractions:
                     delete_extensions = ['flt', 'x1d', 'x2d']
                     if '_raw.fits' not in sci_file.name:
@@ -184,6 +191,13 @@ while True:
                             os.remove(del_file)
                 else:
                     row['skip_extraction'] = True
+    obs_tbl_usbl.add_index('archive id')
+
+    def skip(file_name):
+        id = dbutils.parse_filename(file_name)['id']
+        return obs_tbl_usbl.loc['archive id', id]['skip_extraction']
+
+
 
 #%% update calibration files and perform initial extraction
 
@@ -191,6 +205,9 @@ while True:
     for sci_tf_name in stis_tag_files_in_tbl:
         stis_tf, = dbutils.find_stela_files_from_hst_filenames(sci_tf_name, '.')
         stis_tf = str(stis_tf)
+
+        if not redo_extractions and skip(stis_tf):
+            continue
 
         crds.bestrefs.assign_bestrefs([stis_tf], sync_references=True, verbosity=10)
 
@@ -230,6 +247,9 @@ while True:
 
     ids, locs = [], []
     for ff in fltfiles:
+        if not redo_extractions and skip(ff):
+            continue
+
         if 'stis-e140m' in ff.name:
             continue
         h = fits.open(ff)
@@ -299,9 +319,11 @@ while True:
 
     fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
     fltfiles = no_e140ms(fltfiles)
+    fltfiles = [_ff for _ff in fltfiles if not skip(_ff)]
 
     # remove existing x1d files
     if fltfiles:
+
         print('Proceed with deleting and recreating x1ds associated with?')
         print('\n'.join([f.name for f in fltfiles]))
         _ = input('enter/n? ')
@@ -323,6 +345,8 @@ while True:
 
     """Data could be good but look like crap, so spectra should only be flagged unusable
     if they clearly differ from the norm in a serious way, I think."""
+
+    plt.close('all')
 
     usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
     configs = np.unique(usbl_tbl['science config'])
@@ -367,7 +391,7 @@ while True:
 
 #%% mark files not listed as unusable and without flags as usuable
 
-    no_flags = [len(flags) == 0 for flags in obs_tbl['flags'].filled([])]
+    no_flags = [np.ma.is_masked(flags) or len(flags) == 0 for flags in obs_tbl['flags'] ]
     mark_usable = no_flags & obs_tbl['usable'].mask
     obs_tbl['usable'][mark_usable] = True
 
@@ -381,118 +405,10 @@ while True:
             dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
 
 
-#%% if only one STIS G140M exposure, extract background traces
-
-    g140mfiles = dbutils.find_data_files('flt', instruments='hst-stis-g140m', targets=[target])
-
-    if len(g140mfiles) == 1:
-        # remove existing files
-        labels = "x1dbk1 x1dtrace x1dbk2".split()
-        print(f'Proceed with deleting and recreating {labels[0]}, {labels[1]}, and  {labels[2]} associated with?')
-        print('\n'.join([f.name for f in g140mfiles]))
-        _ = input('enter/n? ')
-        if _ == '':
-            for fltfile in g140mfiles:
-                id = fits.getval(fltfile, 'asn_id').lower()
-                x1d_params = get_x1dparams(fltfile)
-
-                x1dfile = dbutils.modify_file_label(fltfile, 'x1d')
-                tracelocs = fits.getdata(x1dfile, 1)['a2center']
-                if 'e140m' in fltfile.name:
-                    traceloc = tracelocs[-8]
-
-                    mod_params = copy(x1d_params)
-                    mod_params['bk1size'] = mod_params['bk2size'] = 0
-                    mod_params['bk1offst'] = mod_params['bk2offst'] = 0
-                    del mod_params['extrsize']
-
-                    yt = traceloc
-                    szt = x1d_params['extrsize']
-                    sets = ((yt, szt, labels[1]),)
-                else:
-                    traceloc, = tracelocs
-
-                    mod_params = copy(x1d_params)
-                    mod_params['bk1size'] = mod_params['bk2size'] = 0
-                    mod_params['bk1offst'] = mod_params['bk2offst'] = 0
-                    del mod_params['extrsize']
-
-                    y1 = traceloc + x1d_params['bk1offst']
-                    yt = traceloc
-                    y2 = traceloc + x1d_params['bk2offst']
-                    sz1 = x1d_params['bk1size']
-                    szt = x1d_params['extrsize']
-                    sz2 = x1d_params['bk2size']
-                    sets = ((y1, sz1, labels[0]),
-                            (yt, szt, labels[1]),
-                            (y2, sz2, labels[2]))
-
-                for y, sz, lbl in sets:
-                    x1dfile = dbutils.modify_file_label(fltfile, lbl)
-                    if x1dfile.exists():
-                        os.remove(x1dfile)
-
-                    stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=y, extrsize=sz, **mod_params)
-
-    utils.query_next_step(batch_mode, care_level, 2)
-
-
 #%% revise uncertainties
 
-    #todo utils.shift_floor_to_zero(spec.e, window_size=50) helpful
+    #todo do something to make uncertainties more reasonable. harder than it seems
     pass
-
-#%% coadd multiple exposures or orders
-
-    use_tbl = dbutils.filter_observations(
-        obs_tbl,
-        config_substrings=['g140m', 'e140m', 'g130m', 'g160m', 'g140l'],
-        usable=True,
-        usability_fill_value=True,
-        exclude_flags=['flare'])
-    configs = np.unique(use_tbl['science config'])
-
-    for config in configs:
-        config_tbl = dbutils.filter_observations(use_tbl, config_substrings=[config])
-        if (len(config_tbl) == 1) and (len(re.findall('e140m|g130m|g160m', config)) == 0):
-            continue
-
-        shortnames = np.char.add(config_tbl['archive id'], '_x1d.fits')
-        x1dfiles = dbutils.find_stela_files_from_hst_filenames(shortnames)
-
-        # copy just the files we want into a /temp folder
-        path_temp = Path('./temp')
-        if not path_temp.exists():
-            os.mkdir(path_temp)
-        [os.rename(f, path_temp / f.name) for f in x1dfiles]
-
-        !swrapper -i ./temp -o ./temp -x
-
-        # move files back into the main directory
-        [os.rename(path_temp / f.name, f) for f in x1dfiles]
-
-        # keep only the main coadd, move it into the main directory
-        main_coadd_file, = list(path_temp.glob('*cspec.fits'))
-        afile, = list(path_temp.glob('*aspec.fits'))
-        os.remove(afile)
-
-        pieces_list = [dbutils.parse_filename(f) for f in x1dfiles]
-        pieces_tbl = table.Table(rows=pieces_list)
-        target, = np.unique(pieces_tbl['target'])
-        assert len(np.unique(pieces_tbl['config'])) == 1
-        config =  pieces_tbl['config'][0]
-        date = f'{min(pieces_tbl['datetime'])}--{max(pieces_tbl['datetime'])}'
-        program = 'pgm' + '+'.join(np.unique(np.char.replace(pieces_tbl['program'], 'pgm', '')))
-        id = f'{len(x1dfiles)}exposure'
-        coadd_name = f'{target}.{config}.{date}.{program}.{id}_coadd.fits'
-        os.rename(main_coadd_file, f'{coadd_name}')
-
-        data = fits.getdata(coadd_name, 1)
-        plt.figure()
-        plt.title(coadd_name)
-        plt.step(data['wavelength'].T, data['flux'].T, where='mid')
-
-    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% back to main dir

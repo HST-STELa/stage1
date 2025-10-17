@@ -582,12 +582,14 @@ def find_coadd_or_x1ds(target, **file_srch_kws):
     return files
 
 
-def clear_usability_values(obs_tbl, id_substr, reason_substr=None, other_columns_to_clear=None):
+def clear_usability_values(obs_tbl, id_substr=None, reason_substr=None, other_columns_to_clear=None):
     """Does what the name suggests. Use reason_substr if you only want to clear, e.g., rows where the reason includes
     "acquisition"."""
     cleared_tbl = obs_tbl.copy()
     if other_columns_to_clear is None:
         other_columns_to_clear = []
+    if id_substr is None:
+        id_substr = ''
     if reason_substr is None:
         reason_substr = ''
     def get_substr_mask(colname, sub):

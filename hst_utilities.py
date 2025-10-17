@@ -10,11 +10,10 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
-import utilities as utils
 
 hst_database = MastMissions(mission='hst')
 
-def locate_associated_acquisitions(path, additional_files=()):
+def locate_nearby_acquisitions(path, additional_files=()):
     max_visit_length = 10*u.h
     h = fits.open(path)
     hdr = h[0].header + h[1].header
@@ -26,16 +25,17 @@ def locate_associated_acquisitions(path, additional_files=()):
     # a gotcha is that sometimes the acquisitions are labeled as a separate visit
     # (see DS Tuc A visits OE8T01 and OE8TA1)
     # so instead I will base the search on looking for any exposures within a visit length of time that have ACQ in mode
-    before = time.Time(hdr['expstart'], format='mjd')
-    after = before - max_visit_length
-    date_search_str = f'{after.iso}..{before.iso}'
+    expstart = time.Time(hdr['expstart'], format='mjd')
+    searchstart = expstart - max_visit_length
+    date_search_str = f'{searchstart.iso}..{expstart.iso}'
 
     # make sure observations are from the same program
     id = pieces['id']
-    id_searchstr = id[:6] + '*' # all files with this root will be from the same observation set
+    id_searchstr = id[:4] + '*' # all files with this root will be from the same observation set
     results = hst_database.query_region(
         coords,
         radius=0.1,
+        sci_instrume=h[0].header['instrume'],
         sci_data_set_name=id_searchstr,
         sci_start_time=date_search_str,
         sci_operating_mode='*ACQ*',
@@ -58,6 +58,65 @@ def locate_associated_acquisitions(path, additional_files=()):
     filtered['inst'] = results.loc[filtered['dataset']]['sci_instrume']
 
     return filtered
+
+
+def infer_associated_acquisitions(path, hst_database_table):
+    dbtbl = hst_database_table
+    acq_mask = np.char.count(dbtbl['obsmode'].filled(''), 'ACQ') > 0
+    dbtbl = dbtbl[acq_mask]
+    dbtbl = hst_database.filter_products(dbtbl, file_suffix=['RAW', 'RAWACQ'])
+
+    expstart = fits.getval(path, 'expstart', 1)
+    expstart = time.Time(expstart, format='mjd')
+
+    instrument, = set(dbtbl['instrument_name'])
+    instrument = instrument.strip()
+
+    times = time.Time(dbtbl['start'])
+    dt = expstart - times
+    assert np.all(dt.to_value('h') > 0)
+
+    # work backwards in time keeping the closest acquisition of each type
+    # discarding any that are out of order
+    # for STIS, the sequence goes acq and then a single peakd or a peakd and peakxd
+    # confusingly, these both will be marked just as acq/peak
+    # for COS, it is acq/search, /image, /peakxd, and /peakd
+    i_backwards = np.argsort(dt)
+    if instrument == 'STIS':
+        acq = []
+        peaks = []
+        for row in dbtbl[i_backwards]:
+            mode = row['obsmode']
+            if mode == 'ACQ':
+                acq = [row]
+                break
+            elif mode == 'ACQ/PEAK':
+                if len(peaks) == 0:
+                    peaks.append(row)
+                elif len(peaks) == 1:
+                    # might be a peakd+peakxd pair. if they're adjacent in time, keep them both
+                    dt = time.Time(peaks[0]['start']) - time.Time(row['start'])
+                    if dt < 45*u.min:
+                        peaks.append(row)
+                # if n >= 2, do nothing, you can't have more peakups than two for a given science exposure
+        acq_rows = acq + peaks
+    elif instrument == 'COS':
+        mode_sequence = ['ACQ/SEARCH', 'ACQ/IMAGE', 'ACQ/PEAKXD', 'ACQ/PEAKD']
+        acq_rows = []
+        i_sequence = 5
+        for row in dbtbl[i_backwards]:
+            mode = row['obsmode']
+            j = mode_sequence.index(mode)
+            if j < i_sequence:
+                acq_rows.append(row)
+                i_sequence = j
+    else:
+        raise NotImplementedError(f'{instrument} not implemented.')
+
+    acqtbl = table.Table(rows=acq_rows, names=dbtbl.colnames)
+    acqtbl.sort('start')
+    return acqtbl
+
 
 def is_raw_science(file):
     file = Path(file)

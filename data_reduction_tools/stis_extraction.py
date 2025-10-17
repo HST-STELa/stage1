@@ -14,6 +14,8 @@ def predicted_trace_location(tag_hdu, return_pieces=False):
     hdr = tag_hdu[0].header
     aperture = hdr['propaper']
     aprows = aperture_data.loc[aperture]
+    if isinstance(aprows, table.Row):
+        aprows = aprows.table[[aprows.index]]
     detector = hdr['detector']
     prefix = 'OV' if 'MAMA' in detector else 'OF'
     # prefix = 'OV' if re.findall(r'[A-WYZ]', aperture) else 'ON'

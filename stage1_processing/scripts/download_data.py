@@ -22,7 +22,7 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 ignore_unusable = False
 batch_mode = True
-care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 1 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
 
 
@@ -33,20 +33,23 @@ hst_database = MastMissions(mission='hst')
 # https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
 
 
-
 #%% get targets
 
 # targets = target_lists.observed_since('2025-09-04')
+# targets = target_lists.eval_no(2)
 
 # other lists
 # targets = ['toi-4307', 'toi-6713', 'toi-802', 'hip67522', 'lhs3844', 'v1298tau']
 # targets = ['toi-2094', 'hat-p-26']
 # targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
-targets = ['lp714-47']
+# targets = ['lp714-47']
+# targets = ['k2-25', 'wasp-80', 'wasp-29', 'hd219134', 'kepler-444', 'gliese12', 'gj1132', '55cnc']
+targets = ['gj1214']
 
 #%% target iterator
 
 itertargets = iter(targets)
+
 
 #%% SKIP? set up batch processing (skip if not in batch mode)
 
@@ -117,6 +120,7 @@ while True:
         obs_tbl = obs_tbl_tools.initialize(files_science)
         print(f'\nObservation table initialized for {target}:\n')
     obs_tbl.pprint(-1,-1)
+    obs_tbl['usable'] = table.MaskedColumn(obs_tbl['usable'])
 
     utils.query_next_step(batch_mode, care_level, 2)
 
@@ -240,47 +244,41 @@ while True:
     new_supporting_files = False
     for row in obs_tbl:
         usable = row['usable']
-        if ignore_unusable and not usable.fill(True):
+        if ignore_unusable and not usable.filled(True):
             continue
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
-        id = pieces['id']
-        i = obs_tbl.loc_indices[id]
+        i = row.index
         if obs_tbl['supporting files'].mask[i]:
             supporting_files = {}
         else:
             supporting_files = obs_tbl['supporting files'][i]
 
+        # clean out old peakd and peakxd designations
+        supporting_files.pop('acq/peakd', None)
+        supporting_files.pop('acq/peakxd', None)
+
         # look for acquisitions
-        acq_tbl_w_spts = hstutils.locate_associated_acquisitions(path, additional_files=('SPT',))
+        acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, additional_files=('SPT',))
         if len(acq_tbl_w_spts) == 0:
             continue
-        acq_tbl = hst_database.filter_products(acq_tbl_w_spts, file_suffix=['RAW', 'RAWACQ'])
-        acq_tbl.add_index('obsmode')
+        acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
 
-        # record these
-        for acq_row in acq_tbl:
-            file = str(acq_row['filename'])
-            acq_type = acq_row['obsmode']
-            inst = acq_row['inst']
-            if 'COS' in inst:
-                aqt = acq_type.lower()
-            elif 'STIS' in inst:
-                if acq_type == 'ACQ/PEAK':
-                    files = acq_tbl.loc[acq_type]['filename']
-                    files = np.atleast_1d(files)
-                    assert len(files) <= 2
-                    aqt = 'acq/peakd' if min(files) == acq_row['filename'] else 'acq/peakxd'
-                else:
-                    aqt = acq_type.lower()
-            else:
-                NotImplementedError
+        # if stis and there are two peaks, number them to differentiate
+        # (one will be a peakd and the other a peakxd,
+        # but we won't know for sure until looking at the files after downloading)
+        if 'STIS' in inst:
+            modes = acq_tbl['obsmode']
+            peaks = np.char.count(modes, 'PEAK') > 0
+            if sum(peaks) == 2:
+                modes[peaks] = np.char.add(modes[peaks], ['1', '2'])
+                acq_tbl['obsmode'][peaks] = modes[peaks]
 
-            if aqt in supporting_files:
-                if file > supporting_files[aqt]:
-                    supporting_files[aqt] = file
-            else:
-                supporting_files[aqt] = file
+        # list acquisitions in the obs table
+        for row in acq_tbl:
+            aqt = row['obsmode'].lower()
+            file = row['filename']
+            supporting_files[aqt] = file
 
         # download missing ones
         not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
@@ -307,6 +305,8 @@ while True:
 
         obs_tbl['supporting files'][i] = supporting_files
 
+        assert not obs_tbl['supporting files'].mask[i] and supporting_files != {}
+
     if not new_supporting_files:
         print('All supporting files present, nothing downloaded.')
 
@@ -330,7 +330,7 @@ while True:
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
         usable = row['usable']
-        if ignore_unusable and not usable.fill(True):
+        if ignore_unusable and not usable.filled(True):
             continue
         reject = False
         shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
@@ -390,11 +390,6 @@ while True:
         if reject:
             obs_tbl['usable'][i] = False
             obs_tbl['reason unusable'][i] = reason
-
-    any_bad_files = any(~obs_tbl['usable'].filled(True))
-    if any_bad_files:
-        print('\nSome files found to be missing data:\n')
-        obs_tbl.pprint(-1,-1)
 
     utils.query_next_step(batch_mode, care_level, 2)
 
