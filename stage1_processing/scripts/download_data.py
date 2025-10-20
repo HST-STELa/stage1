@@ -36,16 +36,10 @@ hst_database = MastMissions(mission='hst')
 
 #%% get targets
 
-# targets = target_lists.observed_since('2025-09-04')
+targets = target_lists.observed_since('2025-09-04')
 # targets = target_lists.eval_no(2)
 
-# other lists
-# targets = ['toi-4307', 'toi-6713', 'toi-802', 'hip67522', 'lhs3844', 'v1298tau']
-# targets = ['toi-2094', 'hat-p-26']
-# targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
-# targets = ['lp714-47']
-# targets = ['k2-25', 'wasp-80', 'wasp-29', 'hd219134', 'kepler-444', 'gliese12', 'gj1132', '55cnc']
-targets = ['gj1214']
+
 
 #%% target iterator
 
