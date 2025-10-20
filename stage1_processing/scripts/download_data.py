@@ -12,6 +12,7 @@ import utilities as utils
 import database_utilities as dbutils
 import hst_utilities as hstutils
 import catalog_utilities as catutils
+import paths
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
@@ -80,7 +81,7 @@ while True:
     )
 
     tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
-    data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
+    data_dir = paths.target_hst_data(target)
     if not data_dir.exists():
         os.makedirs(data_dir)
 
