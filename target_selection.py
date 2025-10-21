@@ -624,6 +624,12 @@ with warnings.catch_warnings():
     for colname in other_name_cols:
         names = cat[colname]
         query_mask = ~simbad['simbad_match'] & ~names.mask
+
+        # moving on if query_names is empty
+        if not np.any(query_mask):
+            print("Query mask is empty")
+            continue
+
         i_query, = np.nonzero(query_mask)
         query_names = names[query_mask].filled('?').tolist()
         new_simbad = query.get_simbad_from_names(names=query_names, extra_cols=extra_cols)
