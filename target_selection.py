@@ -620,7 +620,7 @@ with warnings.catch_warnings():
     print(f"{np.sum(simbad['simbad_match'])}/{len(cat)} targets matched by TIC ID. "
           f"{np.sum(~simbad['simbad_match'])} unmatched.")
 
-    other_name_cols = ['gaia_id', 'hostname', 'hd_name', 'hip_name']
+    other_name_cols = ['gaia_dr2_id', 'gaia_dr3_id', 'hostname', 'hd_name', 'hip_name']
     for colname in other_name_cols:
         names = cat[colname]
         query_mask = ~simbad['simbad_match'] & ~names.mask
