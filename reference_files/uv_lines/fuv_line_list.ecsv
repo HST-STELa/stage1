@@ -13,8 +13,8 @@ key name atom ionztn wave Tform blend
 c3 "C III" C 2 1175.647 4.7 True
 si3 "Si III" Si 2 1206.500 4.6 False
 o5 "O V" O 4 1218.344 5.25 False
-n5 "N V" O 4 1238.8210 5.2 False
-n5 "N V" O 4 1242.8040 5.2 False
+n5 "N V" N 4 1238.8210 5.2 False
+n5 "N V" N 4 1242.8040 5.2 False
 si2 "Si II" Si 1 1264.85 4.5 True
 o1 "O I" O 0 1302.190 3.8 False
 o1 "O I" O 0 1304.833 3.8 False
