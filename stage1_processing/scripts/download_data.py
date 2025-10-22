@@ -19,7 +19,7 @@ from stage1_processing import preloads
 from stage1_processing import observation_table as obs_tbl_tools
 
 
-#%% settings
+#%% options
 
 ignore_unusable = False
 batch_mode = True
