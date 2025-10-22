@@ -7,9 +7,15 @@ from matplotlib import pyplot as plt
 import paths
 import utilities as utils
 
-def get_intrinsic_lya_flux(target_name_file, return_16_50_84=False):
+
+def get_lya_recon_file(target_name_file):
     recon_folder = paths.target_data(target_name_file) / 'reconstructions'
     lya_file, = recon_folder.rglob('*lya-recon.csv')
+    return lya_file
+
+
+def get_intrinsic_lya_flux(target_name_file, return_16_50_84=False):
+    lya_file = get_lya_recon_file(target_name_file)
     lyarecon = Table.read(lya_file)
     suffixes = ['low_1sig', 'median', 'high_1sig'] if return_16_50_84 else ['median']
     Fs = []
