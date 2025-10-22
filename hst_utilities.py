@@ -10,6 +10,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
+import utilities as utils
 
 hst_database = MastMissions(mission='hst')
 
@@ -201,3 +202,26 @@ def construct_error_predictor(x1d_hdu, data_mask=None, order=None):
         return poiss_err_flux
 
     return predict_errors_fn
+
+
+def mitigate_error_inflation(f, e, n_var=10, n_window=50):
+    warnings.warn("The mitigate_error_inflation function is experimental and does not perform"
+                  "as well as I'd like.")
+
+    # get rid of "floor"
+    var_no_floor = utils.shift_floor_to_zero(e**2, n_window)
+
+    # add a new floor based on min variance within a window
+    ## first compute variances in a small sliding window
+    vars = utils.apply_across_window(f, np.var, n_var)
+    ## then take median of these across the wider window
+    var_smooth = utils.apply_across_window(vars, np.median, n_window)
+    ## now add the new floor
+    var_mod = var_no_floor + var_smooth
+    e_mod = np.sqrt(var_mod)
+
+    # in areas where flux is changing rapidly over the entire window, like the edges of lines,
+    # variance can exceed pipeline error. use pipeline error there.
+    e_mod = np.clip(e_mod, 0, e)
+
+    return e_mod
