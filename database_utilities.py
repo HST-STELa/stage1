@@ -575,8 +575,13 @@ def delete_files_for_unusable_observations(
 
     return to_be_deleted
 
-def find_coadd_or_x1ds(target, **file_srch_kws):
+
+def find_coadd_or_x1ds(target, out_of_transit_coadd=False, **file_srch_kws):
     files = find_data_files('coadd', targets=[target], **file_srch_kws)
+    if out_of_transit_coadd:
+        files = [f for f in files if '_oot_' in f.name]
+    else:
+        files = [f for f in files if '_oot_' not in f.name]
     if not files:
         files = find_data_files('x1d', **file_srch_kws)
     return files
