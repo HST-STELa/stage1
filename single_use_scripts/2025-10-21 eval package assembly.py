@@ -59,8 +59,7 @@ for file in files:
 #%% add x-ray spectra to package
 
 
-# for eval_no in (1, 2):
-for eval_no in (2,):
+for eval_no in (1, 2):
     targets = target_lists.eval_no(eval_no)
     try:
         targets.remove('v1298tau')
