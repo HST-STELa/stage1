@@ -5,7 +5,8 @@ stage1_code = Path('/Users/parke/Repos/STELa/stage1')
 scratch = root / 'scratch'
 data = root / 'data'
 catalogs = data / 'catalogs'
-inbox = data / 'packages/inbox'
+packages = data / 'packages'
+inbox = packages / 'inbox'
 data_targets =  data / 'targets'
 def target_data(target):
     return data_targets / target
