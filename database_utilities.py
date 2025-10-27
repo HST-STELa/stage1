@@ -14,7 +14,7 @@ import utilities as utils
 from target_selection_tools import query
 
 
-hst2simbad_map = table.Table.read(paths.checked / 'odd_name_map.ecsv')
+hst2simbad_map = table.Table.read(paths.reference_tables / 'odd_name_map.ecsv')
 hst2simbad_map.add_index('odd')
 stela_name_tbl = table.Table.read(paths.locked / 'stela_names.csv')
 stela_name_tbl.add_index('tic_id')
