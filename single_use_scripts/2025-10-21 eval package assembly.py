@@ -7,6 +7,7 @@ import database_utilities as dbutils
 
 from stage1_processing import target_lists
 
+staging_area = paths.packages / '2025-09-26.stag2.eval2.staging_area'
 
 #%% move line files
 
@@ -16,7 +17,7 @@ for eval_no in (1,2):
         targets.remove('v1298tau')
     except:
         pass
-    destination = paths.data / 'packages/2025-09-26.stag2.eval2.staging_area/fuv_line_fluxes'
+    destination = staging_area / 'fuv_line_fluxes'
     destination /= f'eval_{eval_no}'
     if not destination.exists():
         os.mkdir(destination)
@@ -65,7 +66,7 @@ for eval_no in (1, 2):
         targets.remove('v1298tau')
     except:
         pass
-    destination = paths.data / 'packages/2025-09-26.stag2.eval2.staging_area/xray_reconstructions'
+    destination = staging_area / 'xray_reconstructions'
     destination /= f'eval_{eval_no}'
     if not destination.exists():
         os.mkdir(destination)
@@ -78,3 +79,17 @@ for eval_no in (1, 2):
         print(f'{Path(*xray_file.parts[-3:])} -> {Path(*newfile.parts[-3:])}')
 
 
+#%% check that all targets have fuv and x-ray files
+
+folders = (staging_area / 'fuv_line_fluxes',
+           staging_area / 'xray_reconstructions')
+
+targets = target_lists.eval_no(1) + target_lists.eval_no(2)
+
+for folder in folders:
+    print(f'Missing in {folder.name}')
+    files = list(folder.rglob('*'))
+    filetargets = [f.name.split('.')[0] for f in files if '.' in f.name]
+    unmatched = set(targets) - set(filetargets)
+    for name in unmatched:
+        print(f'\t{name}')
