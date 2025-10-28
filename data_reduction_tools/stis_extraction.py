@@ -8,7 +8,6 @@ _fwf = pd.read_fwf(paths.stis / 'stis_aperture_data.txt', infer_nrows=300, comme
                    names='aperture_id aperture_name Xref Yref V2ref V3ref Xscale Yscale Betax Betay'.split())
 aperture_data = table.Table.from_pandas(_fwf)
 aperture_data.add_index('aperture_name')
-mystery_trace_offset = 0
 
 def predicted_trace_location(tag_hdu, return_pieces=False):
     hdr = tag_hdu[0].header
@@ -23,6 +22,12 @@ def predicted_trace_location(tag_hdu, return_pieces=False):
     Yref = apdata['Yref']
     monthly_offset = hdr['moffset2']
     user_offset = hdr['postarg2']
+
+    if aperture.endswith('D1'):
+        mystery_trace_offset = - 100 # still no clue why this happens, but it seems very reliable
+    else:
+        mystery_trace_offset = 0
+
     yloc =  Yref + monthly_offset + user_offset + mystery_trace_offset
     if return_pieces:
         pieces = dict(Yref=Yref, monthly_offset=monthly_offset, user_offset=user_offset)
