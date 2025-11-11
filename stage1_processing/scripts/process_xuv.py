@@ -1,10 +1,10 @@
 import os
 import re
 import shutil as sh
+import warnings
 
 import numpy as np
 import matplotlib
-matplotlib.use('Qt5Agg')
 from matplotlib import pyplot as plt
 plt.ion()
 plt.rcParams['savefig.dpi'] = 150
@@ -24,17 +24,26 @@ from stage1_processing import processing_utilities as pcutils
 
 #%% target list, batch mode?
 
-targets = target_lists.eval_no(1)
+# matplotlib.use('Qt5Agg')
+matplotlib.use('agg'); plt.ioff()
+
+targets = target_lists.eval_no(2)
+targets.remove('v1298tau')
 batch_mode = True
 care_level = 0
+wsplice_phx = 292.
+wsplice_dem = 100.
+
+folder_phoenix = paths.inbox / '2025-10-28 xuv phoenix'
+folder_dem = paths.inbox / '2025-10-30 xuv dem'
+staging_folder = paths.data / 'packages/2025-09-26.stag2.eval2.staging_area/xuv_reconstructions'
 
 
 #%% paths and tables
 
-folder_phoenix = paths.inbox / '2025-07-22 xuv phoenix'
-folder_dem = paths.inbox / '2025-07-16 xuv dem'
-
-hosts = preloads.hosts.copy()
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore')
+    hosts = preloads.hosts.copy()
 hosts.add_index('tic_id')
 
 
@@ -76,7 +85,7 @@ while True:
   try:
 
 
-# %% move to next target
+#%% move to next target
 
     k += 1
     target = next(itertargets)
@@ -98,15 +107,33 @@ while True:
 #%% load properties and x-ray spectrum
 
     props = hosts.loc[tic_id]
-    R = props['st_rad'] * u.Rsun
-    d = props['sy_dist'] * u.pc
-    Teff = props['st_teff'] * u.K
+    R = props['st_rad']
+    d = props['sy_dist']
+    Teff = props['st_teff']
 
     xfile, = targfolder.rglob(f'{target}*xray-recon*')
     xspec = fits.getdata(xfile)
-    xw, xdw, xf = xspec['wavelength'], xspec['bin_width'], xspec['flux']
+    try:
+        xw, xdw, xf = xspec['wavelength'], xspec['bin_width'], xspec['flux']
+    except KeyError:
+        xw, xdw, xf = xspec['Wave'], xspec['bin_width']*2, xspec['Flux']
+
     isort = np.argsort(xw)
     xw, xdw, xf = [ary[isort] for ary in [xw, xdw, xf]]
+
+    # xspec christian used produces rounding errors that can result in duplicate points in xw
+    # so reconstruct a more accurate array
+    if not np.all(np.diff(xw) > 0):
+        xr = 1/xw
+        xi = np.arange(len(xr))
+        xp = np.polyfit(xi[[0,-1]], xr[[0,-1]], 1)
+        xr_new = np.polyval(xp, xi)
+        xw = 1/xr_new
+
+    xwbins_test = utils.mids2bins(xw, xdw)
+    assert np.all(np.diff(xwbins_test) > 0)
+    xw_test = utils.midpts(xwbins_test)
+    assert np.allclose(xw, xw_test, rtol=1e-5)
 
 
 #%% initialize some lists to store various specs
@@ -131,45 +158,57 @@ while True:
         filenames.append(newname)
 
         spec = table.Table.read(file, 1)
+        catutils.add_masks(spec, inplace=True)
         spec.rename_columns(('Wavelength', 'Flux_Density'), ('wavelength', 'flux'))
-        spec['flux'] *= (R/d).to_value('')**2
+        spec['flux'] = spec['flux'] * (R/d).to_value('')**2
         vspecs.append(spec)
 
         legname = ' '.join(config.split('-')[:2])
         legend_names.append(config)
 
 
-#%% load in and standardize girish's spectra
+    #%% load in and standardize girish's spectra
 
-    targname_girish = re.sub(r'(?!k2)([a-z])(\d)', r'\1_\2', target)
+    targname_girish = re.sub(r'(?!k2)([a-z])(\d)', r'\1*\2', target)
+    targname_girish = re.sub(r'[_-]', r'*', targname_girish)
     targname_girish = re.sub(r'[a-z]$', '', targname_girish)
-    dem_file, = folder_dem.rglob(f'spectrum*{targname_girish}*.fits')
+    if targname_girish.endswith('*'):
+        targname_girish = targname_girish[:-1]
+    dem_files = list(folder_dem.rglob(f'*{targname_girish}*.fits'))
+    dem_file, = [file for file in dem_files if 'xray' not in file.name]
 
     config = dem_file.name.split('_')[-1][:-5]
-    newname = f'{target}.dem-{config}-{{}}.na.na.na.xuv-recon.fits'
+    newname = f'{target}.dem-{{}}.na.na.na.xuv-recon.fits'
 
-    spec = table.Table.read(dem_file)
-    spec.rename_column('Wavelength', 'wavelength')
+    spec = table.Table.read(dem_file, hdu=1)
+    colnames = spec.colnames
+    newcolnames = [name.lower() for name in colnames]
+    spec.rename_columns(colnames, newcolnames)
     mask = spec['wavelength'] < 1100
     spec = spec[mask]
 
+    if 'flux_density' in spec.colnames:
+        spec.rename_column('flux_density', 'flux')
+    if 'lower_error_16' not in spec.colnames:
+        spec['lower_error_16'] = spec['error']
+        spec['upper_error_84'] = spec['error']
+
     # nominal
-    spec_nominal = spec[['wavelength', 'Flux_density']]
-    spec_nominal.rename_column('Flux_density', 'flux')
+    spec_nominal = spec[['wavelength', 'flux']]
     vspecs.append(spec_nominal)
     filenames.append(newname.format('nominal'))
     legend_names.append('DEM nominal')
 
     # 16th
     spec_lo = spec[['wavelength']]
-    spec_lo['flux'] = spec_nominal['flux'] - spec['Lower_Error_16']
+    spec_lo['flux'] = spec_nominal['flux'] - spec['lower_error_16']
     vspecs.append(spec_lo)
     filenames.append(newname.format('lobound'))
     legend_names.append('DEM lower')
 
     # 84th
     spec_hi = spec[['wavelength']]
-    spec_hi['flux'] = spec_nominal['flux'] + spec['Upper_Error_84']
+    spec_hi['flux'] = spec_nominal['flux'] + spec['upper_error_84']
     vspecs.append(spec_hi)
     filenames.append(newname.format('hibound'))
     legend_names.append('DEM upper')
@@ -182,29 +221,44 @@ while True:
     for vspec, newname, legname in zip(vspecs, filenames, _legend_names):
         vw, vf = vspec['wavelength'].value, vspec['flux'].value
 
-        # initial plot
-        fig, ax = setup_plot()
-        utils.step_mids(vw, vf, alpha=0.5, ax=ax)
-        utils.step_mids(xw, xf, bin_widths=xdw*2, alpha=0.5, ax=ax)
-        plt.title(newname)
-        plt.ylim(np.min(vf)/10)
-
-        # pick splice location
-        default = 200.
-        print('Click location for splice. Last click trumps. Click off plot when done.\n'
-              f'No clicks or clicking below 100 will use default value of {default}.')
-        xy = utils.click_coords(fig)
-        if len(xy):
-            wsplice = xy[-1][0]
-            if wsplice < 100:
-                wsplice = default
+        if 'phoenix' in newname:
+            wsplice = wsplice_phx
+        elif 'dem' in newname:
+            wsplice = wsplice_dem
         else:
-            wsplice = default
+            raise ValueError
+
+        # some spectra have gaps, if so, use the midpoint for splicing
+        if wsplice > xw[-1]:
+            if xw[-1] > vw[0]:
+                wsplice = xw[-1] + xdw[-1]/2
+            else:
+                # make the splice between where the two spectra end
+                wsplice = (xw[-1] + vw[0])/2
+
+                # add pts that average the flux near the end of each spectrum to avoid
+                # an unusually high or low point resulting in an unrealistically high
+                # or low flux in the gap
+                dw_gap = vw[0] - xw[-1]
+                dw_avg = dw_gap / 2
+
+                mask = vw < vw[0] + dw_gap/2
+                F = np.trapz(vf[mask], vw[mask])
+                vf0 = F/dw_avg
+                vw = np.append(vw[:1] - np.diff(vw)[0]/2, vw)
+                vf = np.append([vf0], vf)
+
+                mask = xw > xw[-1] - dw_avg
+                F = np.trapz(xf[mask], xw[mask])
+                xf1 = F/dw_avg
+                xw = np.append(xw, xw[-1] + xdw[-1]/2)
+                xdw = np.append(xdw, xdw[-1])
+                xf = np.append(xf, xf1)
 
         # do the splice
         vwbins = utils.mids2bins(vw)
-        assert np.all(vwbins[1:] > vwbins[:-1])
         xwbins = utils.mids2bins(xw, xdw)
+        assert np.all(vwbins[1:] > vwbins[:-1])
         assert np.all(xwbins[1:] > xwbins[:-1])
         xmask = xwbins[:-1] < wsplice
         vmask = vwbins[1:] > wsplice
@@ -214,19 +268,29 @@ while True:
         f = np.hstack((xf[xmask], vf[vmask]))
 
         # plot splice location and spec
-        ylo = np.min(f[wbins[1:] > 100]) * 0.5
-        plt.autoscale()
-        _, yhi = plt.ylim(ylo, None)
-        plt.vlines(wsplice, ylo, yhi, ls='--', lw=2, color='0.5')
+        fig, ax = setup_plot()
+
+        utils.step_mids(vw, vf, alpha=0.5, ax=ax)
+        utils.step_mids(xw, xf, bin_widths=xdw*2, alpha=0.5, ax=ax)
         utils.step_mids(vw[vmask], vf[vmask], color='C0', ax=ax)
         utils.step_mids(xw[xmask], xf[xmask], color='C1', bin_widths=xdw[xmask]*2, ax=ax)
 
-        # save splice plot
+        ylo = np.min(f[wbins[1:] > 100]) * 0.5
+        if ylo <= 0:
+            ylo = None
+        plt.autoscale()
+        ylo, yhi = plt.ylim(ylo, None)
+        plt.vlines(wsplice, ylo, yhi, ls='--', lw=2, color='0.5')
+
+        plt.title(newname)
+
+        # groom plot and pause to show
         plt.autoscale()
         plt.ylim(ylo, None)
         plt.tight_layout()
+        _ = utils.click_coords(fig)
 
-        # save spliced spectrum
+        # make spectrum
         w = utils.midpts(wbins)
         dw = np.diff(wbins)
         splicetbl = table.Table(
@@ -240,6 +304,8 @@ while True:
         # save plot of full spectrum
         plot_and_save(splicetbl, newname, ylim=(ylo, None))
 
+        _ = utils.click_coords()
+
     utils.query_next_step(batch_mode, care_level, 1)
 
 #%% close plots
@@ -252,7 +318,8 @@ while True:
     Flya = pcutils.get_intrinsic_lya_flux(target)
     Flya_1au = Flya * (d/u.au)**2
     w, dw, f = empirical.EUV_Linsky14(Flya_1au.to_value(''), Teff.to_value('K'), return_spec=True)
-    f *= (u.au/d).to_value('')**2
+    f = f * (u.au/d).to_value('')**2
+    f = np.array(f)
     linsky_spec = table.Table(
         (w, dw, f),
         names = 'wavelength bin_width flux'.split(),
@@ -268,10 +335,16 @@ while True:
 #%% Prot-based XUV
 
     getprop = lambda key: catutils.get_quantity_flexible(key, props, hosts)
-    if props['st_rotp']:
+    try:
         Prot = getprop('st_rotp')
-        print(f'{target} has measured Prot of {Prot:.1f}')
+        if np.ma.is_masked(Prot):
+            print(f'{target} has no measured Prot, no Prot-based XUV possible')
+            raise ValueError
         M = getprop('st_mass')
+        if M < 0.1*u.Msun:
+            print(f'{target} has mass < 0.1 Msun, no Prot-based XUV possible')
+            raise ValueError
+        print(f'{target} has measured Prot of {Prot:.1f}')
         age = getprop('st_age')
         if not np.ma.is_masked(age):
             print(f'{target} has age estimate of {age:.0f}')
@@ -292,8 +365,8 @@ while True:
         filenames.append(mors_name)
         plot_and_save(mors_spec, mors_name)
         legend_names.append('Prot Empirical')
-    else:
-        print(f'{target} has no measured Prot')
+    except ValueError:
+        pass
 
 
 #%% comparison plot
@@ -301,63 +374,35 @@ while True:
     fig, ax = setup_plot()
     lns = []
     n = len(final_specs)
+    w3bins = empirical.mors_bin_edges.to('AA')
+    w3 = utils.midpts(w3bins)
+    dw3 = np.diff(w3bins)
     for i, spec in enumerate(final_specs):
         ln, = utils.step_mids(spec['wavelength'], spec['flux'], bin_widths=spec['bin_width'],
                               ax=ax, zorder=i, alpha=0.5)
         old_edges = utils.mids2bins(spec['wavelength'].quantity, spec['bin_width'].quantity)
-        f_3bin = utils.rebin(empirical.mors_bin_edges, old_edges, spec['flux'])
-        ln3 = plt.errorbar(mors_spec['wavelength'], f_3bin.to('erg s-1 cm-2 AA-1'),
-                           xerr=mors_spec['bin_width']/2, marker='none',
+        dmask = w3bins > old_edges[0]
+        mask = dmask[:-1]
+        f_3bin = utils.rebin(w3bins[dmask], old_edges, spec['flux'].quantity)
+        ln3 = plt.errorbar(w3[mask], f_3bin.to('erg s-1 cm-2 AA-1'),
+                           xerr=dw3[mask]/2, marker='none',
                            elinewidth=3, color=ln.get_color(), linestyle='none', zorder=n+i)
         lns.append(ln)
 
     plt.legend(lns, legend_names)
     ys = [ln.get_data()[1] for ln in ax.get_lines()]
+    ylos = [y[int(len(y)/2):] for y in ys]
     yall = np.hstack(ys)
-    ylo = np.percentile(yall, 5)/2
+    ylos = np.hstack(ylos)
+    ylo = np.percentile(ylos, 5)/2
     yhi = np.max(yall)*2
     plt.ylim(ylo, yhi)
+    plt.title(target)
     plt.tight_layout()
     pngname = f'{target}.xuv-comparison-plot.png'
     fig.savefig(reconfolder / pngname)
 
-
-#%% flag outliers we shouldn't include in outflow modeling
-    pass
-
-    # print fuv line msmts so I know what XUV was based on
-    fuv_line_file, = targfolder.glob('*line-flux-table*')
-    fuv_line_tbl = table.Table.read(fuv_line_file)
-    mask = fuv_line_tbl['flux'].mask
-    fuv_line_tbl['name wave flux error source'.split()][~mask].pprint(-1,-1)
-
-    # make a disposition table
-    configs = [name.split('.')[1] for name in filenames]
-    xuv_disposition_table = table.Table((configs,), names=('source',))
-    xuv_disposition_table['usable'] = True
-    xuv_disposition_table.pprint(-1,-1)
-    xdt = xuv_disposition_table
-
-    # xy = utils.click_coords(fig) # kludge to make sure I can see figure
-    # while True:
-    #     sub = input('Any spectra that should be flagged unusable? If so, give subsrting of source.\n'
-    #                 'Hit enter if none. Prompt will loop until an empty answer is given.')
-    #     if sub == '':
-    #         break
-    #     mask = np.char.count(xdt['source'].astype(str), sub) > 0
-    #     if sum(mask) > 1:
-    #         print("More than one match. Try again.")
-    #     elif sum(mask) == 0:
-    #         print("No matches. Try again.")
-    #     else:
-    #         xdt['usable'][mask] = False
-    #
-    # utils.query_next_step(batch_mode, care_level, 1)
-
-
-#%% save disposition table
-
-    xuv_disposition_table.write(reconfolder / f'{target}.xuv-disposition-table.ecsv', overwrite=True)
+    _ = utils.click_coords(fig)
 
 
 #%% close plots
@@ -373,15 +418,23 @@ while True:
 
 #%% move files to staging folder
 
-staging_folder = paths.data / 'packages/2025-06-16.stage2.eval1.staging_area/xuv_reconstructions'
-
-# os.mkdir(staging_folder)
-# os.mkdir(staging_folder / 'comparison_plots')
+if not staging_folder.exists():
+    os.mkdir(staging_folder)
+    os.mkdir(staging_folder / 'comparison_plots')
 
 for target in targets:
     reconfolder = paths.target_data(target) / 'reconstructions'
     files = reconfolder.glob('*xuv-recon.fits')
+    dem, phx = False, False
     for file in files:
+        if 'dem' in file.name:
+            dem = True
+        elif 'phoenix' in file.name:
+            phx = True
+        else:
+            continue
         sh.copy(file, staging_folder / file.name)
+    if not (dem or phx):
+        raise ValueError
     compfile, = reconfolder.glob('*xuv-comparison*png')
     sh.copy(compfile, staging_folder / 'comparison_plots' / compfile.name)

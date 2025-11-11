@@ -337,7 +337,7 @@ def get_quantity_flexible(key, tbl_or_row, tbl=None, fill=False, fillvalue=nan):
         if np.ma.is_masked(x):
                 return x
         if hasattr(x, 'unit'):
-            return x
+            return u.Quantity(float(x.value), x.unit)
         else:
             if tbl is None:
                 raise ValueError('If you want to get a value with units from a row, either supply the source table'

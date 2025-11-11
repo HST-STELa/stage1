@@ -16,6 +16,7 @@ from matplotlib import pyplot as plt
 import stistools as stis
 
 import database_utilities as dbutils
+import paths
 import utilities as utils
 import catalog_utilities as catutils
 
@@ -146,9 +147,10 @@ while True:
     )
 
     tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
-    data_dir = Path(f'/Users/parke/Google Drive/Research/STELa/data/targets/{target}/hst')
+    data_dir = paths.target_hst_data(target)
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+    # obs_tbl = dbutils.clear_usability_values(obs_tbl,reason_substr='acquisition')
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
 
