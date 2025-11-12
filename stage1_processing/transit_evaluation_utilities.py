@@ -362,15 +362,18 @@ class TransitModelSet:
             result = np.vstack(result.to_numpy())
         return result
 
+    def get_max_depth_times(self):
+        pass
 
-_temp_simfile, = list(paths.data_targets.rglob(f'hd149026*outflow-tail-model*transit-b.h5'))
+
+_temp_simfile, = list(paths.data_targets.rglob(f'hd149026-b*outflow-tail-model*.h5'))
 with h5py.File(_temp_simfile) as f:
     _default_sim_wavgrid = f['wavgrid'][:] * 1e8
 
 
 @lru_cache(maxsize=None)
 def get_transit_from_simulation(host, planet):
-    file, = host.folder.rglob(f'*outflow-tail-model*transit-{planet.sim_letter}.h5')
+    file, = host.folder.rglob(f'{host.dbname}-{planet.sim_letter}.outflow-tail-model*.h5')
     # load in the transit models
     with h5py.File(file) as f:
         timegrid = f['tgrid'][:]

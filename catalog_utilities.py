@@ -317,14 +317,14 @@ def loc_indices_and_unmatched(catalog, values):
 
 def get_value_or_col_filled(key, tbl_or_row, fillvalue=nan):
     isrow = isinstance(tbl_or_row, table.Row)
-    x = tbl_or_row[key].copy()
+    x = tbl_or_row[key]
     if isrow:
         if np.ma.is_masked(x):
             return fillvalue
         else:
             return x
-    else:
-        return x.filled(fillvalue)
+    else: # it's a table
+        return x.filled(fillvalue).copy()
 
 
 def get_quantity_flexible(key, tbl_or_row, tbl=None, fill=False, fillvalue=nan):

@@ -429,15 +429,17 @@ def chunk_edges(chunk_mask):
     return list(zip(starts, ends))
 
 
-def printprogress(items, attr=None):
+def printprogress(items, attr=None, prefix=''):
     """
     Generator that yields items from a list while printing progress
     on the same line.
     """
+    if prefix and not prefix.endswith(' '):
+        prefix += ' '
     total = len(items)
     for i, item in enumerate(items, start=1):
         lbl = item if attr is None else getattr(item, attr)
-        msg = f"{i}/{total}: {lbl}"
+        msg = f"{prefix}{i}/{total}: {lbl}"
         sys.stdout.write("\r" + msg + " " * 10 + "\n")  # pad to clear leftovers
         sys.stdout.flush()
         yield item

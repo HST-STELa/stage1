@@ -10,6 +10,7 @@ import paths
 import catalog_utilities as catutils
 import utilities as utils
 
+
 from stage1_processing import target_lists
 from stage1_processing import preloads
 from stage1_processing import processing_utilities as pu
@@ -19,34 +20,37 @@ from lya_prediction_tools import stis
 from lya_prediction_tools import lya
 
 
-# TODO add flags to alert us if the mass value for a planet is suspect because it was inferred from radius and either
-# - the system is young, so gaseous planets are still contracting (mass overestimated)
-# - the planet is a giant, so mass can be almost anything (mass underestimated)
-
 #%% occasional use: move model transit spectra into target folders
 
-# from pathlib import Path
-# import database_utilities as dbutils
-#
-# delivery_folder = Path('/Users/parke/Google Drive/Research/STELa/data/packages/inbox/2025-07-30 transit predictions')
-# files = list(delivery_folder.glob('*.h5'))
-#
-# targnames_ethan = [file.name[:-4] for file in files]
-# targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
-# targnames_file = dbutils.target_names_stela2file(targnames_stela)
-#
-# for targname, file in zip(targnames_file, files):
-#     planet = file.name[-4]
-#     newname = f'{targname}.outflow-tail-model.na.na.transit-{planet}.h5'
-#     newfolder = paths.target_data(targname) / 'transit predictions'
-#     if not newfolder.exists():
-#         os.mkdir(newfolder)
-#     sh.copy(file, newfolder / newname)
+import os
+import shutil as sh
+import database_utilities as dbutils
+
+models_inbox = paths.inbox / '2025-07-30 transit predictions'
+
+files = list(models_inbox.glob('*.h5'))
+
+targnames_ethan = [file.name[:-4] for file in files]
+targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
+targnames_file = dbutils.target_names_stela2file(targnames_stela)
+
+for targname, file in zip(targnames_file, files):
+    planet = file.name[-4]
+    newname = f'{targname}.outflow-tail-model.na.na.transit-{planet}.h5'
+    newfolder = paths.target_data(targname) / 'transit predictions'
+
+    # dry run
+    print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
+
+    # for reals
+    # if not newfolder.exists():
+    #     os.mkdir(newfolder)
+    # sh.copy(file, newfolder / newname)
 
 
 #%% targets and code running options
 
-targets = target_lists.eval_no(1)
+targets = target_lists.eval_no(1)[:3]
 mpl.use('Agg') # plots in the backgrounds so new windows don't constantly interrupt my typing
 # mpl.use('qt5agg') # plots are shown
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
@@ -184,10 +188,10 @@ def explore_snrs(
 
 #%% loop through planets and targets and compute transit sigmas
 
-for target in utils.printprogress(targets):
+for target in utils.printprogress(targets, prefix='host '):
     host, host_variability = get_host_objects(target)
 
-    for planet in utils.printprogress(host.planets, 'dbname'):
+    for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
         transit = tutils.get_transit_from_simulation(host, planet)
         snrs, get_snr = explore_snrs(
             planet,
@@ -324,7 +328,29 @@ for target in targets:
         Flya = np.trapz(y, wlya)
         row['Lya Flux\n(erg s-1 cm-2)'] = Flya
 
-        row['planet\nradius (Re)'] = planet.params['pl_rade'].to_value('Rearth')
+        Mp = planet.params['pl_bmasse'].to_value('Mearth')
+        Mp_err = 0.5 *(planet.params['pl_bmasseerr1']
+                       - planet.params['pl_bmasseerr2'])
+        Mp_prec = Mp_err/Mp
+        if not np.isfinite(Mp_prec) or Mp_prec == 0:
+            Mp_prec = np.ma.masked
+        row['mass (Me)'] = Mp
+        row['mass\nprecision'] = Mp_prec
+        if planet.params['pl_bmassesrc'] == 'inferred from Rp':
+            mass_source = 'M-R relationship'
+        else:
+            mass_source_rename = {'Mass': 'known'}
+            mass_source = str(planet.params['pl_bmassprov'])
+            mass_source = mass_source_rename[mass_source]
+        row['mass\nsource'] = mass_source
+        mass_flag = np.ma.masked
+        if planet.params['pl_rade'] > 7*u.Rearth:
+            mass_flag = 'giant'
+        if planet.params['flag_young']:
+            mass_flag = 'young'
+        row['mass\nflag'] = mass_flag
+
+        row['radius (Re)'] = planet.params['pl_rade'].to_value('Rearth')
         row['orbital\nperiod (d)'] = planet.params['pl_orbper'].to_value('d')
         row['stellar\neff temp (K)'] = host.params['st_teff'].to_value('K')
         age = host.params['st_age'].to_value('Gyr')
