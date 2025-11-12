@@ -10,7 +10,6 @@ import paths
 import catalog_utilities as catutils
 import utilities as utils
 
-
 from stage1_processing import target_lists
 from stage1_processing import preloads
 from stage1_processing import processing_utilities as pu
@@ -34,18 +33,23 @@ targnames_ethan = [file.name[:-4] for file in files]
 targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
 targnames_file = dbutils.target_names_stela2file(targnames_stela)
 
-for targname, file in zip(targnames_file, files):
-    planet = file.name[-4]
-    newname = f'{targname}.outflow-tail-model.na.na.transit-{planet}.h5'
-    newfolder = paths.target_data(targname) / 'transit predictions'
+def move_files(dry_run=True):
+    for targname, file in zip(targnames_file, files):
+        planet = file.name[-4]
+        newname = f'{targname}.outflow-tail-model.na.na.transit-{planet}.h5'
+        newfolder = paths.target_data(targname) / 'transit predictions'
 
-    # dry run
-    print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
+        if dry_run:
+            print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
+        else:
+            if not newfolder.exists():
+                os.mkdir(newfolder)
+            sh.copy(file, newfolder / newname)
 
-    # for reals
-    # if not newfolder.exists():
-    #     os.mkdir(newfolder)
-    # sh.copy(file, newfolder / newname)
+move_files(dry_run=True)
+for_reals = input('\nProceed with copying the files? (enter/n)')
+if for_reals == '':
+    move_files(dry_run=False)
 
 
 #%% targets and code running options
