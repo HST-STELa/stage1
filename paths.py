@@ -1,9 +1,11 @@
 from pathlib import Path
+import env
 
-root = Path('/Users/parke/Google Drive/Research/STELa')
-stage1_code = Path('/Users/parke/Repos/STELa/stage1')
-scratch = root / 'scratch'
-data = root / 'data'
+data = Path(env.stela_db_root_path)
+scratch = Path(env.stela_scratch_path)
+stage1_code = Path(env.stage1_code_path)
+
+
 catalogs = data / 'catalogs'
 packages = data / 'packages'
 inbox = packages / 'inbox'
