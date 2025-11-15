@@ -86,9 +86,10 @@ def exptime_fn(aperture):
 
 obstimes = [-22.5, -21., -3., -1.5,  0.,  1.5,  3.] * u.h
 exptimes = [2000, 2700, 2000, 2700, 2700, 2700, 2700] * u.s
-offsets = (0, 3)*u.h
+offsets = range(0, 17)*u.h
+safe_offsets = range(0, 4)*u.h # offsets we will actually consider at this stage
 baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + max(offsets) + 1*u.h))
-assert baseline_range[-1] < -12*u.h
+assert baseline_range[-1] < -3*u.h
 baseline_apertures = dict(g140m='52x0.2', e140m='6x0.2')
 cos_consideration_threshold_flux = 2e-14
 
@@ -152,26 +153,34 @@ def explore_snrs(
         transit_search_rvs
     )
 
-    # first run two time offsets for a single aperture and lya case, pick better time, record
+    # first try various time offsets for a single aperture and lya case
     print('Comparing mid-transit observation to offest(s).')
     grating = host.anticipated_grating
     base_aperture = baseline_apertures[grating]
     tbl1 = snr_cases(offsets, [(grating, base_aperture)], [0])
-    offset = tutils.best_by_mean_snr(tbl1, 'time offset')
-    tbl1.meta['best time offset'] = offset
 
-    # run for all apertures, pick best aperture, record
+    # record best offset overall
+    best_offset = tutils.best_by_mean_snr(tbl1, 'time offset')
+    tbl1.meta['best time offset'] = best_offset
+
+    # pick offset to use from a smaller "safe" range
+    tbl1.add_index('time offset')
+    tbl1_safe = tbl1.loc[safe_offsets]
+    best_safe_offset = tutils.best_by_mean_snr(tbl1_safe, 'time offset')
+    tbl1.meta['best safe time offset'] = best_safe_offset
+
+    # run for all apertures at best safe, pick best aperture, record
     print('Finding the best aperture.')
     apertures = apertures_to_consider[grating]
     grating_apertures = [(grating, ap) for ap in apertures]
-    tbl2 = snr_cases([offset], grating_apertures, [0])
+    tbl2 = snr_cases([best_safe_offset], grating_apertures, [0])
     aperture = tutils.best_by_mean_snr(tbl2, 'aperture')
     tbl2.meta['best stis aperture'] = str(aperture)
 
-    # run for all lya cases
+    # run for all lya cases at 0, best_safe, and best offset
     print('Running for the plausible Lya range.')
     cases = np.arange(-2, 3)
-    tbl3 = snr_cases([offset], [(grating, aperture)], cases)
+    tbl3 = snr_cases([0, best_safe_offset, best_offset], [(grating, aperture)], cases)
 
     tbls = [tbl1, tbl2, tbl3]
 
@@ -293,15 +302,21 @@ for target in targets:
             return maxsnr
 
         # region model snrs
-        modlbl = 'outflow model'
+        modlbl = 'sim'
 
         # load model snr table
         filenamer = tutils.FileNamer('model', planet)
         sigma_tbl_path = host.transit_folder / filenamer.snr_tbl
         snrs = Table.read(sigma_tbl_path)
 
-        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs)
-        maxsnr, frac = add_detection_stats(chosen_mode_snrs, modlbl, fraction=True)
+        best_aperture = snrs.meta['best stis aperture']
+        best_safe_offset = snrs.meta['best safe time offset']
+        best_offset = snrs.meta['best time offset']
+
+        for offset in (0, best_safe_offset, best_offset):
+            lbl = f'{modlbl} {offset:.0f}'
+            chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_safe_offset)
+            maxsnr, frac = add_detection_stats(chosen_mode_snrs, modlbl, fraction=True)
 
         cos = snrs.meta['COS considered']
         row['COS\nconsidered?'] = cos

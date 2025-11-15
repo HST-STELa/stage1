@@ -332,7 +332,7 @@ class Planet(object):
         _tbl = planet_row.table[[planet_row.index]]
         self.stela_suffix, = dbutils.planet_suffixes(_tbl)
         self.optical_transit_duration = planet_row['pl_trandur']
-        self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 10 * u.h))  # long egress for tails
+        self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 30 * u.h))  # long egress for tails
         self.dbname = f'{host_dbname}-{self.stela_suffix}'
 
 @dataclass
@@ -531,10 +531,8 @@ def best_by_mean_snr(tbl: Table, category_column: str) -> str:
     return xunq[int(np.nanargmax(means))]
 
 
-def filter_to_obs_choices(snr_tbl):
-    ap = snr_tbl.meta['best stis aperture']
-    off = snr_tbl.meta['best time offset']
-    mask = (snr_tbl['aperture'] == ap) & (snr_tbl['time offset'] == off)
+def filter_to_obs_choices(snr_tbl, aperture, offset):
+    mask = (snr_tbl['aperture'] == aperture) & (snr_tbl['time offset'] == offset)
     return snr_tbl[mask]
 
 
