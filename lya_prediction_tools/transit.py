@@ -241,6 +241,8 @@ def flat_transit_transmission(
 def generic_transit_snr(
         obstimes,
         exptimes,
+        in_transit_time_range,
+        baseline_time_range,
         normalization_search_rvs,
         transit_search_rvs,
         transit_timegrid,
@@ -254,8 +256,6 @@ def generic_transit_snr(
         rotation_period,
         rotation_amplitude,
         jitter,
-        baseline_cutoff=0.1, # fluxes > max_flux - baseline_cutoff * transit_depth taken as part of baseline
-        transit_cutoff=0.5, # fluxes < min_flux + transit_cutoff * transit_depth taken as part of transit
         diagnostic_plots=False,
 ):
     """Compute transit snr iterating over the first dimension of the transmission arrays, gaining some efficiency
@@ -268,6 +268,10 @@ def generic_transit_snr(
 
     if diagnostic_plots and len(transit_transmission_ary) > 20:
         raise ValueError('This would create over 40 plots. For your sanity, no.')
+
+    # masks for observations that are in the baseline and transit ranges
+    bx = utils.is_in_range(obstimes, *baseline_time_range)
+    tx = utils.is_in_range(obstimes, *in_transit_time_range)
 
     # for later use picking integration ranges
     v0_ism = rv_ism - rv_star
@@ -297,9 +301,9 @@ def generic_transit_snr(
     observe = spectrograph_object.fast_observe_function(w)
 
     # convenience tool to integrate fluxes
-    def wave_integrate(f, e, wave_mask):
-        F = np.sum(f[:,wave_mask] * dwspec[wave_mask], axis=1)
-        E = utils.quadsum(e[:,wave_mask] * dwspec[wave_mask], axis=1)
+    def integrate(f, e, mask):
+        F = np.sum(f[mask] * dwspec[mask])
+        E = utils.quadsum(e[mask] * dwspec[mask])
         return F, E
 
     # scatter added due to stellar variability if not normalizing by line wings, in relative units
@@ -339,24 +343,21 @@ def generic_transit_snr(
         fobs, eobs = zip(*obsvtns)
         fobs, eobs = map(np.asarray, (fobs, eobs))
 
-        # max and min full-exposure line profiles and their difference
-        fluxes = np.sum(fobs, axis=1)
-        imax, imin = np.argmax(fluxes), np.argmin(fluxes)
-        fb, eb = fobs[imax,:], eobs[imax,:]
-        ft, et = fobs[imin,:], eobs[imin,:]
+        # in and out of transit fluxes and their difference
+        fb, eb = utils.flux_average(exptimes[bx, None], fobs[bx,:], eobs[bx,:], axis=0)
+        ft, et = utils.flux_average(exptimes[tx, None], fobs[tx,:], eobs[tx,:], axis=0)
+        tt, _ = utils.flux_average(exptimes[tx, None], trans_obs[tx,:], 0, axis=0)
         d = fb - ft
         de = utils.quadsum(np.vstack((eb, et)), axis=0)
 
-        # deal with cases where there is effectively no transit
         if np.all(d < 1e-25):
             negligible_transit = True
-            row['transit ranges'] = np.ma.masked
-            row['normalization ranges'] = np.ma.masked
+            row['transit velocity ranges'] = np.ma.masked
+            row['normalization velocity ranges'] = np.ma.masked
             row['transit sigma'] = 0
-            row['normalized'] = np.ma.masked
+            row['normalized'] = False
             rows.append(row)
 
-        # if there is a transit
         else:
             negligible_transit = False
 
@@ -372,38 +373,24 @@ def generic_transit_snr(
                 absprng_mask = np.zeros(len(fb), bool)
                 absprng_mask[a:b] = True
 
-            # integrate flux in these ranges for each exposure
-            F, E = wave_integrate(fobs, eobs, absprng_mask)
-            Fnorm, Enorm = wave_integrate(fobs, eobs, normrng_mask)
-
-            # pick baseline and transit ranges
-            Fmax = np.max(F)
-            Fmin = np.min(F)
-            D = Fmax - Fmin
-            bx = F > Fmax - baseline_cutoff * D
-            tx = F < Fmin + transit_cutoff * D
-
-            # average fluxes in those ranges
-            Fout, Eout = utils.flux_average(exptimes[bx], F[bx], E[bx], axis=0)
-            Ftran, Etran = utils.flux_average(exptimes[tx], F[tx], E[tx], axis=0)
-            Fnorm_out, Enorm_out = utils.flux_average(exptimes[tx], Fnorm[tx], Enorm[tx], axis=0)
+            Fout, Eout = integrate(fb, eb, absprng_mask)
+            Ftran, Etran = integrate(ft, et, absprng_mask)
+            Fnorm, Enorm = integrate(fb, eb, normrng_mask)
 
             # get associated ranges to store in the results table
             i_absp = utils.chunk_edges(absprng_mask)
             i_norm = utils.chunk_edges(normrng_mask)
             v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_absp]
             v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_norm]
-            row['transit ranges'] = v_absp
-            row['normalization ranges'] = v_norm
-            row['transit times'] = obstimes[tx]
-            row['baseline times'] = obstimes[bx]
+            row['transit velocity ranges'] = v_absp
+            row['normalization velocity ranges'] = v_norm
 
             # add noise from stellar/instrument variability
             terms = np.array([Etran, Ftran*variability_scatter])
             E_var = utils.quadsum(terms)
 
             # versus noise from trying to normalize out that variability
-            Eratio = np.sqrt(2) * Enorm_out/Fnorm_out
+            Eratio = np.sqrt(2) * Enorm/Fnorm
             terms = np.array([Etran, Ftran*Eratio])
             E_norm = utils.quadsum(terms)
 
@@ -425,30 +412,12 @@ def generic_transit_snr(
             rows.append(row)
 
         if diagnostic_plots:
-            if negligible_transit:
-                # setup to use max and min flux across full integration ranges for plotting
-                tx = imin
-                bx = imax
-                F, E = wave_integrate(fobs, eobs, slice(None))
-                v_norm = (transit_search_rvs,)
-                v_absp = normalization_search_rvs
-                absprng_mask = utils.is_in_range(vspec, *transit_search_rvs)
-
             # region wavelength diagnostic plot
             fig, ax = plt.subplots(1, 1)
             ax.set_xlabel('Velocity in System Frame (km s-1)')
             ax.set_ylabel('Flux Density (erg s-1 cm-2 Å-1)')
             ax2 = ax.twinx()
             ax2.set_ylabel('Transit Transmission')
-
-            if negligible_transit:
-                ax.annotate('Transit does not register. Max and min spectra shown.', xy=(0.5, 0.5), ha='center',
-                            va='center')
-
-            # recompute spectra averaging across in and out of transit now that time ranges have been picked
-            fb, eb = utils.flux_average(exptimes[bx, None], trans_obs[bx, :], 0, axis=0)
-            ft, et = utils.flux_average(exptimes[tx, None], fobs[tx,:], eobs[tx,:], axis=0)
-            tt, _ = utils.flux_average(exptimes[tx, None], trans_obs[tx, :], 0, axis=0)
 
             fbln = ax.errorbar(vspec, fb, eb, errorevery=5, label='baseline')
             ftln = ax.errorbar(vspec, ft, et, fmt='-C2', errorevery=5, label='transit')
@@ -457,12 +426,15 @@ def generic_transit_snr(
             transit_vgrid = lya.w2v(transit_wavegrid) - rv_star.to_value('km s-1')
             for i, t in enumerate(obstimes):
                 ax2.plot(transit_vgrid, trans_obs[i,:], lw=0.5, color='0.5', label=f'{t.to('h'):.1f}')
-
             tln, = ax2.plot(transit_vgrid, tt, color='0.5', label='transit transmission')
-
             ax2.set_ylim(-0.01, 1.05)
 
             # integration ranges
+            if negligible_transit:
+                v_norm = (transit_search_rvs,)
+                v_absp = normalization_search_rvs
+                absprng_mask = utils.is_in_range(vspec, *transit_search_rvs)
+                ax.annotate('Transit does not register.\nDefault integration ranges shown.', xy=(0.5, 0.5), ha='center', va='center')
             for rng in v_norm:
                 nspan = ax.axvspan(*rng, color='0.5', alpha=0.2, ls='none', label='normalization')
             for rng in v_absp:
@@ -478,24 +450,26 @@ def generic_transit_snr(
             fig.supxlabel('Time from Mid-Transit (h)')
             fig.supylabel('Normalized flux (h)')
 
-            for ax, slc in zip(axs, (slice(0,2), slice(2,None))):
-                ta, tb =  obs_edges[::2][slc][0] - 0.25, obs_edges[1::2][slc][-1] + 0.25
+            Fout, Eout = integrate(fb, eb, absprng_mask)
+            result = [integrate(ff, ee, absprng_mask) for ff,ee in zip(fobs,eobs)]
+            Fs, Es = zip(*result)
+            Fs, Es = np.array((Fs, Es))
+
+            for ax, x in zip(axs, (bx, ~bx)):
+                ta, tb =  obs_edges[::2][x][0] - 0.25, obs_edges[1::2][x][-1] + 0.25
                 buffer = (tb - ta) * 0.05
                 ax.set_xlim(ta - buffer, tb + buffer)
 
-                ax.errorbar(obstimes.to_value('h'), F/Fout, E/Fout, exptimes.to_value('h')/2, fmt='o')
+                ax.errorbar(obstimes.to_value('h'), Fs/Fout, Es/Fout, exptimes.to_value('h')/2, fmt='o')
                 ax.axhline(1, color='0.5', lw=0.5, ls=':')
 
             int_edges = np.sort(np.hstack((obs_edges[::2][tx], obs_edges[1::2][tx])))
-            int_y = np.repeat(F[tx]/Fout, 2)
+            int_y = np.repeat(Fs[tx]/Fout, 2)
             ax.fill_between(int_edges, int_y, 1.0, color='0.5', alpha=0.3, lw=0)
 
             # time ranges
-            for c, x in (('C2', tx), ('0.5', bx)):
-                for ax in axs:
-                    ta = obs_edges[::2][x][0]
-                    tb = obs_edges[1::2][x][-1]
-                    ax.axvline([ta, tb], color=c, ls='--')
+            for tedge in in_transit_time_range.to_value('h'):
+                axs[-1].axvline(tedge, color='0.5', ls='--')
 
             if negligible_transit:
                 ax.annotate('Transit does not register.', xy=(0.5, 0.5), ha='center', va='center')

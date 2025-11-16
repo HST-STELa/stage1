@@ -447,13 +447,13 @@ def construct_flat_transit(
 
 
 def build_snr_sampler_fns(
-        planet: Planet,
         host: Host,
         host_variability: HostVariability,
         transit_model: TransitModelSet,
         exptime_fn,
         obstimes: u.Quantity,
-        baseline_time_range: u.Quantity,
+        baseline_exposures: slice,
+        transit_exposures: slice,
         normalization_search_rvs: u.Quantity,
         transit_search_rvs,
 ):
@@ -476,11 +476,17 @@ def build_snr_sampler_fns(
         expt = exptime_fn(aperture)
         lya_flux = host.lya_reconstruction.fluxes[lya_case]
 
+        obs_starts = obstimes_offset - expt/2
+        obs_ends = obstimes_offset + expt/2
+        baseline_time_range = (obs_starts[baseline_exposures][0], obs_ends[baseline_exposures][-1])
+        transit_time_range = (obs_starts[transit_exposures][0], obs_ends[transit_exposures][-1])
+        baseline_time_range, transit_time_range = map(u.Quantity, (baseline_time_range, transit_time_range))
+
         result = transit.generic_transit_snr(
             obstimes=obstimes_offset,
             exptimes=expt,
             baseline_time_range=baseline_time_range,
-            in_transit_time_range=planet.in_transit_range,
+            in_transit_time_range=transit_time_range,
             normalization_search_rvs=normalization_search_rvs,
             transit_search_rvs=transit_search_rvs,
             transit_timegrid=transit_model.timegrid,
@@ -496,10 +502,14 @@ def build_snr_sampler_fns(
             jitter=jitter,
             diagnostic_plots=diagnostic_plots
         )
+        sigma_tbl = result[0] if diagnostic_plots else result
+
+        # add time range info
+        sigma_tbl.meta['baseline time range'] = baseline_time_range
+        sigma_tbl.meta['transit time range'] = transit_time_range
 
         # add transit parameter info if a full set was run
         if transit_keys is None:
-            sigma_tbl = result[0] if diagnostic_plots else result
             for k, v in transit_model.params.items():
                 sigma_tbl[k] = v
 

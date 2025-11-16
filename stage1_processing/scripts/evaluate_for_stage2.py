@@ -88,8 +88,8 @@ obstimes = [-22.5, -21., -3., -1.5,  0.,  1.5,  3.] * u.h
 exptimes = [2000, 2700, 2000, 2700, 2700, 2700, 2700] * u.s
 offsets = range(0, 17)*u.h
 safe_offsets = range(0, 4)*u.h # offsets we will actually consider at this stage
-baseline_range = u.Quantity((obstimes[0] - 1*u.h, obstimes[1] + max(offsets) + 1*u.h))
-assert baseline_range[-1] < -3*u.h
+baseline_exposures = slice(0, 2)
+transit_exposures = slice(4, None)
 baseline_apertures = dict(g140m='52x0.2', e140m='6x0.2')
 cos_consideration_threshold_flux = 2e-14
 
@@ -133,7 +133,6 @@ def get_host_objects(name):
 #%% define function to do a nested exploration of different observational setups
 
 def explore_snrs(
-        planet: tutils.Planet,
         host: tutils.Host,
         host_variability: tutils.HostVariability,
         transit: tutils.TransitModelSet,
@@ -142,13 +141,13 @@ def explore_snrs(
 ):
 
     snr_cases, snr_single = tutils.build_snr_sampler_fns(
-        planet,
         host,
         host_variability,
         transit,
         exptime_fn,
         obstimes,
-        baseline_range,
+        baseline_exposures,
+        transit_exposures,
         normalization_search_rvs,
         transit_search_rvs
     )
@@ -165,7 +164,7 @@ def explore_snrs(
 
     # pick offset to use from a smaller "safe" range
     tbl1.add_index('time offset')
-    tbl1_safe = tbl1.loc[safe_offsets]
+    tbl1_safe = tbl1.loc[safe_offsets.value]
     best_safe_offset = tutils.best_by_mean_snr(tbl1_safe, 'time offset')
     tbl1.meta['best safe time offset'] = best_safe_offset
 
@@ -180,7 +179,7 @@ def explore_snrs(
     # run for all lya cases at 0, best_safe, and best offset
     print('Running for the plausible Lya range.')
     cases = np.arange(-2, 3)
-    tbl3 = snr_cases([0, best_safe_offset, best_offset], [(grating, aperture)], cases)
+    tbl3 = snr_cases([0*u.h, best_safe_offset, best_offset], [(grating, aperture)], cases)
 
     tbls = [tbl1, tbl2, tbl3]
 
@@ -190,7 +189,7 @@ def explore_snrs(
     if Flya > cos_consideration_threshold_flux:
         print('Target Lya flux makes it eligible for COS: adding estimates for COS SNRs.')
         tbl3.meta['COS considered'] = True
-        tbl4 = snr_cases([offset], [('g130m', 'psa')], cases)
+        tbl4 = snr_cases([best_safe_offset], [('g130m', 'psa')], cases)
         tbls.append(tbl4)
     else:
         tbl3.meta['COS considered'] = False
@@ -207,7 +206,6 @@ for target in utils.printprogress(targets, prefix='host '):
     for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
         transit = tutils.get_transit_from_simulation(host, planet)
         snrs, get_snr = explore_snrs(
-            planet,
             host,
             host_variability,
             transit,
@@ -219,7 +217,9 @@ for target in utils.printprogress(targets, prefix='host '):
         snrs.write(host.transit_folder / filenamer.snr_tbl, overwrite=True)
 
         # diagnostic plots
-        best_snrs = tutils.filter_to_obs_choices(snrs)
+        best_ap = snrs.meta['best stis aperture']
+        best_offset = snrs.meta['best safe time offset']
+        best_snrs = tutils.filter_to_obs_choices(snrs, best_ap, best_offset)
         isort = np.argsort(best_snrs['transit sigma'])
         cases = {'max': isort[-1],
                  'median': isort[len(isort) // 2]}
@@ -252,7 +252,6 @@ for target in utils.printprogress(targets, prefix='host '):
         )
 
         flat_snrs, get_flat_snr = explore_snrs(
-            planet,
             host,
             host_variability,
             flat_transit,
@@ -264,7 +263,9 @@ for target in utils.printprogress(targets, prefix='host '):
         flat_snrs.write(host.transit_folder / flat_filenamer.snr_tbl, overwrite=True)
 
         # diagnostic plots
-        best_flat_snrs = tutils.filter_to_obs_choices(flat_snrs)
+        best_flat_ap = flat_snrs.meta['best stis aperture']
+        best_flat_offset = flat_snrs.meta['best safe time offset']
+        best_flat_snrs = tutils.filter_to_obs_choices(flat_snrs, best_flat_ap, best_flat_offset)
         isort = np.argsort(best_flat_snrs['transit sigma'])
         i_med = isort[len(isort) // 2]
         wfig, tfig = tutils.make_diagnostic_plots(planet, flat_transit, get_flat_snr, best_flat_snrs[i_med])
@@ -310,13 +311,22 @@ for target in targets:
         snrs = Table.read(sigma_tbl_path)
 
         best_aperture = snrs.meta['best stis aperture']
-        best_safe_offset = snrs.meta['best safe time offset']
-        best_offset = snrs.meta['best time offset']
 
-        for offset in (0, best_safe_offset, best_offset):
-            lbl = f'{modlbl} {offset:.0f}'
-            chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_safe_offset)
-            maxsnr, frac = add_detection_stats(chosen_mode_snrs, modlbl, fraction=True)
+        lbl = f'{modlbl} no offset'
+        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=0*u.h)
+        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
+
+        best_safe_offset = snrs.meta['best safe time offset']
+        row['best safe\ntransit offset'] = best_safe_offset
+        lbl = f'{modlbl} safe offset'
+        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_safe_offset)
+        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
+
+        best_offset = snrs.meta['best time offset']
+        row['best overall\ntransit offset'] = best_offset
+        lbl = f'{modlbl} best offset'
+        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_offset)
+        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
 
         cos = snrs.meta['COS considered']
         row['COS\nconsidered?'] = cos
@@ -337,7 +347,8 @@ for target in targets:
         flat_sigma_tbl = Table.read(flat_sigma_tbl_path)
 
         flatlbl = f'flat transit \n[{simple_transit_range[0].value:.0f}, {simple_transit_range[1].value:.0f}]'
-        flat_obs_snrs = tutils.filter_to_obs_choices(flat_sigma_tbl)
+        best_flat_ap = flat_sigma_tbl.meta['best stis aperture']
+        flat_obs_snrs = tutils.filter_to_obs_choices(flat_sigma_tbl, best_flat_ap, 0*u.h)
         add_detection_stats(flat_obs_snrs, 'flat transit', fraction=False)
         add_config_info(flat_sigma_tbl, flatlbl)
         # endregion
