@@ -378,10 +378,10 @@ def generic_transit_snr(
             Fnorm, Enorm = integrate(fb, eb, normrng_mask)
 
             # get associated ranges to store in the results table
-            i_absp = utils.chunk_edges(absprng_mask)
+            i_absp = utils.chunk_edges(absprng_mask) # note that this gives edges for a *slice* not direct indexing
             i_norm = utils.chunk_edges(normrng_mask)
-            v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_absp]
-            v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]+1]) for ii in i_norm]
+            v_absp = [(vspec_bins[ii[0]], vspec_bins[ii[1]]) for ii in i_absp]
+            v_norm = [(vspec_bins[ii[0]], vspec_bins[ii[1]]) for ii in i_norm]
             row['transit velocity ranges'] = v_absp
             row['normalization velocity ranges'] = v_norm
 
