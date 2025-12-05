@@ -418,12 +418,18 @@ def generic_transit_snr(
             ax.set_ylabel('Flux Density (erg s-1 cm-2 Å-1)')
             ax2 = ax.twinx()
             ax2.set_ylabel('Transit Transmission')
+            convolution_note = (
+                "Note that spectra are convolved with LSF but transmission is not.\n"
+                "This can make the spectra differ less than it appears they should."
+            )
+            ax.annotate(convolution_note, xy=(0.02,0.02), xycoords='axes fraction',
+                        ha='left', va='bottom', fontsize='small')
 
             fbln = ax.errorbar(vspec, fb, eb, errorevery=5, label='baseline')
             ftln = ax.errorbar(vspec, ft, et, fmt='-C2', errorevery=5, label='transit')
             ag, = ax.plot(vspec, et, ':C3', label='uncty with airglow')
 
-            transit_vgrid = lya.w2v(transit_wavegrid) - rv_star.to_value('km s-1')
+            transit_vgrid = lya.w2v(transit_wavegrid)
             for i, t in enumerate(obstimes):
                 ax2.plot(transit_vgrid, trans_obs[i,:], lw=0.5, color='0.5', label=f'{t.to('h'):.1f}')
             tln, = ax2.plot(transit_vgrid, tt, color='0.5', label='transit transmission')
