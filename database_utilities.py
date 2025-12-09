@@ -609,3 +609,15 @@ def clear_usability_values(obs_tbl, id_substr=None, reason_substr=None, other_co
     for name in colanmes_to_clear:
         cleared_tbl[name].mask |= mask
     return cleared_tbl
+
+
+def path_string_last_n(path, n):
+    parts = path.parts[-n:]
+    parts = map(str, parts)
+    txt = '/'.join(parts)
+    return(txt)
+
+
+def split_hostname_planet_letter(planet_name, split_character=' '):
+    pieces = planet_name.split(split_character)
+    return split_character.join(pieces[:-1]), pieces[-1]
