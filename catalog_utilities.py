@@ -12,6 +12,7 @@ import pandas as pd
 
 import paths
 
+limit_int2str = {-1:'>', 0:'', 1:'<'}
 
 def isnull(table_value, null_value):
     if hasattr(table_value, 'mask') and table_value.mask:
@@ -290,8 +291,8 @@ def match_by_position(ra1, dec1, ra2, dec2):
     return i1, i2
 
 
-def read_excel(path):
-    tbl = pd.read_excel(path, keep_default_na=False)
+def read_excel(path, *args, **kwargs):
+    tbl = pd.read_excel(path, *args, keep_default_na=False, **kwargs)
     tbl = table.Table.from_pandas(tbl)
     return tbl
 
@@ -416,10 +417,79 @@ def merge_tables_with_update(old, new, key):
     return merged
 
 
-def table_vstack_flexible_shapes(tables, join_type='outer'):
+def harmonize_dtypes_for_merge(tables, copy=True):
+    """
+    Given a sequence of astropy Tables that you intend to merge,
+    coerce common-name columns to a common dtype to avoid TableMergeError
+    from incompatible column dtypes.
+
+    - Uses the least-general numeric dtype that can hold all values
+      (via numpy's type promotion rules).
+    - For mixed or non-numeric types, falls back to a common Unicode
+      string dtype large enough to hold all stringified values.
+
+    Parameters
+    ----------
+    tables : sequence of astropy.table.Table
+        Tables to harmonize.
+    copy : bool, optional
+        If True (default), work on copies and return new tables.
+        If False, modify the input tables in-place.
+
+    Returns
+    -------
+    list of astropy.table.Table
+        Dtype-harmonized tables (either new or the originals).
+    """
+    if copy:
+        tables = [t.copy() for t in tables]
+
+    if not tables:
+        return tables
+
+    # all columns
+    all_cols = set(tables[0].colnames)
+    for t in tables[1:]:
+        all_cols |= set(t.colnames)
+
+    for name in all_cols:
+        relevant_tables = [t for t in tables if name in t.colnames]
+        cols = [t[name] for t in relevant_tables]
+        dtypes = [c.dtype for c in cols]
+
+        # If they're already all identical, nothing to do
+        if all(dt == dtypes[0] for dt in dtypes):
+            continue
+
+        kinds = {dt.kind for dt in dtypes}
+
+        # any object -> use object
+        if 'O' in kinds:
+            target_dtype = 'object'
+
+        # All numeric (ints/floats/bools) -> use numpy's promotion
+        elif kinds <= set("iufb"):
+            target_dtype = np.result_type(*dtypes)
+
+        # all strings -> use numpy's promotion
+        elif kinds == set("U"):
+            target_dtype = np.result_type(*dtypes)
+
+        # fall back to object
+        else:
+            target_dtype = 'object'
+
+        # Apply conversion
+        for t in tables:
+            t[name] = t[name].astype(target_dtype)
+
+    return tables
+
+
+def table_vstack_flexible_shapes(tables, join_type='outer', copy=True):
     """Stacks tables while avoiding shape and type mismatch errors, at the cost of possibly creating frankentables."""
 
-    tables = [tbl.copy() for tbl in tables]
+    tables = harmonize_dtypes_for_merge(tables, copy=copy)
 
     allnames = set()
     for tbl in tables:
@@ -465,4 +535,39 @@ def catch_QTable_unit_warnings():
         yield
 
 
-limit_int2str = {-1:'>', 0:'', 1:'<'}
+def download_escape_catalog():
+    cat = read_excel(paths.escape_catalog_google_sheet_xlsx_export, header=2)
+    return cat
+
+
+def escape_catalog_merge_targets(cat='download'):
+    if cat == 'download':
+        cat = download_escape_catalog()
+    grouped = cat.group_by('Planet Name')
+
+    id_cols = grouped[['Target Star', 'Planet Letter', 'Planet Name', 'TIC ID']]
+    agg_id = id_cols.groups.aggregate(min)
+
+    det_cols = grouped[['He* Detected?', 'H-alpha detected?', 'Lya detected?']]
+    def detection_label_joiner(x):
+        xx = set(x)
+        xx = xx - {'', ' '}
+        result = ', '.join(xx)
+        return result
+    agg_det = det_cols.groups.aggregate(detection_label_joiner)
+
+    result = table.hstack((agg_id, agg_det))
+    return result
+
+
+def filter_table(tbl, column_value_dictionary, copy=True):
+    """Filter a table to select only those rows with the provided values in each column as specified by the
+    column_value_dictionary."""
+    mask = np.ones(len(tbl), bool)
+    for name, val in column_value_dictionary.items():
+        newmask = tbl[name] == val
+        mask &= newmask
+    filtered = tbl[mask]
+    if copy:
+        filtered = filtered.copy()
+    return filtered
