@@ -81,7 +81,11 @@ def resolve_stela_name_flexible(names):
             found |= incol
             stela_names[incol] = stela_name_tbl.loc[colname, names[incol]]['hostname']
 
-    # search for the name in simbad
+    # if all names found in stela name table, we're done
+    if np.all(found):
+        return stela_names
+
+    # otherwise, search for unrecognized names in simbad
     try:
         names_from_simbad_search = resolve_stela_name_w_simbad(names[~found])
     except ValueError as e:
