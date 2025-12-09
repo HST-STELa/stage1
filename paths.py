@@ -43,4 +43,8 @@ difftbls = selection_outputs / 'diff_tables'
 stage1_processing = Path('stage1_processing')
 status_input = stage1_processing / 'status_input'
 status_output = stage1_processing / 'status_output'
+stage2_requests = stage1_processing / 'stage2_requests'
 data_reduction_tools = Path('data_reduction_tools')
+
+mdwarf_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/14V4VAoDKTPLT_qSqW64henNFJyI74fZI/export?format=xlsx&gid=1771378421'
+escape_catalog_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/1dEvK_yr4eP9nq2zorvs0k3Lyt8UrqYznmb80mY4Z5X0/export?format=xlsx&gid=0'

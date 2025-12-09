@@ -2,6 +2,7 @@ import warnings
 from math import nan
 import sys
 from pathlib import Path
+from collections import Counter
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -509,3 +510,8 @@ def estimate_gain_sigma_eff(flux_data, sigma_data, flux_model, snr_min=2.0):
     var_eff = np.maximum(var_eff, np.finfo(float).tiny)
 
     return np.sqrt(var_eff), gain
+
+
+def most_common_item(elements):
+    (result, _), = Counter(elements).most_common(1)
+    return result

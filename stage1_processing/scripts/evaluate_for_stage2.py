@@ -1,13 +1,17 @@
 from functools import lru_cache
+import re
 
 from astropy.table import Table
+from astropy import table
 from astropy import units as u
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib as mpl
+from tqdm import tqdm
 
 import paths
 import catalog_utilities as catutils
+import database_utilities as dbutils
 import utilities as utils
 
 from stage1_processing import target_lists
@@ -25,18 +29,34 @@ import os
 import shutil as sh
 import database_utilities as dbutils
 
-models_inbox = paths.inbox / '2025-07-30 transit predictions'
+models_inbox = paths.inbox / '2025-11-17 transit predictions'
 
 files = list(models_inbox.glob('*.h5'))
 
-targnames_ethan = [file.name[:-4] for file in files]
+odd_names = {
+    'aumic': 'au-mic',
+    'dstuca': 'ds-tuc-a',
+}
+def parse_ethan_targname(file):
+    name = file.name
+    name = name.replace('.h5', '')
+    if re.findall(r'0\d$', name): # name ends in a number, so planet must be a 2-digit number
+        targname = name[:-2]
+        suffix = name[-2:]
+    else:
+        targname = name[:-1]
+        suffix = name[-1:]
+    targname = odd_names.get(targname, targname)
+    return targname, suffix
+
+names_planets = [parse_ethan_targname(file) for file in files]
+targnames_ethan, planet_suffixes = zip(*names_planets)
 targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
-targnames_file = dbutils.target_names_stela2file(targnames_stela)
+targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
 
 def move_files(dry_run=True):
-    for targname, file in zip(targnames_file, files):
-        planet = file.name[-4]
-        newname = f'{targname}.outflow-tail-model.na.na.transit-{planet}.h5'
+    for targname, planet, file in zip(targnames_file, planet_suffixes, files):
+        newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
         newfolder = paths.target_data(targname) / 'transit predictions'
 
         if dry_run:
@@ -54,11 +74,14 @@ if for_reals == '':
 
 #%% targets and code running options
 
-targets = target_lists.eval_no(1)[:3]
+targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+# targets = ['au-mic']
+# targets = ['au-mic', '55cnc', 'toi-1685', 'hd63433', 'toi-2015']
 mpl.use('Agg') # plots in the backgrounds so new windows don't constantly interrupt my typing
 # mpl.use('qt5agg') # plots are shown
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
+targets = list(targets)
 
 
 #%% instrument details
@@ -159,13 +182,11 @@ def explore_snrs(
     tbl1 = snr_cases(offsets, [(grating, base_aperture)], [0])
 
     # record best offset overall
-    best_offset = tutils.best_by_mean_snr(tbl1, 'time offset')
+    best_offset = tutils.best_offset(tbl1)
     tbl1.meta['best time offset'] = best_offset
 
     # pick offset to use from a smaller "safe" range
-    tbl1.add_index('time offset')
-    tbl1_safe = tbl1.loc[safe_offsets.value]
-    best_safe_offset = tutils.best_by_mean_snr(tbl1_safe, 'time offset')
+    best_safe_offset = tutils.best_offset(tbl1, safe_offsets.max())
     tbl1.meta['best safe time offset'] = best_safe_offset
 
     # run for all apertures at best safe, pick best aperture, record
@@ -228,12 +249,13 @@ for target in utils.printprogress(targets, prefix='host '):
             tutils.save_diagnostic_plots(wfig, tfig, case, host, filenamer)
 
         # corner-like plot
-        labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],σ_Lya'.split(',')
+        labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],log10(M_planet)\n[Mearth],σ_Lya'.split(',')
         lTion = best_snrs['Tion'].to_value('dex(h)')
         lMdot = best_snrs['mdot_star'].to_value('dex(g s-1)')
         leta = np.log10(best_snrs['eta'])
+        lMp = best_snrs['mass'].to_value('dex(Mearth)')
         lya_sigma = [tutils.LyaReconstruction.lbl2sig[lbl] for lbl in best_snrs['lya reconstruction case']]
-        param_vecs = [leta, lTion, lMdot, lya_sigma]
+        param_vecs = [leta, lTion, lMdot, lMp, lya_sigma]
         snr_vec = best_snrs['transit sigma']
         cfig, _ = pu.detection_sigma_corner(param_vecs, snr_vec, labels=labels,
                                             levels=(3,), levels_kws=dict(colors='w'))
@@ -273,13 +295,14 @@ for target in utils.printprogress(targets, prefix='host '):
         plt.close('all')
 
 
-#%% make table of properties
+#%% assemble table of properties
 
 sigma_threshold = 3
 lya_bins = (-150, -50, 50, 150) * u.km/u.s
+min_samples = 5**4
 
 eval_rows = []
-for target in targets:
+for target in tqdm(targets):
     host, host_variability = get_host_objects(target)
     for planet in host.planets:
         # add entries to the row in the order they should appear in the table
@@ -310,23 +333,50 @@ for target in targets:
         sigma_tbl_path = host.transit_folder / filenamer.snr_tbl
         snrs = Table.read(sigma_tbl_path)
 
+        grating = host.anticipated_grating
+        base_aperture = baseline_apertures[grating]
         best_aperture = snrs.meta['best stis aperture']
 
+        base_filters = {
+            'grating': grating,
+            'aperture': base_aperture,
+            'lya reconstruction case': 'median'
+        }
+        base_snrs = catutils.filter_table(snrs, base_filters)
+
         lbl = f'{modlbl} no offset'
-        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=0*u.h)
-        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
+        no_offset_filters = { # include all lya cases, best aperture
+            'grating': grating,
+            'aperture': best_aperture,
+            'time offset': 0
+        }
+        no_offset_snrs = catutils.filter_table(snrs, no_offset_filters)
+        assert len(no_offset_snrs) >= min_samples
+        maxsnr, frac = add_detection_stats(no_offset_snrs, lbl, fraction=True)
 
-        best_safe_offset = snrs.meta['best safe time offset']
-        row['best safe\ntransit offset'] = best_safe_offset
         lbl = f'{modlbl} safe offset'
-        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_safe_offset)
-        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
+        best_safe_offset = tutils.best_offset(base_snrs, safe_offsets.max())
+        row['best safe\ntransit offset'] = best_safe_offset
+        safe_filters = { # include all lya cases, best aperture
+            'grating': grating,
+            'aperture': best_aperture,
+            'time offset': best_safe_offset
+        }
+        best_safe_snrs = catutils.filter_table(snrs, safe_filters)
+        assert len(best_safe_snrs) >= min_samples
+        maxsnr, frac = add_detection_stats(best_safe_snrs, lbl, fraction=True)
 
-        best_offset = snrs.meta['best time offset']
-        row['best overall\ntransit offset'] = best_offset
         lbl = f'{modlbl} best offset'
-        chosen_mode_snrs = tutils.filter_to_obs_choices(snrs, aperture=best_aperture, offset=best_offset)
-        maxsnr, frac = add_detection_stats(chosen_mode_snrs, lbl, fraction=True)
+        best_offset = tutils.best_offset(base_snrs)
+        row['best overall\ntransit offset'] = best_offset
+        best_filters = { # include all lya cases, best aperture
+            'grating': grating,
+            'aperture': best_aperture,
+            'time offset': best_offset
+        }
+        best_overall_snrs = catutils.filter_table(snrs, best_filters)
+        assert len(best_overall_snrs) >= min_samples
+        maxsnr, frac = add_detection_stats(best_overall_snrs, lbl, fraction=True)
 
         cos = snrs.meta['COS considered']
         row['COS\nconsidered?'] = cos
@@ -369,7 +419,7 @@ for target in targets:
         if planet.params['pl_bmassesrc'] == 'inferred from Rp':
             mass_source = 'M-R relationship'
         else:
-            mass_source_rename = {'Mass': 'known'}
+            mass_source_rename = {'Mass': 'known', 'M-R relationship': 'M-R relationship'}
             mass_source = str(planet.params['pl_bmassprov'])
             mass_source = mass_source_rename[mass_source]
         row['mass\nsource'] = mass_source
@@ -408,6 +458,8 @@ ordered_cols = list(eval_rows[imax].keys())
 eval_table = Table(rows=eval_rows)
 eval_table = eval_table[ordered_cols]
 
+eval_table['TIC'] = preloads.stela_names.loc['hostname', eval_table['hostname']]['tic_id']
+
 # some grooming
 for col in eval_table.colnames:
     if 'flag_' in col:
@@ -429,10 +481,85 @@ for substr, fmt in formats_general.items():
             eval_table[name].format = fmt
             formats[name] = fmt
 
+
+#%% match in the catalog of escape detections
+
+escape_detections = catutils.escape_catalog_merge_targets('download')
+
+det_ids = np.char.add(escape_detections['Target Star'], escape_detections['Planet Letter'])
+pcat_ids = np.char.add(planet_catalog['hostname'].astype(str),
+                       dbutils.planet_suffixes(planet_catalog).astype(str))
+eval_ids = np.char.add(eval_table['hostname'], eval_table['planet'])
+
+# check to be sure names in escape detections match into planet catalog
+suspect = ~np.isin(det_ids, pcat_ids)
+if np.any(suspect):
+    print("These names don't have a match in the planet catalog."
+          "(Note this could be do to cuts to planet catalog, such as requiring < 100 d periods (e.g., HD 136352d).)")
+    print(det_ids[suspect])
+
+# match using name + letter
+det_colnames = [name for name in escape_detections.colnames if 'detected' in name.lower()]
+det_slim = escape_detections[det_colnames]
+det_slim['temp'] = det_ids
+eval_table['temp'] = eval_ids
+eval_table = table.join(eval_table, det_slim, keys='temp', join_type='left')
+eval_table.remove_column('temp')
+
+
+#%% match in requested targets
+
+files = list(paths.stage2_requests.glob('*.txt'))
+path_check_table, = paths.selection_intermediates.glob('*pt1*.ecsv')
+check_table = catutils.load_and_mask_ecsv(path_check_table)
+
+def any_tois(planet_names):
+    for name in planet_names:
+        x = re.findall(r'TOI-\d+\.0\d', name)
+        if x:
+            return True
+    return False
+
+eval_table['TICletter'] = np.char.add( # temporary column for matchin
+    eval_table['TIC'].astype(str),
+    eval_table['planet']
+)
+check_table['TICletter'] = np.char.add( # temporary column for matching
+    check_table['tic_id'].astype(str),
+    check_table['pl_letter'].astype(str).filled('')
+)
+for file in files:
+    requested_planets = catutils.read_requested_targets(file)
+    if any_tois(requested_planets):
+        raise NotImplementedError
+
+    # match with TIC to ensure avoid misses
+    hosts_letters = list(map(dbutils.split_hostname_planet_letter, requested_planets))
+    hosts, letters = zip(*hosts_letters)
+    tics = dbutils.query.query_simbad_for_tic_ids(hosts)
+    tics_letters = np.char.add(tics, letters)
+
+    # mark matches in a "requested" column
+    request_name = 'requested\n' + requested_planets.name
+    eval_table[request_name] = np.isin(eval_table['TICletter'], tics_letters)
+
+    # print requested targets with no match in STELa tables
+    not_in_list = ~np.isin(tics_letters, check_table['TICletter'])
+    if np.any(not_in_list):
+        print(f'\n{requested_planets.name} planets not matched to any planet known to STELa:')
+        for name in requested_planets[not_in_list]:
+            print(f'\n\t{name}')
+        print('Consider checking that they are correctly named in the requested list txt file.')
+
+eval_table.remove_column('TICletter')
+
+
+#%% save table
+
 # save csv to open in spreadsheet viewers
 eval_filename = 'stage2_evaluation_metrics.csv'
 eval_path = paths.catalogs / eval_filename
-eval_table.write(eval_path, overwrite=True, formats=formats)
+eval_table.write(eval_path, overwrite=True, formats=formats, fast_writer=False)
 
 # save as an ecsv too for round tripping
 eval_table_ecsv = eval_table.copy()

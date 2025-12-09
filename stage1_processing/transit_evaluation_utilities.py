@@ -83,7 +83,8 @@ def get_spectrograph_object(grating, aperture, host_ra, host_dec) -> Spectrograp
     v = lya.w2v(w)
     y = etc['sky_counts']
     vres = (v[1] - v[0])/3
-    v_shifts = np.linspace(-expand_dv, expand_dv, int(2*expand_dv/vres))
+    num_shifts = max(int(2*expand_dv/vres), 3)
+    v_shifts = np.linspace(-expand_dv, expand_dv, num_shifts)
     interp = lambda vmod: np.interp(v, vmod, y)
     vv = v[None,:] + v_shifts[:,None]
     yy = np.apply_along_axis(interp, 1, vv)
@@ -373,7 +374,7 @@ with h5py.File(_temp_simfile) as f:
 
 @lru_cache(maxsize=None)
 def get_transit_from_simulation(host, planet):
-    file, = host.folder.rglob(f'{host.dbname}-{planet.sim_letter}.outflow-tail-model*.h5')
+    file, = host.folder.rglob(f'{host.dbname}-{planet.stela_suffix}.outflow-tail-model*.h5')
     # load in the transit models
     with h5py.File(file) as f:
         timegrid = f['tgrid'][:]
@@ -383,8 +384,9 @@ def get_transit_from_simulation(host, planet):
         wavegrid_sys = wavegrid_sys
         transmission_array = f['intensity'][:]
         eta = f['eta'][:]
+        mass = f['planet_mass'][:]
         wind_scaling = f['mdot_star_scaling'][:]
-        phion_scaling = f['phion_scaling'][:]
+        phion = f['phion_scaling'][:] # the "_scaling" is vestigial from an earlier formulation
         params = dict(f['system_parameters'].attrs)
 
     # verify that I got the right planet
@@ -398,10 +400,10 @@ def get_transit_from_simulation(host, planet):
     wavegrid_earth = lya.v2w(vgrid_earth)
 
     mdot_star = wind_scaling * params['mdot_star'] * u.g/u.s
-    phion = phion_scaling * params['phion_rate']
     Tion = 1 / phion * u.s
     Tion = Tion.to('h')
-    x_params = dict(eta=eta, mdot_star=mdot_star, Tion=Tion)
+    mass = mass * u.g
+    x_params = dict(eta=eta, mdot_star=mdot_star, Tion=Tion, mass=mass)
 
     transitobj = TransitModelSet(
         timegrid,
@@ -542,8 +544,10 @@ def best_by_mean_snr(tbl: Table, category_column: str) -> str:
 
 
 def filter_to_obs_choices(snr_tbl, aperture, offset):
-    mask = (snr_tbl['aperture'] == aperture) & (snr_tbl['time offset'] == offset)
-    return snr_tbl[mask]
+    filters = {'aperture': aperture,
+               'time offset': offset}
+    result = catutils.filter_table(snr_tbl, filters)
+    return result
 
 
 def make_diagnostic_plots(
@@ -610,3 +614,24 @@ def save_diagnostic_plots(wfig, tfig, snr_case, host, filenamer: FileNamer):
     get_path = lambda type: host.transit_folder / filenamer.diagnostic_plot_basename(type, snr_case)
     utils.save_pdf_png(wfig, get_path('spectra'))
     utils.save_pdf_png(tfig, get_path('lightcurve'))
+
+
+def clip_transit_set(
+        transit_object: TransitModelSet,
+        n: int=3):
+    """Reduces the size of a transit set to somethign small that is convenient for quick debugging of
+    downstream issues without having to wait for operations to iterate through a huge set."""
+    m = transit_object.transmission.shape[0]
+    stride = m // (n-1)
+    new_transit = copy(transit_object)
+    new_transit.transmission = new_transit.transmission[::stride]
+    for key in new_transit.params.keys():
+        new_transit.params[key] = new_transit.params[key][::stride]
+    return new_transit
+
+
+def best_offset(snr_table, max_offset=np.inf, slctn_fn=best_by_mean_snr):
+    mask = snr_table['time offset'] <= max_offset
+    snr_table = snr_table[mask]
+    best_safe_offset = slctn_fn(snr_table, 'time offset')
+    return best_safe_offset
