@@ -33,7 +33,7 @@ def detection_sigma_corner(param_vecs, snr_vec, **hist_corner_kws):
     for x in param_vecs:
         ux = np.unique(x)
         edges = utils.mids2bins(ux)
-        max_snr = [np.nanmax(snr_vec[x == uxx]) for uxx in ux]
+        max_snr = [np.nanmedian(snr_vec[x == uxx]) for uxx in ux]
         max_snr_1d.append((max_snr, edges))
 
     max_snr_2d = {}
@@ -42,15 +42,14 @@ def detection_sigma_corner(param_vecs, snr_vec, **hist_corner_kws):
         x, y = param_vecs[i], param_vecs[j]
         ux = np.unique(x)
         uy = np.unique(y)
-        xi = np.searchsorted(ux, x)
-        yi = np.searchsorted(uy, y)
         edges_x = utils.mids2bins(ux)
         edges_y = utils.mids2bins(uy)
-        max_grid = np.full((len(ux), len(uy)), np.nan)
-        for ii, jj, val in zip(xi, yi, snr_vec):
-            if np.isnan(max_grid[ii, jj]) or val > max_grid[ii, jj]:
-                max_grid[ii, jj] = val
-        max_snr_2d[(j,i)] = (max_grid, edges_x, edges_y)
+        median_grid = np.full((len(ux), len(uy)), np.nan)
+        for ii in range(len(ux)):
+            for jj in range(len(uy)):
+                mask = (x == ux[ii]) & (y == uy[jj])
+                median_grid[ii, jj] = np.nanmedian(snr_vec[mask])
+        max_snr_2d[(j,i)] = (median_grid, edges_x, edges_y)
 
     return make_hist_corner(max_snr_1d, max_snr_2d, **hist_corner_kws)
 
