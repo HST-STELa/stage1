@@ -44,6 +44,7 @@ stage1_processing = Path('stage1_processing')
 status_input = stage1_processing / 'status_input'
 status_output = stage1_processing / 'status_output'
 stage2_requests = stage1_processing / 'stage2_requests'
+new_data_lists = stage1_processing / 'targets_w_new_data'
 data_reduction_tools = Path('data_reduction_tools')
 
 mdwarf_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/14V4VAoDKTPLT_qSqW64henNFJyI74fZI/export?format=xlsx&gid=1771378421'
