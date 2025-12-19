@@ -1,7 +1,7 @@
 import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import List, Mapping, Literal
+from typing import List, Mapping, Literal, Callable, Union
 from copy import copy
 
 import numpy as np
@@ -209,6 +209,13 @@ def read_quality_table(path, header="| Target | Quality Flag |"):
     return Table(rows=data, names=("Target", "Quality Flag"))
 
 
+def best_by_mean_snr(tbl: Table, category_column: str) -> str:
+    """Pick the category value with the highest mean 'transit sigma' across rows."""
+    xunq = np.unique(tbl[category_column])
+    means = [np.nanmean(tbl['transit sigma'][tbl[category_column] == x]) for x in xunq]
+    return xunq[int(np.nanargmax(means))]
+
+
 class Host(object):
     lya_reconstruction : LyaReconstruction
     def __init__(self, name):
@@ -349,7 +356,7 @@ class TransitModelSet:
                                           names=list(self.params.keys()))
         self.df = pd.Series(list(self.transmission), index=index)
 
-    def loc_transmission(self, **param_value_pairs):
+    def loc_transmission(self, rtol=None, **param_value_pairs):
         # homogenize units
         for key, val in param_value_pairs.items():
             if hasattr(val, 'unit'):
@@ -357,7 +364,14 @@ class TransitModelSet:
                 param_value_pairs[key] = val.to_value(param_unit)
 
         # Create a tuple of keys in the order of the MultiIndex
-        keys = tuple(param_value_pairs.get(name, slice(None)) for name in self.df.index.names)
+        keys = []
+        for name in self.df.index.names:
+            key = param_value_pairs.get(name, slice(None))
+            if name in param_value_pairs and rtol is not None:
+                key = utils.closest_within_rtol(key, self.params[name], rtol)
+            keys.append(key)
+        keys = tuple(keys)
+
         result = self.df.loc[pd.IndexSlice[keys]]
         if isinstance(result, pd.Series):
             result = np.vstack(result.to_numpy())
@@ -370,6 +384,212 @@ class TransitModelSet:
 _temp_simfile, = list(paths.data_targets.rglob(f'hd149026-b*outflow-tail-model*.h5'))
 with h5py.File(_temp_simfile) as f:
     _default_sim_wavgrid = f['wavgrid'][:] * 1e8
+
+
+class DetectabilityDatabase:
+    def __init__(self, snr_table):
+        self.snrs = snr_table
+        self.meta = snr_table.meta
+
+    def __len__(self):
+        return len(self.snrs)
+
+    def __getitem__(self, item):
+        return self.snrs[item]
+
+    def __setitem__(self, key, value):
+        self.snrs[key] = value
+
+    def __add__(self, other):
+        snrs = catutils.table_vstack_flexible_shapes((self.snrs, other.snrs))
+        return DetectabilityDatabase(snrs)
+
+    @classmethod
+    @lru_cache
+    def from_file(cls, file):
+        snr_table = Table.read(file)
+        return DetectabilityDatabase(snr_table)
+
+    def write(self, file, **kws):
+        self.snrs.write(file, **kws)
+
+    def filtered(self, column_value_dict):
+        filtered_snrs = catutils.filter_table(self.snrs, column_value_dict)
+        return DetectabilityDatabase(filtered_snrs)
+
+    def unique_case_combinations(self, keys):
+        cols = [self.snrs[key] for key in keys]
+        grating_ap_lya_sets = list(zip(*cols))
+        unq_cases = set(grating_ap_lya_sets)
+        return unq_cases
+
+    def best_offset(self,
+                    max_offset: Union[u.Quantity, float] = np.inf,
+                    slctn_fn = best_by_mean_snr):
+        unique_obs_cases = self.unique_case_combinations(('grating', 'aperture', 'lya reconstruction case'))
+        if len(unique_obs_cases) > 1:
+            raise ValueError("Best offset doesn't make sense for a table with "
+                             "mixed gratings, apertures, or lya cases.")
+        mask = self.snrs['time offset'] <= max_offset
+        filtered = self.snrs[mask]
+        best_offset = slctn_fn(filtered, 'time offset')
+        return best_offset
+
+    def best_aperture(self, slctn_fn=best_by_mean_snr):
+        unique_obs_cases = self.unique_case_combinations(('grating', 'lya reconstruction case', 'time offset'))
+        if len(unique_obs_cases) > 1:
+            raise ValueError("Best aperture doesn't make sense for a table with "
+                             "mixed gratings, lya cases, or time offsets.")
+        best_ap = slctn_fn(self.snrs, 'aperture')
+        return best_ap
+
+    def detection_fraction(self, snr_threshold):
+        num = np.sum(self.snrs['transit sigma'] > snr_threshold)
+        den = len(self)
+        return num / den
+
+    def det_frac_and_max_snr(self, snr_threshold):
+        det_frac =  self.detection_fraction(snr_threshold)
+        max_snr = np.nanmax(self.snrs['transit sigma'])
+        return det_frac, max_snr
+
+    def filter_obs_config(self, grating='base', aperture='best', offset='all'):
+        if grating == 'base':
+            grating = self.meta['base grating']
+        if aperture == 'best':
+            aperture = self.meta[f'best base grating aperture']
+        config_filters = {
+            'grating': grating,
+            'aperture': aperture
+        }
+        if offset == 'all':
+            pass
+        elif type(offset) is str:
+            config_filters['time offset'] = self.meta[f'{offset} time offset']
+        else:
+            config_filters['time offset'] = offset
+        return self.filtered(config_filters)
+
+    def offset_stats(self, snr_threshold, grating='base', aperture='best', min_sample_check=5**4):
+        config_snrs = self.filter_obs_config(grating, aperture)
+
+        best_overall = self.meta['best time offset']
+        best_safe = self.meta['best safe time offset']
+        offsets = [0*u.h, best_safe, best_overall]
+        statlist = []
+        for offset in offsets:
+            offset_snrs = config_snrs.filtered({'time offset': offset})
+            if len(offset_snrs) < min_sample_check:
+                raise ValueError(f"Num of samples for {grating} {aperture} {offset} case falls short of"
+                                 f" user-set limit of {min_sample_check}.")
+            stats = offset_snrs.det_frac_and_max_snr(snr_threshold)
+            statlist.append(stats)
+
+        fracs, max_snrs = zip(*statlist)
+        return offsets, fracs, max_snrs
+
+    def best_case(self):
+        imx = np.argmax(self.snrs['transit sigma'])
+        return self.snrs[imx]
+
+    def median_case(self):
+        isort = np.argsort(self.snrs['transit sigma'])
+        imed = isort[len(isort) // 2]
+        return self.snrs[imed]
+
+    @classmethod
+    def build_db_with_nested_offset_aperture_exploration(
+            cls,
+            snr_computer: Callable,
+            grating: str,
+            baseline_aperture: str,
+            all_apertures: list[str],
+            offsets: u.Quantity,
+            offset_max_safe: u.Quantity,
+            verbose=True,
+    ):
+        """
+        Explores various observational configurations through a nested approach as follows:
+            1) find the time offset that gives the best mean snr using the baseline aperture
+            2) find the aperture that gives the best mean snr using the best time offset
+                if the best time offset is longer than offset_max_safe, use offset_max_safe
+                this is menat to enable exploration of longer offsets while finding the best aperture only for
+                the max safe case
+            3) add cases for -2, -1, 0, +1, +2 sigma lya fluxes at 0 offset, best safe offset, best offset
+        """
+
+        # first try various time offsets for a single aperture and lya case
+        if verbose: print('Comparing mid-transit observation to offest(s).')
+        db1 = snr_computer(
+            offsets,
+            [(grating, baseline_aperture)],
+            [0] # lya case -- 0 = median
+        )
+
+        # record best overall offset
+        best_offset = db1.best_offset()
+        db1['best time offset'] = best_offset
+
+        # pick offset to use from a smaller "safe" range
+        best_safe_offset = db1.best_offset(offset_max_safe)
+        db1.meta['best safe time offset'] = best_safe_offset
+
+        # run for all apertures at best safe, pick best aperture, record
+        if verbose: print('Finding the best aperture.')
+        grating_apertures = [(grating, ap) for ap in all_apertures]
+        db2 = snr_computer([best_safe_offset], grating_apertures, [0])
+        aperture = db2.best_aperture()
+        db2.meta[f'best base grating aperture'] = str(aperture)
+
+        # run for all lya cases at 0, best_safe, and best offset
+        if verbose: print('Running for the plausible Lya range.')
+        cases = np.arange(-2, 3)
+        db3 = snr_computer([0 * u.h, best_safe_offset, best_offset], [(grating, aperture)], cases)
+
+        db = db1 + db2 + db3
+
+        db.meta['base grating'] = grating
+        db.meta['base aperture'] = baseline_aperture
+        db.meta['base grating apertures considered'] = all_apertures
+        db.meta['offsets considered'] = offsets.to_value('h')
+        db.meta['max safe offset'] = offset_max_safe.to_value('h')
+
+        return db
+
+    def record_nested_exploration_choices(self):
+        pass
+
+    def infer_best_observing_configuration(self, base_grating, base_aperture, offset_max_safe=3*u.h):
+        self.meta['base grating'] = base_grating
+        self.meta['base aperture'] = base_aperture
+        self.meta['offsets considered'] = np.unique(self.snrs['time offset']).quantity
+        self.meta['max safe offset'] = offset_max_safe
+
+        db_base_grating = self.filtered({'grating': base_grating})
+        all_aps = np.unique(db_base_grating.snrs['aperture']).astype(str).data
+        self.meta['base grating apertures considered'] = all_aps
+
+        base_filters = {
+            'grating': base_grating,
+            'aperture': base_aperture,
+            'lya reconstruction case': 'median'
+        }
+        base_db = self.filtered(base_filters)
+        self.meta['best time offset'] = base_db.best_offset()
+        self.meta['best safe time offset'] = base_db.best_offset(offset_max_safe)
+
+        old_ap_key = 'best stis aperture'
+        if old_ap_key in self.meta:
+            self.meta['best base grating aperture'] = self.meta[old_ap_key]
+            del self.meta[old_ap_key]
+        else:
+            safe_filters = {
+                'grating': base_grating,
+                'time offset': self.meta['best safe time offset'],
+                'lya reconstruction case': 'median'
+            }
+            safe_db = self.filtered(safe_filters)
+            self.meta['bes base grating aperture'] = safe_db.best_aperture()
 
 
 @lru_cache(maxsize=None)
@@ -414,7 +634,6 @@ def get_transit_from_simulation(host, planet):
 
     return transitobj
 
-
 def construct_flat_transit(
         planet: Planet,
         host: Host,
@@ -447,7 +666,6 @@ def construct_flat_transit(
     transitobj = TransitModelSet(tgrid.to_value('h'), wgrid.to_value('AA'), transmission, x_params)
     return transitobj
 
-
 def build_snr_sampler_fns(
         host: Host,
         host_variability: HostVariability,
@@ -461,12 +679,13 @@ def build_snr_sampler_fns(
 ):
     ra, dec = host.params['ra'], host.params['dec']
 
-    def snr_single_case(offset, grating, aperture, lya_case, diagnostic_plots=False, transit_keys=None):
+    def snr_single_case(offset, grating, aperture, lya_case,
+                        diagnostic_plots=False, transit_keys=None, transit_key_rtol=None):
 
         if transit_keys is None:
             transmission = transit_model.transmission
         else:
-            transmission = transit_model.loc_transmission(**transit_keys)
+            transmission = transit_model.loc_transmission(**transit_keys, rtol=transit_key_rtol)
 
         spec = get_spectrograph_object(grating, aperture, ra, dec)
 
@@ -531,23 +750,10 @@ def build_snr_sampler_fns(
         if not tbls:
             return QTable()
         else:
-            return catutils.table_vstack_flexible_shapes(tbls)
+            stacked = catutils.table_vstack_flexible_shapes(tbls)
+            return DetectabilityDatabase(stacked)
 
     return snr_case_by_case, snr_single_case
-
-
-def best_by_mean_snr(tbl: Table, category_column: str) -> str:
-    """Pick the category value with the highest mean 'transit sigma' across rows."""
-    xunq = np.unique(tbl[category_column])
-    means = [np.nanmean(tbl['transit sigma'][tbl[category_column] == x]) for x in xunq]
-    return xunq[int(np.nanargmax(means))]
-
-
-def filter_to_obs_choices(snr_tbl, aperture, offset):
-    filters = {'aperture': aperture,
-               'time offset': offset}
-    result = catutils.filter_table(snr_tbl, filters)
-    return result
 
 
 def make_diagnostic_plots(
@@ -575,7 +781,7 @@ def make_diagnostic_plots(
 
     _, wfigs, tfigs = snr_fn(
         offset, grating, aperture, lya_case_sigma,
-        diagnostic_plots=True, transit_keys=transit_keys
+        diagnostic_plots=True, transit_keys=transit_keys, transit_key_rtol=1e-5
     )
 
     title = planet.dbname
@@ -597,10 +803,13 @@ class FileNamer(object):
         'flat': 'simple-opaque-tail'
     }
 
-    def __init__(self, transit_type: Literal['model', 'flat'], planet):
+    def __init__(self, transit_type: Literal['model', 'flat'], planet, host=None):
         descriptor = self.descriptors[transit_type]
         self.snr_tbl = f'{planet.dbname}.{descriptor}.detection-sigmas.ecsv'
-        self.corner_basename = self.snr_tbl.replace('.ecsv', f'.plot-snr-corner')
+        self.mdn_snr_corner_basename = self.snr_tbl.replace('.ecsv', f'.plot-mdn-snr-corner')
+        self.det_vol_corner_basename = self.snr_tbl.replace('.ecsv', f'.plot-det-vol-corner')
+        if host is not None:
+            self.snr_tbl_full = host.transit_folder / self.snr_tbl
 
     def diagnostic_plot_basename(
             self,
@@ -628,10 +837,3 @@ def clip_transit_set(
     for key in new_transit.params.keys():
         new_transit.params[key] = new_transit.params[key][::stride]
     return new_transit
-
-
-def best_offset(snr_table, max_offset=np.inf, slctn_fn=best_by_mean_snr):
-    mask = snr_table['time offset'] <= max_offset
-    snr_table = snr_table[mask]
-    best_safe_offset = slctn_fn(snr_table, 'time offset')
-    return best_safe_offset
