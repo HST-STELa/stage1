@@ -22,7 +22,14 @@ from stage1_processing import target_lists
 from stage1_processing import processing_utilities as pcutils
 
 
-#%% target list, batch mode?
+#%% settings
+
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
 
 # matplotlib.use('Qt5Agg')
 matplotlib.use('agg'); plt.ioff()

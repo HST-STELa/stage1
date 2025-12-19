@@ -27,12 +27,16 @@ from stage1_processing import target_lists
 
 #%% settings
 
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
+
 saveplots = True
 have_a_look = True
-
-# targets = target_lists.observed_since('2025-06-05')
-# targets = target_lists.observed_since('2025-01-01')
-targets = target_lists.everything_in_progress_table()
+targets = target_lists.observed_since('2025-06-05')
 obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
 
 #%% plot backend
@@ -567,7 +571,7 @@ for stage in ['Lya', 'FUV']:
     if plandates:
         plt.plot(plandates.decimalyear, ivec[nobs:nobs+nplan], '--', lw=2, color='0.5')
     plt.axhline(nobs + nplan, color='C2', lw=2)
-    plt.xlim(2025.1, 2026.5)
+    plt.xlim(2025.0, 2027.0)
     plt.ylim(-5, 135)
     plt.xlabel('Date')
     plt.ylabel(f'{stage.upper()} Observations Executed')

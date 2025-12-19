@@ -16,7 +16,14 @@ from stage1_processing import preloads
 
 from target_selection_tools import query
 
-#%% planets to process
+#%% settings
+
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
 
 # planets = target_lists.selected_for_transit(batch_no=1)
 

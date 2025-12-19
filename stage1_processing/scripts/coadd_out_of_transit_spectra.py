@@ -30,7 +30,14 @@ planets['pl_id'] = dbutils.planet_suffixes(planets)
 planets.add_index('pl_id')
 
 
-#%% settings (incl. batch mode)
+#%% settings
+
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
 
 transit_avoidance_start = -2 # in optical transit half-durations
 transit_avoidance_end = 1/8 # in fractions of planetary orbit

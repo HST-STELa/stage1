@@ -19,27 +19,29 @@ from stage1_processing import preloads
 from stage1_processing import observation_table as obs_tbl_tools
 
 
-#%% options
+#%% settings
 
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
+
+targets = target_lists.observed_since('2025-09-04')
 ignore_unusable = False
 batch_mode = True
-care_level = 0 # 1 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
 
 
 #%% setup for MAST query
 
 hst_database = MastMissions(mission='hst')
-# hst_database.login() # note that you need to have created and stored a token for this, see
+# note that you need to have created and stored a token for this, see
 # https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
-
-
-#%% get targets
-
-targets = target_lists.observed_since('2025-09-04')
-# targets = target_lists.eval_no(2)
-
-
+# you can specify the exact toke you want to use with token=...
+hst_database.login()
 
 #%% target iterator
 

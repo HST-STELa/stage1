@@ -16,10 +16,17 @@ import ephemeris
 from stage1_processing import target_lists
 from stage1_processing import preloads
 
-#%% choose whether to show plots
+#%% settings
 
-matplotlib.use('Qt5Agg')
-plt.ioff()
+# make a copy of this script in the script_runs folder with the date (and a label, if needed)
+# then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
+# changes or one-off mods to the script.
+
+# changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
+# then commited and pushed so we all benefit from them
+
+matplotlib.use('Qt5Agg') # show plots
+matplotlib.use('agg') # hide plots
 
 
 #%% catalog setup
