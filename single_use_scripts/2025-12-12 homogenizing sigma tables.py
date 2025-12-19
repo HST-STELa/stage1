@@ -21,3 +21,26 @@ for file in tqdm(files):
     snrs.infer_best_observing_configuration(grating, base_aperture)
 
     snrs.write(file, overwrite=True)
+
+
+#%%
+
+for file in tqdm(files):
+    snrs = tutils.DetectabilityDatabase.from_file(file)
+    if 'pl_mass' in snrs.snrs.colnames:
+        snrs.snrs.rename_column('pl_mass', 'mass')
+        snrs.write(file, overwrite=True)
+
+
+#%%
+
+from astropy import units as u
+
+for file in tqdm(files):
+    if 'simple-opaque-tail' in file.name:
+        continue
+    snrs = tutils.DetectabilityDatabase.from_file(file)
+    m = snrs.snrs['mass'].quantity
+    if m.unit == u.Mearth:
+        snrs.snrs['mass'] = m.to('g')
+        snrs.write(file, overwrite=True)

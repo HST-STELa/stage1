@@ -199,7 +199,7 @@ dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=targname_f
 #%% make sure info on all files are in the obs tbl
 
 fits_files = list(data_dir.glob('*.fits'))
-sci_files = [file for file in fits_files if hstutils.is_raw_science(file)]
+sci_files = [file for file in fits_files if hstutils.is_key_science_file(file)]
 catutils.set_index(obs_tbl, 'archive id')
 for file in sci_files:
     pieces = dbutils.parse_filename(file)
