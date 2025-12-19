@@ -322,8 +322,12 @@ def query_next_step(batch_mode=True, care_level=0, threshold=0, msg='Continue?')
     if batch_mode:
         if care_level >= threshold:
             answer = input(msg)
-            if answer != '':
-                raise StopIteration
+            try:
+                care_level = int(answer)
+            except ValueError:
+                if answer != '':
+                    raise StopIteration
+    return care_level
 
 
 # region plot utilities
@@ -515,3 +519,37 @@ def estimate_gain_sigma_eff(flux_data, sigma_data, flux_model, snr_min=2.0):
 def most_common_item(elements):
     (result, _), = Counter(elements).most_common(1)
     return result
+
+
+def closest_within_rtol(value, array, rtol):
+    """
+    Return the closest value in `array` to `value` if it is within
+    relative tolerance `rtol` (|x - value| / |value| <= rtol).
+
+    Raises ValueError if no value satisfies the tolerance.
+    """
+    arr = np.asarray(array)
+
+    if arr.size == 0:
+        raise ValueError("Array is empty")
+
+    diffs = np.abs(arr - value)
+    idx = np.argmin(diffs)
+    closest = arr[idx]
+
+    # Handle value == 0 explicitly to avoid divide-by-zero
+    if value == 0:
+        if closest == 0:
+            return closest
+        else:
+            raise ValueError("Relative tolerance undefined for value == 0")
+
+    rel_err = diffs[idx] / abs(value)
+
+    if rel_err <= rtol:
+        return closest
+    else:
+        raise ValueError(
+            f"No value within relative tolerance {rtol} of {value}. "
+            f"Closest value was {closest} (rel. error = {rel_err:.3g})"
+        )

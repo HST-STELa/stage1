@@ -119,19 +119,23 @@ def infer_associated_acquisitions(path, hst_database_table):
     return acqtbl
 
 
-def is_raw_science(file):
+def is_key_science_file(file):
     file = Path(file)
     pieces = dbutils.parse_filename(file.name)
-    if 'tag' in pieces['type']:
-        return True
-    if 'raw' in pieces['type']:
-        if 'hst-cos' in pieces['config']:
-            return False
-        mode = fits.getval(file, 'obsmode')
-        if mode == 'ACCUM':
+    if 'hst-cos' in pieces['config']:
+        if pieces['type'] == 'x1d':
             return True
         else:
             return False
+    if 'hst-stis' in pieces['config']:
+        if 'tag' in pieces['type']:
+            return True
+        if 'raw' in pieces['type']:
+            mode = fits.getval(file, 'obsmode')
+            if mode == 'ACCUM':
+                return True
+            else:
+                return False
     else:
         return False
 
