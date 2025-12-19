@@ -1,9 +1,11 @@
 from datetime import datetime
 import re
 
+import numpy as np
 from astropy.table import Table, Row, vstack
 
 import database_utilities as dbutils
+import paths
 
 from stage1_processing import preloads
 
@@ -27,9 +29,18 @@ def observed_since(isot_date_string):
 
 
 def everything_in_progress_table():
-    tics =  preloads.progress_table['TIC ID']
+    tics = preloads.progress_table['TIC ID']
     selected = preloads.stela_names.loc['tic_id', tics]
     return selected['hostname_file'].tolist()
+
+
+def new_fuv_search():
+    prog = preloads.progress_table
+    mask = ((prog["External\nFUV Good?"] != 'yes') &
+            (prog["FUV Data\nGood?"] != 'yes'))
+    tics = prog['TIC ID'][mask]
+    names = preloads.stela_names.loc['tic_id', tics]['hostname_file']
+    return names.tolist()
 
 
 def selected_for_transit(batch_no):
@@ -57,3 +68,11 @@ def selected_for_transit(batch_no):
     # selected_planets = Table(rows=planet_rows)
     selected_planets = vstack(planet_rows)
     return selected_planets
+
+
+def new_data(last_n=1):
+    files = list(paths.new_data_lists.rglob('*new_data*.txt'))
+    files = sorted(files)
+    names_lists = [np.loadtxt(f, dtype='O').tolist() for f in files]
+    names = sum(names_lists[-last_n:], [])
+    return names
