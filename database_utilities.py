@@ -4,6 +4,7 @@ import re
 import warnings
 from collections import defaultdict
 from itertools import cycle
+from datetime import datetime
 
 import numpy as np
 from astropy.io import fits
@@ -621,3 +622,11 @@ def path_string_last_n(path, n):
 def split_hostname_planet_letter(planet_name, split_character=' '):
     pieces = planet_name.split(split_character)
     return split_character.join(pieces[:-1]), pieces[-1]
+
+
+def timestamp():
+    now =  datetime.now()
+    now_str = now.isoformat()
+    now_no_decimal, _ = now_str.split('.')
+    now_no_colons = now_no_decimal.replace(':', '-')
+    return now_no_colons

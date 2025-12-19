@@ -571,3 +571,8 @@ def filter_table(tbl, column_value_dictionary, copy=True):
     if copy:
         filtered = filtered.copy()
     return filtered
+
+
+def get_row_filled(row, key, fill_value):
+    val = row[key]
+    return fill_value if np.ma.is_masked(val) else val

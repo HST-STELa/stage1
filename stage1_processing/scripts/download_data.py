@@ -1,6 +1,5 @@
 import re
 import os
-from pathlib import Path
 from datetime import datetime
 
 from astropy.io import fits
@@ -33,6 +32,14 @@ ignore_unusable = False
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
+dnld_from_insts = 'COS,STIS'
+dnld_from_specs = "G140M,G140L,E140M,G130M,G160M"
+dnld_availability = 'PUBLIC,PRIVATE'
+
+
+#%% list to track targets for which new data have been downloaded
+
+targets_w_new_data = []
 
 
 #%% setup for MAST query
@@ -119,7 +126,7 @@ while True:
     obs_tbl.pprint(-1,-1)
     obs_tbl['usable'] = table.MaskedColumn(obs_tbl['usable'])
 
-    utils.query_next_step(batch_mode, care_level, 2)
+    care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% set download directory
@@ -134,50 +141,55 @@ while True:
 
     results = hst_database.query_object(f'TIC {tic_id}',
                                         radius=3,
-                                        sci_instrume="COS,STIS",
-                                        sci_spec_1234="G140M,G140L,E140M,G130M,G160M",
-                                        sci_status='PUBLIC',
+                                        sci_instrume=dnld_from_insts,
+                                        sci_spec_1234=dnld_from_specs,
+                                        sci_status=dnld_availability,
                                         sci_aec='S', # science not calibration
                                         select_cols="sci_operating_mode sci_instrume".split())
-    mode = results['sci_operating_mode'].filled('').tolist()
-    inst = results['sci_instrume'].filled('').tolist()
-    mask_accum = np.char.count(mode, 'ACCUM') > 0
-    mask_stis = np.char.count(inst, 'STIS') > 0
-    mask_cos = np.char.count(inst, 'COS') > 0
-    mask_suffix_sets = ((mask_stis & mask_accum, 'RAW'),
-                        (mask_stis & ~mask_accum, 'TAG'),
-                        (mask_cos, ['X1D', 'RAWTAG', 'RAWTAG_A', 'RAWTAG_B']))
-    file_tbls = []
-    for mask, sfxs in mask_suffix_sets:
-        slctd_results = results[mask]
-        if len(slctd_results):
-            datasets = hst_database.get_unique_product_list(slctd_results)
-            filtered = hst_database.filter_products(datasets, file_suffix=sfxs, extension='fits')
-            file_tbls.append(filtered)
-    files_in_archive = table.vstack(file_tbls)
+    if results:
+        mode = results['sci_operating_mode'].filled('').tolist()
+        inst = results['sci_instrume'].filled('').tolist()
+        mask_accum = np.char.count(mode, 'ACCUM') > 0
+        mask_stis = np.char.count(inst, 'STIS') > 0
+        mask_cos = np.char.count(inst, 'COS') > 0
+        mask_suffix_sets = ((mask_stis & mask_accum, 'RAW'),
+                            (mask_stis & ~mask_accum, 'TAG'),
+                            (mask_cos, 'X1D'))
+        file_tbls = []
+        for mask, sfxs in mask_suffix_sets:
+            slctd_results = results[mask]
+            if len(slctd_results):
+                datasets = hst_database.get_unique_product_list(slctd_results)
+                filtered = hst_database.filter_products(datasets, file_suffix=sfxs, extension='fits')
+                file_tbls.append(filtered)
+        files_in_archive = table.vstack(file_tbls)
 
-    # list observations already deemed unusable
-    unusable_ids = obs_tbl['archive id'][~obs_tbl['usable'].filled(True)]
+        # list observations already deemed unusable
+        unusable_ids = obs_tbl['archive id'][~obs_tbl['usable'].filled(True)]
 
-    new_files_mask = []
-    for file_info in files_in_archive:
-        if ignore_unusable:
-            if file_info['authz_primary_identifier'].lower() in unusable_ids:
-                new_files_mask.append(False)
-                continue
-        files = list(data_dir.glob(f'*{file_info['filename']}'))
-        new_files_mask.append(len(files) == 0)
-    new_files = files_in_archive[new_files_mask]
+        new_files_mask = []
+        for file_info in files_in_archive:
+            if ignore_unusable:
+                if file_info['authz_primary_identifier'].lower() in unusable_ids:
+                    new_files_mask.append(False)
+                    continue
+            files = list(data_dir.glob(f'*{file_info['filename']}'))
+            new_files_mask.append(len(files) == 0)
+        new_files = files_in_archive[new_files_mask]
 
-    if new_files:
-        print()
-        print('Attempting download of:')
-        new_files['instrument_name filters filename access'.split()].pprint(-1)
-        print()
+        if new_files:
+            targets_w_new_data.append(target)
+            print()
+            print('Attempting download of:')
+            new_files['instrument_name filters filename access'.split()].pprint(-1)
+            print()
+        else:
+            print('\nNo new science files found in the archive.\n')
     else:
         print('\nNo new science files found in the archive.\n')
+        new_files = []
 
-    utils.query_next_step(batch_mode, care_level, 2)
+    care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% download and rename new files
@@ -194,7 +206,7 @@ while True:
 #%% make sure info on all files are in the obs tbl
 
     fits_files = list(data_dir.glob('*.fits'))
-    sci_files = [file for file in fits_files if hstutils.is_raw_science(file)]
+    sci_files = [file for file in fits_files if hstutils.is_key_science_file(file)]
     catutils.set_index(obs_tbl, 'archive id')
     for file in sci_files:
         pieces = dbutils.parse_filename(file)
@@ -240,8 +252,8 @@ while True:
     print(f'Searching for supporting files for {target} observations.')
     new_supporting_files = False
     for row in obs_tbl:
-        usable = row['usable']
-        if ignore_unusable and not usable.filled(True):
+        usable = catutils.get_row_filled(row, 'usable', True)
+        if ignore_unusable and not usable:
             continue
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
@@ -307,7 +319,7 @@ while True:
     if not new_supporting_files:
         print('All supporting files present, nothing downloaded.')
 
-    utils.query_next_step(batch_mode, care_level, 2)
+    care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% move and rename downloaded files
@@ -316,7 +328,7 @@ while True:
         dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False, confirm=confirm_file_moves)
         # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True, into_target_folders=False, confirm=confirm_file_moves)
 
-        utils.query_next_step(batch_mode, care_level, 2)
+        care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% identify files missing data
@@ -326,8 +338,8 @@ while True:
                    shutter_closed='Shutter closed.',
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
-        usable = row['usable']
-        if ignore_unusable and not usable.filled(True):
+        usable = catutils.get_row_filled(row, 'usable', True)
+        if ignore_unusable and not usable:
             continue
         reject = False
         shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
@@ -388,7 +400,7 @@ while True:
             obs_tbl['usable'][i] = False
             obs_tbl['reason unusable'][i] = reason
 
-    utils.query_next_step(batch_mode, care_level, 2)
+    care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% note to self
@@ -404,7 +416,7 @@ while True:
     )
     obs_tbl.pprint(-1,-1)
 
-    utils.query_next_step(batch_mode, care_level, 2)
+    care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% save obs_tbl
@@ -414,7 +426,7 @@ while True:
     obs_tbl.meta['last archive query'] = datetime.now().isoformat()
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
-    utils.query_next_step(batch_mode, care_level, 1)
+    care_level = utils.query_next_step(batch_mode, care_level, 1)
 
 
 #%% dummy cell
@@ -423,3 +435,9 @@ while True:
 
   except StopIteration:
     break
+
+
+#%% save table of targets for which data was downloaded
+
+filename = f'targets_w_new_data_downloaded_{dbutils.timestamp()}.txt'
+np.savetxt(paths.new_data_lists / filename, targets_w_new_data, fmt='%s')
