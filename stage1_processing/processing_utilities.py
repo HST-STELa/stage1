@@ -28,7 +28,38 @@ def get_intrinsic_lya_flux(target_name_file, return_16_50_84=False):
         return Fs[0]
 
 
-def detection_sigma_corner(param_vecs, snr_vec, **hist_corner_kws):
+def detection_volume_corner(param_vecs, snr_vec, snr_threshold=3, **hist_corner_kws):
+    def get_frac(mask):
+        n_det = np.sum(snr_vec[mask] > snr_threshold)
+        n_tot = np.sum(mask)
+        return n_det / n_tot
+
+    det_frac_1d = []
+    for x in param_vecs:
+        ux = np.unique(x)
+        edges = utils.mids2bins(ux)
+        det_frac = [get_frac(x == uxx) for uxx in ux]
+        det_frac_1d.append((det_frac, edges))
+
+    det_frac_2d = {}
+    n = len(param_vecs)
+    for i, j in combinations(range(n), 2):
+        x, y = param_vecs[i], param_vecs[j]
+        ux = np.unique(x)
+        uy = np.unique(y)
+        edges_x = utils.mids2bins(ux)
+        edges_y = utils.mids2bins(uy)
+        det_frac_grid = np.full((len(ux), len(uy)), np.nan)
+        for ii in range(len(ux)):
+            for jj in range(len(uy)):
+                mask = (x == ux[ii]) & (y == uy[jj])
+                det_frac_grid[ii, jj] = get_frac(mask)
+        det_frac_2d[(j,i)] = (det_frac_grid, edges_x, edges_y)
+
+    return make_hist_corner(det_frac_1d, det_frac_2d, **hist_corner_kws)
+
+
+def median_snr_corner(param_vecs, snr_vec, **hist_corner_kws):
     max_snr_1d = []
     for x in param_vecs:
         ux = np.unique(x)
@@ -52,7 +83,6 @@ def detection_sigma_corner(param_vecs, snr_vec, **hist_corner_kws):
         max_snr_2d[(j,i)] = (median_grid, edges_x, edges_y)
 
     return make_hist_corner(max_snr_1d, max_snr_2d, **hist_corner_kws)
-
 
 def make_hist_corner(
     hist1d,                 # list of length D: each is (counts, edges)
