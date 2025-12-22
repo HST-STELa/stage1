@@ -12,8 +12,8 @@ GJ 436,138819293,pass,pass
 HD 209458,420814525,pass,pass
 HD 73583,101011575,pass,pass
 TRAPPIST-1,278892590,pass,pass
-HD 63433,130181866,pass,tentative
-GJ 143,279741379,none,tentative
+HD 63433,130181866,pass,pass
+GJ 143,279741379,none,pass
 LHS 1140,92226327,pass,pass
 TOI-1468,243185500,none,pass
 L 98-59,307210830,pass,pass
@@ -29,15 +29,15 @@ LTT 3780,36724087,none,pass
 DS Tuc A,410214986,pass,pass
 HAT-P-11,28230919,pass,pass
 HD 22946,100990000,none,tentative
-HR 858,178155732,none,tentative
+HR 858,178155732,none,pass
 TOI-260,37749396,pass,pass
 HD 15337,120896927,pass,pass
 GJ 1214,467929202,pass,pass
 TOI-431,31374837,pass,pass
 GJ 3090,262530407,none,tentative
-HD 332231,199376584,none,tentative
+HD 332231,199376584,none,pass
 HD 3167,318707987,pass,tentative
-HD 23472,425997655,none,tentative
+HD 23472,425997655,none,pass
 HIP 94235,464646604,pass,none
 K2-174,243014114,none,tentative
 TOI-1759,408636441,pass,pass
@@ -54,6 +54,10 @@ HAT-P-20,26826078,pass,none
 TOI-1203,23434737,pass,none
 HD 260655,307809773,pass,pass
 WASP-69,248853232,pass,pass
-WASP-8,183532609,none,tentative
+WASP-8,183532609,none,pass
 TOI-1898,91987762,none,pass
 V1298 Tau,15756231,fail,pass
+GJ 9827,301289516,pass,fail
+K2-233,428820090,pass,fail
+LTT 9779,183985250,pass,pass
+HIP 116454,422618449,pass,tentative
