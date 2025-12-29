@@ -32,7 +32,7 @@ HD 22946,100990000,none,tentative
 HR 858,178155732,none,pass
 TOI-260,37749396,pass,pass
 HD 15337,120896927,pass,pass
-GJ 1214,467929202,pass,pass
+GJ 1214,467929202,fail,pass
 TOI-431,31374837,pass,pass
 GJ 3090,262530407,none,tentative
 HD 332231,199376584,none,pass
