@@ -4,6 +4,7 @@ example2,-998,unchecked,pass
 example3,-997,fail,none
 example4,-996,planned,none
 example5,-995,pass,tentative
+example4,-994,pass,lowsnr
 AU Mic,441420236,pass,pass
 HD 136352,136916387,pass,pass
 HD 189733,256364928,pass,pass
@@ -23,12 +24,12 @@ TOI-2076,27491137,pass,pass
 TOI-1774,4897275,pass,none
 HD 63935,453211454,pass,pass
 HD 97658,82308728,pass,pass
-TOI-712,150151262,none,unchecked
+TOI-712,150151262,none,pass
 HD 39091,261136679,pass,pass
 LTT 3780,36724087,none,pass
 DS Tuc A,410214986,pass,pass
 HAT-P-11,28230919,pass,pass
-HD 22946,100990000,none,tentative
+HD 22946,100990000,none,pass
 HR 858,178155732,none,pass
 TOI-260,37749396,pass,pass
 HD 15337,120896927,pass,pass
@@ -36,7 +37,7 @@ GJ 1214,467929202,fail,pass
 TOI-431,31374837,pass,pass
 GJ 3090,262530407,none,tentative
 HD 332231,199376584,none,pass
-HD 3167,318707987,pass,tentative
+HD 3167,318707987,pass,pass
 HD 23472,425997655,none,pass
 HIP 94235,464646604,pass,none
 K2-174,243014114,none,tentative
@@ -61,3 +62,4 @@ GJ 9827,301289516,pass,fail
 K2-233,428820090,pass,fail
 LTT 9779,183985250,pass,pass
 HIP 116454,422618449,pass,tentative
+LTT 1445 A,98796344,pass,pass
