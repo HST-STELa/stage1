@@ -39,12 +39,15 @@ allocated_orbits = 204
 # then makes sure all planned visits are kept and lemons are dropped
 # whether an fuv visit is kept or dropped depends on the "pass to stage 1b?" column in the excel sheet
 toggle_mid_cycle_update = True
-# use thes to specify visits we are going to add back in or remove for whatever reason
+
+# use these to specify visits we are going to add back in or remove for whatever reason
 # for example, in the May update I wanted to remove the K2-72 fuv visit Z2 because of an error in the clearance sheet
 # and add in NB for TOI-2015 due to revised pass through cut
+
+# can use to keep FUV visits for transit targets even if there is external data
 hand_add_visits = []
 
-# low ranking targets not flight ready, not Lya bright, and without archival lya transit
+# can use this for targets that should no longer make rank for stage 1 and that are not flight ready, not Lya bright, and without archival lya transit
 hand_remove_visits = 'BS OS BR'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
@@ -60,7 +63,7 @@ toggle_save_new_stela_names = True # necessary to avoid errors if, e.g., new hos
 toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
-toggle_remake_filtered_hst_archive = True  # only needed if archive file redownloaded
+toggle_remake_filtered_hst_archive = True  # needed if it has been a while since the last remake
 
 diff_label = 'target-backfill-2025-09'
 toggle_checkpoint_saves = True
@@ -84,6 +87,7 @@ confirmed = query.pull_exoarchive_catalog('pscomppars', compcols)
 
 toicols = query.filter_available_exoarchive_columns('toi', columns.retrieve, add_err_and_lim=True)
 tois = query.pull_exoarchive_catalog('toi', toicols)
+
 
 #%% save catalogs
 
@@ -521,10 +525,14 @@ Make sure that all these planets transit, on the off chance someone suggested a 
 
 catutils.set_index(cat, 'id')
 
+def add_if_not_cataloged(planet, col, value):
+    if np.ma.is_masked(cat.loc[planet][col]):
+        cat.loc[planet][col] = value
+
 # from the discovery paper
-cat.loc['HD 60779 b']['st_teff'] = 6081
-cat.loc['HD 60779 b']['pl_orbper'] = 29.986175
-cat.loc['HD 60779 b']['pl_rade'] = 3.25
+add_if_not_cataloged('HD 60779 b', 'st_teff', 6081)
+add_if_not_cataloged('HD 60779 b', 'pl_orbper', 29.986175)
+add_if_not_cataloged('HD 60779 b', 'pl_rade', 3.25)
 
 # check that all the manually added targets have their key values present
 manual_mask = cat['manually_added'].filled(False)
@@ -715,14 +723,14 @@ if toggle_checkpoint_saves:
 be careful not to download the _ss_ catalog as I think it is solar system objects"""
 
 if toggle_remake_filtered_hst_archive:
-    hst_observations_path = paths.hst_observations / 'paec_7-present.cat'
-    hst_filtered = dc.filter_hst_observations(hst_observations_path)
-    hst_filtered.write(paths.hst_observations / 'hst_observations_filtered.ecsv', overwrite=True)
+    hst_observations_path = paths.hst_database_http / 'paec_7-present.cat'
+    hst_filtered = dc.filter_hst_observations(paths.hst_database_https)
+    hst_filtered.write(paths.hst_database_folder / 'hst_observations_filtered.ecsv', overwrite=True)
 
 
 #%% load HST observation tables
 
-hst_filtered = table.Table.read(paths.hst_observations / 'hst_observations_filtered.ecsv')
+hst_filtered = table.Table.read(paths.hst_database_folder / 'hst_observations_filtered.ecsv')
 our_observations = hst_filtered['prop'] == 17804
 hst_filtered = hst_filtered[~our_observations]
 verified = table.Table.read(paths.checked / 'verified_external_observations.csv')
@@ -1313,14 +1321,14 @@ if 'tois_uncut' not in locals():
     tois_uncut = catutils.load_and_mask_ecsv(paths.ipac / 'tois_uncut.ecsv')
 if 'confirmed' not in locals():
     confirmed = catutils.load_and_mask_ecsv(paths.ipac / 'confirmed_uncut.ecsv')
-all_checked_ids = catutils.read_hand_checked_planets(('remove', 'vetted', 'no-exofop'))
+all_checked_ids = catutils.read_hand_checked_planets(('remove', 'vetted'))
 in_tois = np.in1d(all_checked_ids, tois_uncut['toi'].astype(str))
 in_confirmed = np.in1d(all_checked_ids, confirmed['pl_name'])
 in_input_tables = in_tois | in_confirmed
 assert np.all(in_input_tables)
 # if this raises an error, figure out why some targets weren't matched and fix it!
 
-ids_to_remove = catutils.read_hand_checked_planets(('remove', 'no-exofop'))
+ids_to_remove = catutils.read_hand_checked_planets(('remove',))
 mask_remove = np.in1d(cat['id'], ids_to_remove) | np.in1d(cat['toi'], ids_to_remove)
 remove_str = "Removed because planet candidate failed manual vetting."
 catutils.flag_cut(cat, mask_remove, remove_str)
@@ -1585,6 +1593,32 @@ if backup_orbits:
 cat['stage1_orbit_total'] = table.MaskedColumn(len(cat), mask=True, dtype=int)
 
 
+#%% add any new potential targets to STELa name table
+
+if toggle_save_new_stela_names:
+    nametbl = ref.stela_names.copy()
+    not_in_namtbl_mask = ~np.in1d(candidates['tic_id'], nametbl['tic_id'])
+    if np.any(not_in_namtbl_mask):
+        newtargrows = candidates[not_in_namtbl_mask]
+        newtargrows = catutils.planets2hosts(newtargrows)
+        for targrow in newtargrows:
+            hostname = targrow['hostname']
+            hstname, = dbutils.target_names_stela2hst([hostname])
+            filename, = dbutils.target_names_stela2file([hostname])
+            namerow = dict(tic_id=targrow['tic_id'],
+                           hostname=hostname,
+                           hostname_hst=hstname,
+                           hostname_file=filename)
+            assert set(namerow.keys()) == set(nametbl.colnames)
+            nametbl.add_row(namerow)
+        nametbl.write(paths.stela_name_tbl, format='ascii.csv', overwrite=True)
+
+        # need to reload some things so the name table used by helper functions gets updated
+        from importlib import reload
+        reload(ref)
+        reload(dbutils)
+
+
 #%% build target list and allocate orbits, THIS IS WHERE THE MAGIC HAPPENS!
 
 """allocate orbits target by target working down the ranks"""
@@ -1601,7 +1635,7 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     # find the indices of planets associated with the target host and whether any are already in stage 1
     # fom an earlier iteration of this loop
     host = candidates[i]
-    name = host['hostname']
+    name = dbutils.target_names_tic2stela(host['tic_id'])
     tic_id_ = host['tic_id']
     j = cat.loc_indices[tic_id_]
     j = np.atleast_1d(j)
@@ -1617,7 +1651,7 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     # mark so those observations can be verified later
     if available_free > 0:
         for band in ('lya', 'fuv'):
-            if host[f'external_{band}_status'] == 'unverified':
+            if host[f'external_{band}_status'] in ['unverified', 'tentative']:
                 observations_to_verify.append(f'{name} {band}')
 
     # allocate orbits
@@ -1657,9 +1691,10 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
         available_free -= free_cost
 
         # record for accounting
+        register_lya, register_fuv = False, False
         if not e140m:
-            plantbl['lya_registered'][iplan] = g140m
-            plantbl['fuv_registered'][iplan] = g140l
+            register_lya = g140m
+            register_fuv = g140l
         else:
             # if e140m is the only mode used, things get tricky bc we messed up some labels in the plan
             if g140m and g140l:
@@ -1669,15 +1704,27 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
                     raise ValueError('Code wants to allocate a single lya or fuv orbit but two are already planned.')
                 else:
                     # match the "registered" column to whether we labeled the E140M visit as lya or fuv
-                    plantbl['lya_registered'][iplan] = planned['lya']
-                    plantbl['fuv_registered'][iplan] = planned['fuv']
+                    register_lya = planned['lya']
+                    register_fuv = planned['fuv']
             elif g140m:
-                plantbl['lya_registered'][iplan] = True
-                plantbl['fuv_registered'][iplan] = True
+                register_lya = True
+                register_fuv = True
             elif g140l:
                 raise ValueError("E140M used for Lya then G140L for FUV, which shouldn't happen")
             else:
                 raise ValueError("how did we get here? I thought all options were accounted for")
+
+        plantbl['lya_registered'][iplan] = register_lya
+        plantbl['fuv_registered'][iplan] = register_fuv
+
+        plan_cost = register_lya + register_fuv
+        free_cost = stela_orbits - plan_cost
+        if plan_cost > available_planned:
+            raise ValueError('Trying to allocate more planned orbits than expected.')
+        status = 'planned'
+        available_planned -= plan_cost
+        available_free -= free_cost
+
     else:
         if available_free > 0:
             status = 'addition'
