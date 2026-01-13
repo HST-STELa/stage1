@@ -405,12 +405,6 @@ while True:
             dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
 
 
-#%% revise uncertainties
-
-    #todo do something to make uncertainties more reasonable. harder than it seems
-    pass
-
-
 #%% back to main dir
 
     os.chdir(paths.stage1_code)
