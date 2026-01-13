@@ -1,6 +1,4 @@
-import xml.etree.ElementTree as ET
 from datetime import datetime
-import re
 import warnings
 
 import numpy as np
@@ -34,10 +32,10 @@ from stage1_processing import target_lists
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
+targets_for_lya_flux_calcs = target_lists.observed_since('2025-09-04', type='lya')
 saveplots = True
 have_a_look = True
-targets = target_lists.observed_since('2025-06-05')
-obs_filters = dict(targets=targets, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
+obs_filters = dict(targets=targets_for_lya_flux_calcs, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
 
 #%% plot backend
 
@@ -46,6 +44,9 @@ if have_a_look:
 else:
     mpl.use('Agg') # plots in the backgrounds so new windows don't constantly interrupt my typing
 
+#%% tics
+
+tics = preloads.stela_names.loc['hostname_file', targets_for_lya_flux_calcs]['tic_id']
 
 #%% --- PROGRESS TABLE UPDATES ---
 pass
@@ -67,9 +68,30 @@ planets.add_index('tic_id')
 with catutils.catch_QTable_unit_warnings():
     cat = preloads.planets.copy()
 
-mask = (cat['stage1'].filled(False) # either selected for stage1
-        | cat['stage1_backup'].filled(False) # backup for stage1
-        | cat['external_lya'].filled(False)) # or archival
+stg1_mask = (
+    cat['stage1'].filled(False)  # either selected for stage1
+    | cat['stage1_backup'].filled(False)  # backup for stage1
+    | cat['external_lya'].filled(False)  # or archival
+)
+
+
+# print an FYI about previously selected, now unselected targets
+stg1_tics = cat['tic_id'][stg1_mask]
+lost_target_mask = ~np.isin(prog_update['TIC ID'], stg1_tics)
+lost_tics = prog_update['TIC ID'][lost_target_mask]
+if len(lost_tics) > 0:
+    print()
+    print('Some targets in the Observing Progress table are no longer in the stage1 or stage1_backup samples but'
+          ' will be kept for record keeping. They are:')
+    lost_mask = np.isin(cat['tic_id'], lost_tics)
+    lost = cat[lost_mask]
+    viewcols = ['pl_name', 'toi', 'tic_id', 'transit_snr_nominal', 'stage1_rank', 'decision']
+    lost[viewcols].pprint(-1,-1)
+    print()
+    mask = stg1_mask | lost_mask
+else:
+    mask = stg1_mask
+
 roster = cat[mask]
 roster.sort('stage1_rank')
 
@@ -95,12 +117,13 @@ with catutils.catch_QTable_unit_warnings():
     roster_hosts = catutils.planets2hosts(roster_picked_transit)
 roster_picked_transit.add_index('tic_id')
 roster_hosts.add_index('tic_id')
-target_info = roster_hosts[['tic_id']].copy()
-target_info.rename_column('tic_id', 'TIC ID')
 
 
 #%% tabulate basic info on targets
-pass
+
+target_info = roster_hosts[['tic_id']].copy()
+target_info.rename_column('tic_id', 'TIC ID')
+target_info.add_index('TIC ID')
 
 target_info['Global\nRank'] = roster_hosts['stage1_rank']
 target_info['Target'] = dbutils.target_names_tic2stela(roster_hosts['tic_id'])
@@ -202,12 +225,10 @@ insts = ['hst-stis-g140m', 'hst-stis-e140m']
 vstd = (lya.wgrid_std/1215.67/u.AA - 1)*const.c.to('km s-1')
 flux_units = u.Unit('erg s-1 cm-2')
 
-for tic_id in target_info['TIC ID']:
+for tic_id in tics:
     target_filename = preloads.stela_names.loc['tic_id', tic_id]['hostname_file']
     data_dir = paths.target_hst_data(target_filename)
     sys_planets = planets.loc[tic_id]
-    if target_filename not in targets:
-        continue
 
     # find the appropriate file
     files = dbutils.find_coadd_or_x1ds(target_filename, instruments=insts, directory=data_dir)
@@ -355,7 +376,7 @@ for tic_id in target_info['TIC ID']:
     # store results
     measured.append(Flya.to_value(flux_units))
     lya_factor_rcds.append(lyafac)
-    nH.append(nH)
+    nH_rcds.append(nH)
 
     # plot best fit
     plt.step(vsys_data[compute_mask], prof_lsf_best, color='0.4', label='prelim fit')
@@ -430,13 +451,16 @@ for tic_id in target_info['TIC ID']:
 
 #%% add Lya flux info to target_info table
 
+iloc = target_info.loc_indices['TIC ID', tics]
+n = len(target_info)
+def addfluxcol(name, values):
+    target_info[name] = table.MaskedColumn(length=n, mask=True, dtype=float, unit=flux_units)
+    target_info[name][iloc] = values
+
 for pctl in prediction_pctls:
-    target_info[f'Predicted\nLya Flux {pctl}%'] = predicted_flux_records[pctl]
-    target_info[f'Predicted\nLya Flux {pctl}%'].unit = flux_units
-target_info["Integrated\nLya Flux"] = measured
-target_info["Integrated\nLya Flux"].unit = flux_units
-target_info["Integrated\nLya Flux Error"] = msmt_error
-target_info["Integrated\nLya Flux Error"].unit = flux_units
+    addfluxcol(f'Predicted\nLya Flux {pctl}%', predicted_flux_records[pctl]*flux_units)
+addfluxcol("Integrated\nLya Flux", measured*flux_units)
+addfluxcol("Integrated\nLya Flux Error", msmt_error*flux_units)
 
 
 #%% join with the existing table
@@ -506,6 +530,17 @@ if not np.all(used):
            "or it might be that these belong to a target removed from the roster in the last build but"
            "who are still in the visit status xml this script is using (from preloads.status).")
     warnings.warn(msg)
+
+
+#%% update external data status from verified obs table
+
+vfd_path, = paths.checked.glob('*verified*')
+vfd = catutils.load_and_mask_ecsv(vfd_path)
+vfd = vfd[['tic_id', 'lya', 'fuv']]
+vfd['lya'][vfd['lya'] == 'none'] = ''
+vfd['fuv'][vfd['fuv'] == 'none'] = ''
+vfd.rename_columns(('lya', 'fuv'), ("External\nLya Good?", "External\nFUV Good?"))
+prog_update = table.join(prog_update, vfd, keys_left='TIC ID', keys_right='tic_id', join_type='left')
 
 
 #%% sort progress table columns for easy comparison
@@ -584,11 +619,14 @@ for stage in ['Lya', 'FUV']:
 
 from target_selection_tools import reference_tables as ref
 
-prog_valid = prog_update[~prog_update['Target_2'].mask]
+if hasattr(prog_update['Target_2'], 'mask'):
+    prog_valid = prog_update[~prog_update['Target_2'].mask].copy()
+else:
+    prog_valid = prog_update.copy()
 
 combo = table.join(ref.mdwarf_isr, prog_valid, join_type='left', keys_left='Target', keys_right='Target_2')
 combo.add_index('Target')
-combo = combo.loc[ref.mdwarf_isr['Target']]
+combo = combo.loc['Target', ref.mdwarf_isr['Target'].tolist()]
 for stage in ('Lya', 'FUV'):
     in_phase2 = combo[f"{stage} Visit\nin Phase II_2"].filled(False).astype(bool)
     observed = combo[f"Last {stage}\nObs_2"].filled('') != ''

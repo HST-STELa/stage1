@@ -25,12 +25,7 @@ from target_selection_tools import query
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-# planets = target_lists.selected_for_transit(batch_no=1)
-
-# target_folders = paths.data_targets.glob('*')
-# targets = [folder.name for folder in target_folders if folder.is_dir() and not folder.name.startswith('.')]
-
-targets = target_lists.eval_no(2)
+targets = target_lists.new_data(4)
 
 tic_ids = preloads.stela_names.loc['hostname_file', targets]['tic_id']
 with warnings.catch_warnings():
@@ -135,6 +130,7 @@ for planet in tqdm(planets):
         Tdiff = test_date - T0
         Nper = Tdiff.to('d')/P
         err = np.sqrt(T0err**2 + (Nper*Perr)**2)
+        err[err == 0] = np.inf # ignore ephemerides without reported errors
         ibest = np.argmin(err)
         min_err = err[ibest].to('min')
 

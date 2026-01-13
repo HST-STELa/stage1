@@ -20,14 +20,14 @@ from stage1_processing import observation_table as obs_tbl_tools
 
 #%% settings
 
-targets = target_lists.new_fuv_search()
+targets = target_lists.everything_in_progress_table()
 ignore_unusable = True
 batch_mode = True
-care_level = 2 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
 dnld_from_insts = 'COS,STIS'
 dnld_from_specs = 'G140L,G130M,G160M'
-dnld_availability = 'PUBLIC,PRIVATE'
+dnld_availability = 'PUBLIC,PROPRIETARY'
 
 
 #%% list to track targets for which new data have been downloaded
@@ -345,6 +345,8 @@ while True:
             counts = 0
             for file_info in scifiles:
                 h = fits.open(file_info)
+                if 'x1d' in file_info.name:
+                    continue
                 counts += len(h[1].data['time'])
                 if counts <= 100:
                     reject = True
@@ -435,5 +437,6 @@ while True:
 
 #%% save table of targets for which data was downloaded
 
+os.chdir(paths.stage1_code)
 filename = f'targets_w_new_data_downloaded_{dbutils.timestamp()}.txt'
 np.savetxt(paths.new_data_lists / filename, targets_w_new_data, fmt='%s')

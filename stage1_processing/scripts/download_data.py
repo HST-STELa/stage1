@@ -34,7 +34,7 @@ care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 =
 confirm_file_moves = False
 dnld_from_insts = 'COS,STIS'
 dnld_from_specs = "G140M,G140L,E140M,G130M,G160M"
-dnld_availability = 'PUBLIC,PRIVATE'
+dnld_availability = 'PUBLIC,PROPRIETARY'
 
 
 #%% list to track targets for which new data have been downloaded
@@ -348,6 +348,8 @@ while True:
         if 'tag' in pieces['type']:
             counts = 0
             for file_info in scifiles:
+                if 'x1d' in file_info.name:
+                    continue
                 h = fits.open(file_info)
                 counts += len(h[1].data['time'])
                 if counts <= 100:
@@ -439,5 +441,6 @@ while True:
 
 #%% save table of targets for which data was downloaded
 
+os.chdir(paths.stage1_code)
 filename = f'targets_w_new_data_downloaded_{dbutils.timestamp()}.txt'
 np.savetxt(paths.new_data_lists / filename, targets_w_new_data, fmt='%s')

@@ -35,7 +35,9 @@ ipac = selection_inputs / 'exoplanet_archive'
 checked = selection_inputs / 'hand_checked'
 other = selection_inputs / 'other'
 requested = selection_inputs / 'requested_targets'
-hst_observations = selection_inputs / 'hst_observations' # should probably rename this "hst_database" or something
+hst_database_folder = selection_inputs / 'hst_database'
+hst_database_https = 'https://archive.stsci.edu/pub/catalogs/paec-7-present.cat'
+# note that we don't want the ss catalog bc it includes solar system objects
 
 reports = selection_outputs / 'target_request_reports'
 difftbls = selection_outputs / 'diff_tables'

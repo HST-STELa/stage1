@@ -32,7 +32,7 @@ plt.ion()
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(last_n=1)
+targets = target_lists.observed_since('2025-09-04') + target_lists.new_data()
 instruments = 'hst-stis'
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
@@ -279,6 +279,7 @@ while True:
         offset_lbl = f'aperture: {aperture}\nY position of + from: ' + ', '.join(offset_lbls)
         plt.annotate(offset_lbl, xy=(0.05,0.05), xycoords='axes fraction', color='w', fontsize='small')
 
+        print('Click trace. Click at x < 100 to use default location (yello cross). Click off axes when done.')
         xy = utils.click_coords()
         xclick, yclick = xy[-1]
 

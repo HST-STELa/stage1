@@ -224,7 +224,7 @@ def add_abstracts(planet_catalog, hst_observations, abstract_dictonary, match_di
 
 
 def merge_verified(planet_catalog, verification_table):
-    valid_verification_entries = 'none pass fail unchecked planned tentative'.split()
+    valid_verification_entries = 'none pass fail unchecked planned tentative lowsnr'.split()
     for band in ('lya', 'fuv'):
         valids = [verification_table[band] == value for value in valid_verification_entries]
         valid = reduce(np.logical_or, valids[1:], valids[0])
@@ -251,6 +251,9 @@ def merge_verified(planet_catalog, verification_table):
 
         fail = verification_results == 'fail'
         statuscol[fail] = 'failed'
+
+        lowsnr = verification_results == 'lowsnr'
+        statuscol[lowsnr] = 'lowsnr'
 
         tentative = verification_results == 'tentative'
         statuscol[tentative] = 'tentative'

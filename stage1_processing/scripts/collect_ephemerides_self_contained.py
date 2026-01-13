@@ -172,6 +172,7 @@ for planet in tqdm(planets):
     Tdiff = test_date - T0
     Nper = Tdiff.to('d')/P
     err = np.sqrt(T0err**2 + (Nper*Perr)**2)
+    err[err == 0] = np.inf # zero errors get thrown out
     ibest = np.argmin(err)
     min_err = err[ibest].to('min')
 

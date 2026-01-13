@@ -16,6 +16,8 @@ import ephemeris
 from stage1_processing import target_lists
 from stage1_processing import preloads
 
+matplotlib.use('agg')
+
 #%% settings
 
 # make a copy of this script in the script_runs folder with the date (and a label, if needed)
@@ -25,8 +27,7 @@ from stage1_processing import preloads
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-matplotlib.use('Qt5Agg') # show plots
-matplotlib.use('agg') # hide plots
+targets = target_lists.new_data(4)
 
 
 #%% catalog setup
@@ -39,13 +40,6 @@ hostcat.add_index('tic_id')
 planets.add_index('tic_id')
 planets['pl_id'] = dbutils.planet_suffixes(planets)
 planets.add_index('pl_id')
-
-
-#%% targets
-
-# targets = target_lists.observed_since('2025-07-14')
-targets = target_lists.eval_no(2)
-# targets = target_lists.everything_in_progress_table()
 
 
 #%% do it

@@ -18,11 +18,19 @@ def eval_no(n):
     return selected['hostname_file'].tolist()
 
 
-def observed_since(isot_date_string):
+def observed_since(isot_date_string, type='lya_or_fuv'):
     date = datetime.fromisoformat(isot_date_string)
     status = preloads.visit_status
     fillvalue = datetime.fromisoformat('0001-01-01')
     mask = (status['obsdate'].filled(fillvalue) >= date) & (status['status'] == 'Archived')
+    if type == 'lya':
+        mask &= status['visit'] <= 'MZ'
+    elif type == 'fuv':
+        mask &= status['visit'] >= 'N0'
+    else:
+        if type != 'lya_or_fuv':
+            raise ValueError
+
     hst_names = status['target'][mask]
     selected = preloads.stela_names.loc['hostname_hst', hst_names]
     return selected['hostname_file'].tolist()
@@ -73,6 +81,8 @@ def selected_for_transit(batch_no):
 def new_data(last_n=1):
     files = list(paths.new_data_lists.rglob('*new_data*.txt'))
     files = sorted(files)
-    names_lists = [np.loadtxt(f, dtype='O').tolist() for f in files]
-    names = sum(names_lists[-last_n:], [])
+    names_lists = [np.loadtxt(f, dtype='O') for f in files]
+    names_lists = list(map(np.atleast_1d, names_lists))
+    names = np.hstack(names_lists[-last_n:])
+    names = list(set(names))
     return names

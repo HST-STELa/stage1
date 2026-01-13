@@ -42,16 +42,6 @@ matplotlib.use('Qt5Agg')
 plt.ion()
 
 
-#%% get targets
-
-# targets = target_lists.observed_since('2025-07-14')
-# targets = target_lists.eval_no(2)
-# targets = ['hd63935', 'hd73583', 'toi-1898'] # external data to check from sept review
-# targets = ['lp714-47']
-targets = ['k2-25', 'wasp-80', 'wasp-29', 'hd219134', 'kepler-444', 'gliese12', 'gj1132', '55cnc']
-targets = ['gj1214']
-
-
 #%% rechecking flagged aquisitions
 """if you want to check aquisitions of a target that has already been flagged unusable, use the
 database_utilities.clear_usability_values function to reset some of the table rows"""

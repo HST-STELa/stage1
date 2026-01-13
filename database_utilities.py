@@ -628,5 +628,5 @@ def timestamp():
     now =  datetime.now()
     now_str = now.isoformat()
     now_no_decimal, _ = now_str.split('.')
-    now_no_colons = now_no_decimal.replace(':', '-')
+    now_no_colons = now_no_decimal.replace(':', '')
     return now_no_colons
