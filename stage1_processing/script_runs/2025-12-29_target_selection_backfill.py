@@ -565,7 +565,7 @@ cat['decision'] = table.MaskedColumn(length=len(cat), mask=True, dtype='O')
 
 # distant targets
 # assume if they have no catalogged distance they probably are bad targets
-# TODO see what happens if I just don't make this cut and rely on Lya flux estimates later
+#  see what happens if I just don't make this cut and rely on Lya flux estimates later
 max_dist = 200
 distance_cut = cat['sy_dist'].filled(2*max_dist) > max_dist
 dist_cut_str = f'Removed due to missing distance or distance > {max_dist} pc.'

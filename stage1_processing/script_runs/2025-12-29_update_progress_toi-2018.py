@@ -208,7 +208,7 @@ measured = []
 msmt_error = []
 lya_factor_rcds = []
 nH_rcds = []
-updated_transit_snr_rcds = [] # TODO add this calculation. goals is to compare with archival transits,
+updated_transit_snr_rcds = [] #  add this calculation. goals is to compare with archival transits,
 # so need to get archival transit lya lines first
 prediction_pctls = [16, 50, 84]
 predicted_flux_records = {pctl:[] for pctl in prediction_pctls}

@@ -407,7 +407,7 @@ while True:
 
 #%% revise uncertainties
 
-    #todo do something to make uncertainties more reasonable. harder than it seems
+    # do something to make uncertainties more reasonable. harder than it seems
     pass
 
 

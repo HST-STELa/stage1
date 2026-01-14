@@ -46,7 +46,7 @@ batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop
 
 targets = target_lists.new_data(4)
-instruments = ['hst-cos'] # FIXME currently this does nothing
+instruments = ['hst-cos'] # currently this does nothing
 
 if care_level == 1:
     matplotlib.use('Qt5Agg')
