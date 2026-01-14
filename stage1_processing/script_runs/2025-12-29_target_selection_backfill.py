@@ -48,10 +48,10 @@ toggle_mid_cycle_update = True
 hand_add_visits = []
 
 # can use this for targets that should no longer make rank for stage 1 and that are not flight ready, not Lya bright, and without archival lya transit
-hand_remove_visits = 'N1 BV OV W2 O6 X7 Q8 O1 OE OB G5 T5'.split()
+hand_remove_visits = 'BN ON G5 T5 N1 W2 O6 X7 Q8 O1 OE OB'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
-backup_orbits = 20
+backup_orbits = 5
 # backup_orbits = int(round(0.2 * 204))
 
 toggle_plots = True
