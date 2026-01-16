@@ -1,12 +1,12 @@
 import warnings
-from pathlib import Path
+import re
 from datetime import datetime
 from math import nan
 
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord, Distance
+from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
@@ -65,7 +65,7 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         wcs = WCS(h.header)
     ax = figure.add_subplot(*subplot_spec, projection=wcs)
 
-    ax.imshow(hh.data, origin='lower')
+    ax.imshow(h.data, origin='lower')
     ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
                transform=ax.get_transform('icrs'),
                marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
@@ -263,9 +263,85 @@ while True:
         plt.close('all')
 
         if bad_acq:
-            obs_tbl['usable'][assoc_obs_mask] = False
-            obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
+            obs_tbl['flags'][assoc_obs_mask] = 'Acquisition untrustworthy.'
+            obs_tbl['usability status'][assoc_obs_mask] = 'has issues'
 
+
+#%% now look through the spectra and flag any not yet caught that might be unusable
+
+    """Data could be good but look like crap, so spectra should only be flagged unusable
+    if they clearly differ from the norm in a serious way, I think."""
+
+    plt.close('all')
+
+    usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
+    configs = np.unique(usbl_tbl['science config'])
+    for config in configs:
+        config_mask = usbl_tbl['science config'] == config
+        cnfg_tbl = usbl_tbl[config_mask]
+        for row in cnfg_tbl:
+            id = usbl_tbl['archive id']
+            fig = plt.figure()
+            file, = data_dir.glob(f'*{id}_x1d.fits')
+            plt.title(file.name)
+            data = fits.getdata(file, 1)
+            plt.step(data['wavelength'].T, data['flux'].T, where='mid')
+            plt.annotate('\n'.join(list(row['flags'])), xy=(0.02,0.98), xycoords='axes fraction')
+
+        print('Click outside the plots to continue.')
+        xy = utils.click_coords(fig)
+
+        while True:
+            id_endings = input('Any spectra that should be flagged? Give last few letters of the ids, separated by commas.\n'
+                              'Hit enter if none. Prompt will loop until an empty answer is given.')
+            if id_endings == '':
+                break
+            id_endings = re.split(', *', id_endings)
+            mask = np.zeros(len(obs_tbl), bool)
+            for id_ending in id_endings:
+                mask |= np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
+            i_mask, = np.nonzero(mask)
+
+            while True:
+                usable_ans = input(f'Are {', '.join(id_endings)} unusable(u), have issues (i), all clear with flags (f), or just all clear (enter)?')
+                if usable_ans == '':
+                    obs_tbl['usable'][mask] = False
+                    obs_tbl['usability status'][mask] = 'all clear'
+                    break
+                elif usable_ans.startswith('u'):
+                    obs_tbl['usable'][mask] = False
+                    obs_tbl['usability status'][mask] = 'unusable'
+                    reason = input(f'Enter reason for flagging {id_ending} as unusable.')
+                    obs_tbl['reason unusable'][mask] = reason
+                    break
+                elif usable_ans.startswith('i'):
+                    obs_tbl['usability status'][mask] = 'has issues'
+                    reasons = input(f'Enter the issues, separated by commas.')
+                    reasons = re.split(', *', reasons)
+                    for i in i_mask:
+                        obs_tbl['flags'][i] = list(obs_tbl['flags'][i]) + reasons
+                    break
+                elif usable_ans.startswith('f'):
+                    obs_tbl['usable'][mask] = True
+                    obs_tbl['usability status'][mask] = 'all clear'
+                    flags = input(f'What other flags should be recorded, separated by commas.')
+                    flags = re.split(', *', flags)
+                    for i in i_mask:
+                        obs_tbl['flags'][i] = list(obs_tbl['flags'][i]) + flags
+                    break
+                else:
+                    usable_ans = input('Bad input. Try again. Answer must be u, i, f, or enter.')
+
+        plt.close('all')
+
+    utils.query_next_step(batch_mode, care_level, 2)
+
+
+#%% mark files not listed as unusable and without flags as usuable
+
+    no_flags = [np.ma.is_masked(flags) or len(flags) == 0 for flags in obs_tbl['flags'] ]
+    mark_usable = no_flags & obs_tbl['usable'].mask
+    obs_tbl['usable'][mark_usable] = True
 
 
 #%% take a gander

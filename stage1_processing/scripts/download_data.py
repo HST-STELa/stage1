@@ -385,6 +385,7 @@ while True:
 
         if reject:
             obs_tbl['usable'][i] = False
+            obs_tbl['usability status'][i] = 'unusable'
             obs_tbl['reason unusable'][i] = reason
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)

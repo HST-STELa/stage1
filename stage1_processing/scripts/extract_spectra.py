@@ -167,7 +167,7 @@ while True:
 
     obs_tbl_usbl['skip_extraction'] = False
     obs_tbl_usbl['skip_extraction'].description = (
-        "Temporary column telling the extraction scrip whether to extract the data or not. Can likely be deleted if"
+        "Temporary column telling the extraction script whether to extract the data or not. Can likely be deleted if"
         "still present later."
     )
 
@@ -340,60 +340,6 @@ while True:
 
     utils.query_next_step(batch_mode, care_level, 2)
 
-#%% flag anomalous spectra, if any
-
-    """Data could be good but look like crap, so spectra should only be flagged unusable
-    if they clearly differ from the norm in a serious way, I think."""
-
-    plt.close('all')
-
-    usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
-    configs = np.unique(usbl_tbl['science config'])
-    for config in configs:
-        config_mask = usbl_tbl['science config'] == config
-        ids = usbl_tbl['archive id'][config_mask]
-        for id in ids:
-            fig = plt.figure()
-            file, = data_dir.glob(f'*{id}_x1d.fits')
-            plt.title(file.name)
-            data = fits.getdata(file, 1)
-            plt.step(data['wavelength'].T, data['flux'].T, where='mid')
-
-        print('Click outside the plots to continue.')
-        xy = utils.click_coords(fig)
-
-        while True:
-            id_ending = input('Any spectra that should be flagged ? Give last few letters of the id.\n'
-                              'Hit enter if none. Prompt will loop until an empty answer is given.')
-            if id_ending == '':
-                break
-            mask = np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
-            i_mask, = np.nonzero(mask)
-
-            usable_ans = input(f'Should {id_ending} be flagged unusable and files deleted (y/enter)?')
-            usable = not (usable_ans == 'y')
-            if not usable:
-                obs_tbl['usable'][mask] = False
-                reason = input(f'Enter reason for flagging {id_ending} as unusable.')
-                obs_tbl['reason unusable'][mask] = reason
-                continue
-
-            flags_ans = input('What other flags should be recorded? Separate with commas, no spaces: ')
-            flags = flags_ans.split(',')
-            for i in i_mask:
-                obs_tbl['flags'][i_mask] = flags
-
-        plt.close('all')
-
-    utils.query_next_step(batch_mode, care_level, 2)
-
-
-#%% mark files not listed as unusable and without flags as usuable
-
-    no_flags = [np.ma.is_masked(flags) or len(flags) == 0 for flags in obs_tbl['flags'] ]
-    mark_usable = no_flags & obs_tbl['usable'].mask
-    obs_tbl['usable'][mark_usable] = True
-
 
 #%% revise uncertainties
 
@@ -404,7 +350,6 @@ while True:
 #%% back to main dir
 
     os.chdir(paths.stage1_code)
-
 
 
 #%% delete skip column
