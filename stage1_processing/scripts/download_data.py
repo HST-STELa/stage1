@@ -28,7 +28,6 @@ from stage1_processing import observation_table as obs_tbl_tools
 # then commited and pushed so we all benefit from them
 
 targets = target_lists.observed_since('2025-09-04')
-ignore_unusable = False
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -164,15 +163,8 @@ while True:
                 file_tbls.append(filtered)
         files_in_archive = table.vstack(file_tbls)
 
-        # list observations already deemed unusable
-        unusable_ids = obs_tbl['archive id'][~obs_tbl['usable'].filled(True)]
-
         new_files_mask = []
         for file_info in files_in_archive:
-            if ignore_unusable:
-                if file_info['authz_primary_identifier'].lower() in unusable_ids:
-                    new_files_mask.append(False)
-                    continue
             files = list(data_dir.glob(f'*{file_info['filename']}'))
             new_files_mask.append(len(files) == 0)
         new_files = files_in_archive[new_files_mask]
@@ -252,9 +244,6 @@ while True:
     print(f'Searching for supporting files for {target} observations.')
     new_supporting_files = False
     for row in obs_tbl:
-        usable = catutils.get_row_filled(row, 'usable', True)
-        if ignore_unusable and not usable:
-            continue
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
         i = row.index
@@ -338,9 +327,6 @@ while True:
                    shutter_closed='Shutter closed.',
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
-        usable = catutils.get_row_filled(row, 'usable', True)
-        if ignore_unusable and not usable:
-            continue
         reject = False
         shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
         scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
@@ -397,16 +383,11 @@ while True:
             if len(note):
                 obs_tbl['notes'][i] = note
 
-
         if reject:
             obs_tbl['usable'][i] = False
             obs_tbl['reason unusable'][i] = reason
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)
-
-
-#%% note to self
-    """It is still worth checking the acquisitions, so don't delete the files yet."""
 
 
 #%% check obs_tbl
