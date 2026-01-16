@@ -42,6 +42,13 @@ def everything_in_progress_table():
     return selected['hostname_file'].tolist()
 
 
+def everything_in_database():
+    allpaths = paths.data_targets.glob('*')
+    folders = [f for f in allpaths if f.is_dir()]
+    names = [f.name for f in folders]
+    return sorted(names)
+
+
 def new_fuv_search():
     prog = preloads.progress_table
     mask = ((prog["External\nFUV Good?"] != 'yes') &
