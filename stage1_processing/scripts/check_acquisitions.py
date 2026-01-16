@@ -267,14 +267,6 @@ while True:
             obs_tbl['reason unusable'][assoc_obs_mask] = 'Target not acquired or other acquisition issue.'
 
 
-#%% delete files associated with bad obs
-
-    if np.any(~obs_tbl['usable'].filled(True)):
-        dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=True, verbose=True, directory=data_dir)
-        answer = input('Proceed with file deletion? y/n')
-        if answer == 'y':
-            dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
-
 
 #%% take a gander
 

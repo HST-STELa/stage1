@@ -395,15 +395,6 @@ while True:
     obs_tbl['usable'][mark_usable] = True
 
 
-#%% clean up unusable files
-
-    tbd = dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=True, verbose=True, directory=data_dir)
-    if tbd:
-        answer = input('Proceed with file deletion? enter/n')
-        if answer == '':
-            dbutils.delete_files_for_unusable_observations(obs_tbl, dry_run=False, directory=data_dir)
-
-
 #%% revise uncertainties
 
     #todo do something to make uncertainties more reasonable. harder than it seems
