@@ -25,8 +25,6 @@ from lya_prediction_tools import lya, ism, transit, stis, cos, variability
 from lya_prediction_tools.spectrograph import Spectrograph
 
 
-planet_catalog = preloads.planets
-host_catalog = preloads.hosts
 stela_name_tbl = preloads.stela_names
 
 
@@ -218,7 +216,7 @@ def best_by_mean_snr(tbl: Table, category_column: str) -> str:
 
 class Host(object):
     lya_reconstruction : LyaReconstruction
-    def __init__(self, name):
+    def __init__(self, name, host_catalog, planet_catalog):
         dbname = name
         tic_id, hostname = stela_name_tbl.loc['hostname_file', dbname][['tic_id', 'hostname']]
         self.dbname = name
@@ -528,7 +526,7 @@ class DetectabilityDatabase:
 
         # record best overall offset
         best_offset = db1.best_offset()
-        db1['best time offset'] = best_offset
+        db1.meta['best time offset'] = best_offset
 
         # pick offset to use from a smaller "safe" range
         best_safe_offset = db1.best_offset(offset_max_safe)
@@ -605,8 +603,8 @@ def get_transit_from_simulation(host, planet):
         transmission_array = f['intensity'][:]
         eta = f['eta'][:]
         mass = f['planet_mass'][:]
-        wind_scaling = f['mdot_star_scaling'][:]
-        phion = f['phion_scaling'][:] # the "_scaling" is vestigial from an earlier formulation
+        mdot_star = f['mdot_star'][:]
+        phion = f['phion_rate'][:]
         params = dict(f['system_parameters'].attrs)
 
     # verify that I got the right planet
@@ -619,10 +617,10 @@ def get_transit_from_simulation(host, planet):
     vgrid_earth = vgrid_sys + host.rv.to_value('km s-1')
     wavegrid_earth = lya.v2w(vgrid_earth)
 
-    mdot_star = wind_scaling * params['mdot_star'] * u.g/u.s
     Tion = 1 / phion * u.s
     Tion = Tion.to('h')
     mass = mass * u.g
+    mdot_star = mdot_star * u.g/u.s
     x_params = dict(eta=eta, mdot_star=mdot_star, Tion=Tion, mass=mass)
 
     transitobj = TransitModelSet(
@@ -642,8 +640,12 @@ def construct_flat_transit(
         rv_grid_span: u.Quantity,
         rv_range: u.Quantity,
 ):
-    ta = (obstimes[0] - exptimes[0] / 2)
-    tb = (obstimes[-1] + exptimes[-1] / 2)
+    ta_obs = (obstimes[0] - exptimes[0] / 2)
+    tb_obs = (obstimes[-1] + exptimes[-1] / 2)
+    ta_tst, tb_tst = planet.in_transit_range
+    buffer = 1*u.h
+    ta = min(ta_obs, ta_tst) - buffer
+    tb = max(tb_obs, tb_tst) + buffer
     dt = 0.25 * u.h
     tgrid = utils.qrange(ta, tb + dt, dt)
     vgrid = utils.qrange(*rv_grid_span, 10*u.km/u.s)
@@ -685,7 +687,7 @@ def build_snr_sampler_fns(
         if transit_keys is None:
             transmission = transit_model.transmission
         else:
-            transmission = transit_model.loc_transmission(**transit_keys, rtol=transit_key_rtol)
+            transmission = transit_model.loc_transmission(**transit_keys, rtol=0.05)
 
         spec = get_spectrograph_object(grating, aperture, ra, dec)
 

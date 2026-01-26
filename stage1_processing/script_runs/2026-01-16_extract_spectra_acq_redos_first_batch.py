@@ -154,12 +154,11 @@ while True:
         if 'hst-stis' in row['science config']:
             stis_tag_files_in_tbl.extend(row['key science files'])
     stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments=instruments)
-    stis_tag_files_in_dir = list(map(str, stis_tag_files_in_dir))
+    stis_tag_files_in_dir = [dbutils.parse_filename(f)['id'] for f in stis_tag_files_in_dir]
 
-    n_tbl = len(stis_tag_files_in_tbl)
-    n_obs = len(stis_tag_files_in_dir)
-    if n_tbl != n_obs:
-        warnings.warn(f"There are {n_tbl} in the observation manifest table but {n_tbl} in the directory for {target}."
+    ids_not_in_tbl = set(stis_tag_files_in_dir) - set(obs_tbl['archive id'])
+    if ids_not_in_tbl:
+        warnings.warn(f"{ids} have files in the directory but not in the obs table for {target}."
                       f"\nOnly the files in the table will be extracted.")
 
 
@@ -373,7 +372,6 @@ while True:
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last stis extraction'] = datetime.now().isoformat()
-    obs_tbl.meta['last data review'] = datetime.now().isoformat()
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
     utils.query_next_step(batch_mode, care_level, 1)

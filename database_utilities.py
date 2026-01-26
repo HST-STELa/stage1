@@ -552,9 +552,13 @@ def split_hostname_planet_letter(planet_name, split_character=' '):
     return split_character.join(pieces[:-1]), pieces[-1]
 
 
-def timestamp():
+def timestamp(date_only=False):
     now =  datetime.now()
     now_str = now.isoformat()
     now_no_decimal, _ = now_str.split('.')
     now_no_colons = now_no_decimal.replace(':', '')
-    return now_no_colons
+    if date_only:
+        date = now_no_colons[:10]
+        return date
+    else:
+        return now_no_colons

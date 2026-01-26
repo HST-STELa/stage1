@@ -17,6 +17,7 @@ standard_columns = {
     'key science files',
     'supporting files',
     'usable',
+    'usability status',
     'reason unusable',
     'flags',
     'notes'
@@ -79,6 +80,7 @@ def initialize(science_files=()):
         table.MaskedColumn(length=n, name='key science files', dtype='object', mask=True),
         table.MaskedColumn(length=n, name='supporting files', dtype='object', mask=True),
         table.MaskedColumn(length=n, name='usable', dtype='bool', mask=True),
+        table.MaskedColumn(length=n, name='usability status', dtype='object', mask=True),
         table.MaskedColumn(length=n, name='reason unusable', dtype='object', mask=True),
         table.MaskedColumn(length=n, name='flags', dtype='object', mask=True),
         table.MaskedColumn(length=n, name='notes', dtype='object', mask=True)

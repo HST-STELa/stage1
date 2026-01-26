@@ -80,14 +80,13 @@ if for_reals == '':
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-staging_area = paths.packages / '2025-09-26.stage2.eval2.staging_area'
-
 sigma_threshold = 3
 min_samples = 5**4 # used as a check later to ensure all grid pts of Ethan's sims were sampled
-targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2))
+targets -= set('v1298tau hd22946 hip94325 ltt1445a toi-1203 toi-561'.split())
 
-# mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
-mpl.use('qt5agg') # plots are shown
+mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
+# mpl.use('qt5agg') # plots are shown
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
 targets = list(targets)
@@ -145,15 +144,11 @@ variability_predictor = tutils.VariabilityPredictor(
 )
 
 
-#%% planet and host catalogs
+#%% tables
 
 with catutils.catch_QTable_unit_warnings():
-    planet_catalog = catutils.load_and_mask_ecsv(staging_area / 'planet_catalog.ecsv')
-    planet_catalog = table.QTable(planet_catalog)
-    host_catalog = catutils.planets2hosts(planet_catalog)
+    planet_catalog = preloads.planets.copy()
     planet_catalog.add_index('tic_id')
-    host_catalog = table.QTable.read(staging_area / 'host_catalog.ecsv')
-    host_catalog.add_index('tic_id')
 
 
 #%% a few loose closures
@@ -200,13 +195,7 @@ def get_obs_config_info(host):
     consider_cos = Flya > cos_consideration_threshold_flux
     return grating, base_aperture, all_apertures, consider_cos
 
-def consrtuct_snr_samplers(host, transit, tst_type):
-    if tst_type == 'flat':
-        transit_search_rvs = search_simple_transit_within_rvs
-    elif tst_type == 'model':
-        transit_search_rvs = search_model_transit_within_rvs
-    else:
-        raise ValueError
+def consrtuct_snr_samplers(host, transit):
     host_variability = tutils.HostVariability(host, variability_predictor)
     get_snr_iterable, get_snr_single = tutils.build_snr_sampler_fns(
         host,
@@ -217,7 +206,7 @@ def consrtuct_snr_samplers(host, transit, tst_type):
         baseline_exposures,
         transit_exposures,
         normalization_search_rvs,
-        transit_search_rvs
+        search_model_transit_within_rvs
     )
     return get_snr_iterable, get_snr_single
 
@@ -227,12 +216,12 @@ def consrtuct_snr_samplers(host, transit, tst_type):
 build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
 
 for target in utils.printprogress(targets, prefix='host '):
-    host = tutils.Host(target, host_catalog, planet_catalog)
+    host = tutils.Host(target)
     grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
     for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
         for tst_type in ('model', 'flat'):
             transit = get_transit(planet, host, tst_type)
-            get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
+            get_snr_iterable, _ = consrtuct_snr_samplers(host, transit)
             def build_planet_snrs(grating, base_aperture, all_apertures):
                 snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
                                   offsets, max_safe_offset, verbose=True)
@@ -242,7 +231,7 @@ for target in utils.printprogress(targets, prefix='host '):
             # optionally add COS
             if consider_cos:
                 cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
-                cos_snrs.snrs.meta = {}
+                del cos_snrs.snrs.meta # otherwise the code picks cos values when merging tables
                 snrs += cos_snrs
 
             snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
@@ -251,12 +240,12 @@ for target in utils.printprogress(targets, prefix='host '):
 #%% make diagnostic plots
 
 for target in tqdm(targets):
-    host = tutils.Host(target, host_catalog, planet_catalog)
+    host = tutils.Host(target)
     for planet in host.planets:
         for tst_type in ('model', 'flat'):
             filenamer = tutils.FileNamer(tst_type, planet, host)
             transit = get_transit(planet, host, tst_type)
-            _, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
+            _, get_snr = consrtuct_snr_samplers(host, transit)
             best_snrs = load_best_snrs(planet, host, tst_type)
             best_snrs.snrs = table.QTable(best_snrs.snrs)
 
@@ -275,7 +264,7 @@ for target in tqdm(targets):
 labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],log10(M_planet)\n[Mearth],σ_Lya'.split(',')
 
 for target in tqdm(targets):
-    host = tutils.Host(target, host_catalog, planet_catalog)
+    host = tutils.Host(target)
     for planet in host.planets:
         best_snrs = load_best_snrs(planet, host,'model')
         filenamer = tutils.FileNamer('model', planet, host)
@@ -294,9 +283,9 @@ for target in tqdm(targets):
         cfig.suptitle(planet.dbname)
         utils.save_pdf_png(cfig, host.transit_folder / filenamer.det_vol_corner_basename)
 
-        cfig, _ = pu.median_snr_corner(param_vecs, snr_vec, labels=labels)
-        cfig.suptitle(planet.dbname)
-        utils.save_pdf_png(cfig, host.transit_folder / filenamer.mdn_snr_corner_basename)
+        # cfig, _ = pu.median_snr_corner(param_vecs, snr_vec, labels=labels)
+        # cfig.suptitle(planet.dbname)
+        # utils.save_pdf_png(cfig, host.transit_folder / filenamer.mdn_snr_corner_basename)
 
         plt.close('all')
 
@@ -304,6 +293,10 @@ for target in tqdm(targets):
 #%% assemble table of properties
 
 lya_bins = (-150, -50, 50, 150) * u.km/u.s
+
+def fix_meta(snr_db):
+    snr_db.meta['best time offset'], = np.unique(snr_db['best time offset'].quantity)
+    snr_db.meta['best safe time offset'], = np.unique(snr_db['best safe time offset'].quantity)
 
 eval_rows = []
 for target in tqdm(targets):
@@ -317,6 +310,7 @@ for target in tqdm(targets):
 
         # region model snrs
         snr_db = load_snr_db(planet, host, 'model')
+        fix_meta(snr_db)
         slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5**4)
 
         row['best safe\ntransit offset'] = slctd_offsets[1]
@@ -330,14 +324,14 @@ for target in tqdm(targets):
 
         row['sim\nbest aperture'] = snr_db.meta['best base grating aperture']
 
-        cos = snr_db.meta['COS considered']
+        cos = 'g130m' in snr_db['grating']
         row['COS\nconsidered?'] = cos
         if cos:
             cos_snrs = snr_db.filter_obs_config(grating='g130m', aperture='psa', offset='best safe')
             cosfrac, maxcossnr = cos_snrs.det_frac_and_max_snr(sigma_threshold)
             row['sim COS safe offset\nmax snr'] = maxcossnr
             row[f'sim COS safe offset\nfrac w snr > {sigma_threshold}'] = cosfrac
-            if det_fracs[1] > 0:
+            if cosfrac > 0:
                 row['cos det\nfrac ratio'] = cosfrac/det_fracs[1]
             row['cos snr\nratio'] = maxcossnr/max_snrs[1]
         # endregion
@@ -345,6 +339,7 @@ for target in tqdm(targets):
         # region flat transit
         # load snr table
         snr_db_flat = load_snr_db(planet, host, 'flat')
+        fix_meta(snr_db_flat)
         snr_db_flat = snr_db_flat.filter_obs_config(aperture='best', offset=3*u.h)
         flat_snr = snr_db_flat.median_case()['transit sigma']
         row['flat transit\nsnr'] = flat_snr

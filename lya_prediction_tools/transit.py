@@ -429,7 +429,7 @@ def generic_transit_snr(
             ftln = ax.errorbar(vspec, ft, et, fmt='-C2', errorevery=5, label='transit')
             ag, = ax.plot(vspec, et, ':C3', label='uncty with airglow')
 
-            transit_vgrid = lya.w2v(transit_wavegrid)
+            transit_vgrid = lya.w2v(transit_wavegrid) - rv_star.to_value('km s-1')
             for i, t in enumerate(obstimes):
                 ax2.plot(transit_vgrid, trans_obs[i,:], lw=0.5, color='0.5', label=f'{t.to('h'):.1f}')
             tln, = ax2.plot(transit_vgrid, tt, color='0.5', label='transit transmission')

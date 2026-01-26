@@ -54,7 +54,7 @@ targets_w_new_data = []
 #%% loop start
 
 i = targets.index(target)
-for target in targets[i:]:
+for target in targets[:i]:
 
 
 #%% prep for target processing
@@ -197,7 +197,7 @@ for target in targets[i:]:
         dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target,
                                               into_target_folders=False, confirm=confirm_file_moves)
 
-        utils.query_next_step(batch_mode, care_level, 2)
+        care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% make sure info on all files are in the obs tbl
@@ -248,7 +248,7 @@ for target in targets[i:]:
 
     print(f'Searching for supporting files for {target} observations.')
     new_supporting_files = False
-    for row in obs_tbl[unusable_mask]:
+    for row in obs_tbl:
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
         i = row.index
@@ -400,7 +400,7 @@ for target in targets[i:]:
     obs_tbl.sort('start')
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
-    utils.query_next_step(batch_mode, care_level, 1)
+    care_level = utils.query_next_step(batch_mode, care_level, 1)
 
 
 #%% save table of targets for which data was downloaded

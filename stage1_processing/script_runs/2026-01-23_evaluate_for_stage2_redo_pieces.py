@@ -1,8 +1,5 @@
-from functools import lru_cache
 import re
 from typing import Literal
-import os
-import shutil as sh
 
 from astropy.table import Table
 from astropy import table
@@ -26,51 +23,6 @@ from lya_prediction_tools import stis
 from lya_prediction_tools import lya
 
 
-#%% occasional use: move model transit spectra into target folders
-
-models_inbox = paths.inbox / '2025-11-17 transit predictions'
-
-files = list(models_inbox.glob('*.h5'))
-
-odd_names = {
-    'aumic': 'au-mic',
-    'dstuca': 'ds-tuc-a',
-}
-def parse_ethan_targname(file):
-    name = file.name
-    name = name.replace('.h5', '')
-    if re.findall(r'0\d$', name): # name ends in a number, so planet must be a 2-digit number
-        targname = name[:-2]
-        suffix = name[-2:]
-    else:
-        targname = name[:-1]
-        suffix = name[-1:]
-    targname = odd_names.get(targname, targname)
-    return targname, suffix
-
-names_planets = [parse_ethan_targname(file) for file in files]
-targnames_ethan, planet_suffixes = zip(*names_planets)
-targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
-targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
-
-def move_files(dry_run=True):
-    for targname, planet, file in zip(targnames_file, planet_suffixes, files):
-        newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
-        newfolder = paths.target_data(targname) / 'transit predictions'
-
-        if dry_run:
-            print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
-        else:
-            if not newfolder.exists():
-                os.mkdir(newfolder)
-            sh.copy(file, newfolder / newname)
-
-move_files(dry_run=True)
-for_reals = input('\nProceed with copying the files? (enter/n)')
-if for_reals == '':
-    move_files(dry_run=False)
-
-
 #%% settings
 
 # make a copy of this script in the script_runs folder with the date (and a label, if needed)
@@ -82,15 +34,20 @@ if for_reals == '':
 
 staging_area = paths.packages / '2025-09-26.stage2.eval2.staging_area'
 
+targets_all = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+targets_redo = 'ltt1445a toi-1203 toi-561'.split()
+
 sigma_threshold = 3
 min_samples = 5**4 # used as a check later to ensure all grid pts of Ethan's sims were sampled
-targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
 
-# mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
-mpl.use('qt5agg') # plots are shown
+mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
+# mpl.use('qt5agg') # plots are shown
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
-targets = list(targets)
+
+plot_from_excel = False
+if plot_from_excel:
+    url_google_sheet = 'https://docs.google.com/spreadsheets/d/1G77756ETnRfSoCjw-ZOD7rCVP124XmpjYLzRW2-ckzQ/export?format=xlsx&gid=985313130'
 
 
 #%% instrument details
@@ -145,14 +102,13 @@ variability_predictor = tutils.VariabilityPredictor(
 )
 
 
-#%% planet and host catalogs
+#%% planet catalog
 
 with catutils.catch_QTable_unit_warnings():
     planet_catalog = catutils.load_and_mask_ecsv(staging_area / 'planet_catalog.ecsv')
     planet_catalog = table.QTable(planet_catalog)
     host_catalog = catutils.planets2hosts(planet_catalog)
     planet_catalog.add_index('tic_id')
-    host_catalog = table.QTable.read(staging_area / 'host_catalog.ecsv')
     host_catalog.add_index('tic_id')
 
 
@@ -224,6 +180,8 @@ def consrtuct_snr_samplers(host, transit, tst_type):
 
 #%% loop through planets of all hosts to compute transit sigmas
 
+targets = targets_redo
+
 build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
 
 for target in utils.printprogress(targets, prefix='host '):
@@ -247,8 +205,74 @@ for target in utils.printprogress(targets, prefix='host '):
 
             snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
 
+#%% loop through planets of all hosts to compute transit sigmas
+
+targets = targets_all
+
+build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
+
+for target in utils.printprogress(targets, prefix='host '):
+    host = tutils.Host(target, host_catalog, planet_catalog)
+    grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
+    for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
+        for tst_type in ('flat',):
+            transit = get_transit(planet, host, tst_type)
+            get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
+            def build_planet_snrs(grating, base_aperture, all_apertures):
+                snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
+                                  offsets, max_safe_offset, verbose=True)
+                return snrs
+
+            snrs = build_planet_snrs(grating, base_aperture, all_apertures)
+            # optionally add COS
+            if consider_cos:
+                cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
+                cos_snrs.snrs.meta = {}
+                snrs += cos_snrs
+
+            snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
+
+
+
+#%% redo planets that gave errors of too few samples or other problems
+
+pass
+# targets = ['hd63433', 'l98-59', 'gj9827']
+# targets = ['l98-59', 'gj9827']
+# targets = ['gj9827']
+targets = ['gj436']
+# targets = ['gj3470']
+
+build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
+
+for target in utils.printprogress(targets, prefix='host '):
+    host = tutils.Host(target, host_catalog, planet_catalog)
+    grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
+    for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
+        for tst_type in ('flat', 'model'):
+            transit = get_transit(planet, host, tst_type)
+            get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
+            def build_planet_snrs(grating, base_aperture, all_apertures):
+                snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
+                                  offsets, max_safe_offset, verbose=True)
+                return snrs
+
+            snrs = build_planet_snrs(grating, base_aperture, all_apertures)
+            # optionally add COS
+            if consider_cos:
+                cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
+                cos_snrs.snrs.meta = {}
+                snrs += cos_snrs
+
+            snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
+
 
 #%% make diagnostic plots
+
+pass
+# targets = targets_all
+# targets = ['hd63433', 'l98-59', 'gj9827']
+targets = ['gj3470', 'gj436']
 
 for target in tqdm(targets):
     host = tutils.Host(target, host_catalog, planet_catalog)
@@ -267,12 +291,16 @@ for target in tqdm(targets):
                 wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
                 tutils.save_diagnostic_plots(wfig, tfig, 'max', host, filenamer)
 
-            # plt.close('all')
+            plt.close('all')
 
 
 #%% make corner plots
 
 labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],log10(M_planet)\n[Mearth],σ_Lya'.split(',')
+
+# targets = targets_all
+# targets = ['hd63433', 'l98-59', 'gj9827']
+targets = ['gj3470', 'gj436']
 
 for target in tqdm(targets):
     host = tutils.Host(target, host_catalog, planet_catalog)
@@ -303,11 +331,18 @@ for target in tqdm(targets):
 
 #%% assemble table of properties
 
+targets = targets_all
+
 lya_bins = (-150, -50, 50, 150) * u.km/u.s
 
+def fix_meta(snr_db):
+    snr_db.meta['best time offset'], = np.unique(snr_db['best time offset'].quantity)
+    snr_db.meta['best safe time offset'], = np.unique(snr_db['best safe time offset'].quantity)
+
+toofewsamples = []
 eval_rows = []
 for target in tqdm(targets):
-    host = tutils.Host(target)
+    host = tutils.Host(target, host_catalog, planet_catalog)
     for planet in host.planets:
         # add entries to the row in the order they should appear in the table
         row = {}
@@ -317,7 +352,15 @@ for target in tqdm(targets):
 
         # region model snrs
         snr_db = load_snr_db(planet, host, 'model')
-        slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5**4)
+        if 'best time offset' not in snr_db.meta:
+            fix_meta(snr_db)
+        try:
+            slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5**4)
+        except ValueError as e:
+            if 'Num of samples' in str(e):
+                toofewsamples.append(target)
+                # continue
+                break
 
         row['best safe\ntransit offset'] = slctd_offsets[1]
         row['best overall\ntransit offset'] = slctd_offsets[2]
@@ -330,7 +373,7 @@ for target in tqdm(targets):
 
         row['sim\nbest aperture'] = snr_db.meta['best base grating aperture']
 
-        cos = snr_db.meta['COS considered']
+        cos = 'g130m' in snr_db['grating']
         row['COS\nconsidered?'] = cos
         if cos:
             cos_snrs = snr_db.filter_obs_config(grating='g130m', aperture='psa', offset='best safe')
@@ -345,7 +388,9 @@ for target in tqdm(targets):
         # region flat transit
         # load snr table
         snr_db_flat = load_snr_db(planet, host, 'flat')
-        snr_db_flat = snr_db_flat.filter_obs_config(aperture='best', offset=3*u.h)
+        if 'best time offset' not in snr_db_flat.meta:
+            fix_meta(snr_db_flat)
+        snr_db_flat = snr_db_flat.filter_obs_config(aperture='best', offset='best')
         flat_snr = snr_db_flat.median_case()['transit sigma']
         row['flat transit\nsnr'] = flat_snr
         row['flat transit\nbest aperture'] = snr_db_flat.meta['best base grating aperture']
@@ -432,9 +477,12 @@ for substr, fmt in formats_general.items():
 
 escape_detections = catutils.escape_catalog_merge_targets('download')
 
+with catutils.catch_QTable_unit_warnings():
+    more_planets = preloads.planets.copy()
+
 det_ids = np.char.add(escape_detections['Target Star'], escape_detections['Planet Letter'])
-pcat_ids = np.char.add(planet_catalog['hostname'].astype(str),
-                       dbutils.planet_suffixes(planet_catalog).astype(str))
+pcat_ids = np.char.add(more_planets['hostname'].astype(str),
+                       dbutils.planet_suffixes(more_planets).astype(str))
 eval_ids = np.char.add(eval_table['hostname'], eval_table['planet'])
 
 # check to be sure names in escape detections match into planet catalog
@@ -513,3 +561,152 @@ for name in eval_table_ecsv.colnames:
     eval_table_ecsv.rename_column(name, name.replace('\n', ' '))
 eval_path_ecsv = paths.catalogs / eval_filename.replace('csv', 'ecsv')
 eval_table_ecsv.write(eval_path_ecsv, overwrite=True)
+
+
+#%% load table and make labels
+
+if plot_from_excel:
+    eval_table = catutils.read_excel(url_google_sheet)
+else:
+    eval_path_ecsv = paths.catalogs / eval_filename.replace('csv', 'ecsv')
+    eval_table = catutils.load_and_mask_ecsv(eval_path_ecsv)
+    for name in eval_table.colnames:
+        eval_table.rename_column(name, name.replace('  ', ' '))
+
+labels = np.char.add(eval_table['hostname'], ' ')
+labels = np.char.add(labels, eval_table['planet'])
+eval_table['labels'] = labels
+
+#%% make some masks and some global style settings
+
+slide_size = [9, 5]
+mpl.rcParams['savefig.dpi'] = 300
+
+masks = dict(
+    allpts=np.ones(len(eval_table), dtype=bool),
+    detections=eval_table['Lya detected?'] == 'Y',
+    tentative=eval_table['Lya detected?'] == 'T',
+    nondetections=eval_table['Lya detected?'] == 'ND',
+    unknown=eval_table['Lya detected?'] == 'UK'
+)
+
+pt_styles = dict(
+    allpts=dict(color='0.5', label='all'),
+    detections=dict(color='C2', zorder=10, label='known detections'),
+    tentative=dict(color='C1', label='known tentative'),
+    nondetections=dict(color='C3', label='known nondetections'),
+    unknown=dict(color='C4', label='(to be) observed, result unknown')
+)
+
+
+#%% plot detection fractions vs lya snr
+
+def make_detectability_plot(ykey, yfloor=0):
+    fig, ax = plt.subplots(1, 1, figsize=slide_size)
+    ax.set_xscale('log')
+    ax.set_xlabel('Lya Flux (erg s-1 cm-2)')
+    ax.set_yscale('log')
+
+    x = eval_table['Lya Flux (erg s-1 cm-2)']
+    y = eval_table[ykey]
+    y = np.clip(y, yfloor, np.inf)
+
+    def plot_set(mask, *args, addlbls=False, **kws):
+        xx = x[mask]
+        yy = y[mask]
+        ln, = ax.plot(xx, yy, 'o', *args, **kws)
+        if addlbls:
+            lbls = eval_table['labels'][mask]
+            for _x,_y,lbl in zip(xx, yy, lbls):
+                ax.annotate(' ' + lbl, xy=(_x,_y), fontsize='xx-small', rotation=45)
+        return ln
+
+    plot_set(masks['allpts'], addlbls=False, **pt_styles['allpts'])
+    plot_set(masks['detections'], addlbls=True,  **pt_styles['detections'])
+    plot_set(masks['tentative'], addlbls=True, **pt_styles['tentative'])
+    plot_set(masks['nondetections'], addlbls=True, **pt_styles['nondetections'])
+    plot_set(masks['unknown'], addlbls=True, **pt_styles['unknown'])
+
+    plt.legend(fontsize='small')
+
+    return fig, ax
+
+date = dbutils.timestamp(date_only=True)
+
+frac_fig, frac_ax = make_detectability_plot('sim safe offset frac w snr > 3', 1e-4)
+frac_ax.set_ylabel('Simulation Detectability Fraction')
+frac_fig.tight_layout()
+frac_fig.savefig(paths.scratch / f'{date} detectability fraction vs lya flux plot.png')
+
+flat_fig, flat_ax = make_detectability_plot('flat transit snr', 0)
+flat_ax.set_ylabel('Simple Flat Transit SNR')
+flat_fig.tight_layout()
+flat_fig.savefig(paths.scratch / f'{date} flat transit SNR vs lya flux plot.png')
+
+
+#%% load in confirmed table
+
+all_confirmed_path = paths.ipac / 'confirmed_uncut.ecsv'
+confirmed = table.Table.read(all_confirmed_path)
+
+
+#%% plot detection fractions on Teq-Rad plot
+
+def make_scatter(skey, scalefunc=None):
+    fig, ax = plt.subplots(1, 1, figsize=slide_size)
+    ax.set_xlabel('Orbital Period (d)')
+    ax.set_ylabel('Radius ($R_\\oplus$)')
+
+
+    s = eval_table[skey]
+    if scalefunc is not None:
+        s = scalefunc(s)
+
+    high_precision = confirmed['pl_radeerr1']/confirmed['pl_rade'] < 0.1
+
+    ax.loglog(
+        confirmed['pl_orbper'][high_precision],
+        confirmed['pl_rade'][high_precision],
+        '.', alpha=0.2, mew=0, color='C5'
+    )
+
+    def plot_set(mask, addlbls=False, **kws):
+        ln = ax.scatter(
+            eval_table['orbital period (d)'][mask],
+            eval_table['radius (Re)'][mask],
+            s=s[mask],
+            **kws
+        )
+        return ln
+
+    plot_set(masks['allpts'], addlbls=False, **pt_styles['allpts'])
+    plot_set(masks['detections'], addlbls=True, **pt_styles['detections'])
+    plot_set(masks['tentative'], addlbls=True, **pt_styles['tentative'])
+    plot_set(masks['nondetections'], addlbls=True, **pt_styles['nondetections'])
+    plot_set(masks['unknown'], addlbls=True, **pt_styles['unknown'])
+
+    ax.set_xlim(0.3, 200)
+    ax.set_ylim(0.3, 30)
+
+    plt.legend(fontsize='small')
+
+    return fig, ax
+
+date = dbutils.timestamp(date_only=True)
+
+def frac_scale(s):
+    s = np.clip(s, 1e-4, np.inf)
+    s = np.cbrt(s)*100
+    return s
+frac_fig_scat, frac_ax_scat = make_scatter('sim safe offset frac w snr > 3', frac_scale)
+frac_ax_scat.set_title('Simulation Detectability Fraction')
+frac_fig_scat.tight_layout()
+frac_fig_scat.savefig(paths.scratch / f'{date} detectability fraction population.png')
+
+def flat_scale(s):
+    s = s*5
+    return s
+flat_fig_scat, flat_ax_scat = make_scatter('flat transit snr', flat_scale)
+flat_ax_scat.set_title('Flat Transit SNR')
+flat_fig_scat.tight_layout()
+flat_fig_scat.savefig(paths.scratch / f'{date} flat transit SNR population.png')
