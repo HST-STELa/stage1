@@ -80,17 +80,22 @@ if for_reals == '':
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
+i_set = 2 # so I can do poor man's multiprocessing and divide into chunks
+
+targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+
+tst_types = ('model', 'flat')
+
+mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
+# mpl.use('qt5agg') # plots are shown
+
 staging_area = paths.packages / '2025-09-26.stage2.eval2.staging_area'
+
+np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
+lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
 
 sigma_threshold = 3
 min_samples = 5**4 # used as a check later to ensure all grid pts of Ethan's sims were sampled
-targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
-
-# mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
-mpl.use('qt5agg') # plots are shown
-np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
-lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
-targets = list(targets)
 
 
 #%% instrument details
@@ -230,7 +235,7 @@ for target in utils.printprogress(targets, prefix='host '):
     host = tutils.Host(target, host_catalog, planet_catalog)
     grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
     for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
-        for tst_type in ('model', 'flat'):
+        for tst_type in tst_types:
             transit = get_transit(planet, host, tst_type)
             get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
             def build_planet_snrs(grating, base_aperture, all_apertures):
@@ -253,7 +258,7 @@ for target in utils.printprogress(targets, prefix='host '):
 for target in tqdm(targets):
     host = tutils.Host(target, host_catalog, planet_catalog)
     for planet in host.planets:
-        for tst_type in ('model', 'flat'):
+        for tst_type in tst_types:
             filenamer = tutils.FileNamer(tst_type, planet, host)
             transit = get_transit(planet, host, tst_type)
             _, get_snr = consrtuct_snr_samplers(host, transit, tst_type)

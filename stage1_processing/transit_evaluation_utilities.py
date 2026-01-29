@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 from astropy import units as u
 from astropy.coordinates import SkyCoord
-from astropy.table import Table, QTable, Row
+from astropy.table import Table, QTable, Row, unique
 import h5py
 import pandas as pd
 
@@ -207,12 +207,23 @@ def read_quality_table(path, header="| Target | Quality Flag |"):
     return Table(rows=data, names=("Target", "Quality Flag"))
 
 
-def best_by_mean_snr(tbl: Table, category_column: str) -> str:
+def best_by_mean_snr(tbl: Table, category_column: str):
     """Pick the category value with the highest mean 'transit sigma' across rows."""
     xunq = np.unique(tbl[category_column])
     means = [np.nanmean(tbl['transit sigma'][tbl[category_column] == x]) for x in xunq]
     return xunq[int(np.nanargmax(means))]
 
+
+def best_by_det_frac(tbl: Table, category_column: str, detection_threshold):
+    """Pick the category value that gives the largest fraction of rows with transit_sigma > snr_threshold."""
+    xunq = np.unique(tbl[category_column])
+    fracs = []
+    for x in xunq:
+        snr_subset = tbl['transit sigma'][tbl[category_column] == x]
+        ntot = len(snr_subset)
+        ndet = np.sum(snr_subset > detection_threshold)
+        fracs.append(ndet / ntot)
+    return xunq[int(np.nanargmax(fracs))]
 
 class Host(object):
     lya_reconstruction : LyaReconstruction
@@ -423,22 +434,25 @@ class DetectabilityDatabase:
 
     def best_offset(self,
                     max_offset: Union[u.Quantity, float] = np.inf,
-                    slctn_fn = best_by_mean_snr):
+                    slctn_fn = best_by_det_frac,
+                    slctn_fn_kws = dict(snr_threshold=3)):
         unique_obs_cases = self.unique_case_combinations(('grating', 'aperture', 'lya reconstruction case'))
         if len(unique_obs_cases) > 1:
             raise ValueError("Best offset doesn't make sense for a table with "
                              "mixed gratings, apertures, or lya cases.")
         mask = self.snrs['time offset'] <= max_offset
         filtered = self.snrs[mask]
-        best_offset = slctn_fn(filtered, 'time offset')
+        best_offset = slctn_fn(filtered, 'time offset', **slctn_fn_kws)
         return best_offset
 
-    def best_aperture(self, slctn_fn=best_by_mean_snr):
+    def best_aperture(self,
+                      slctn_fn=best_by_det_frac,
+                      slctn_fn_kws=dict(snr_threshold=3)):
         unique_obs_cases = self.unique_case_combinations(('grating', 'lya reconstruction case', 'time offset'))
         if len(unique_obs_cases) > 1:
             raise ValueError("Best aperture doesn't make sense for a table with "
                              "mixed gratings, lya cases, or time offsets.")
-        best_ap = slctn_fn(self.snrs, 'aperture')
+        best_ap = slctn_fn(self.snrs, 'aperture', **slctn_fn_kws)
         return best_ap
 
     def detection_fraction(self, snr_threshold):
@@ -455,7 +469,9 @@ class DetectabilityDatabase:
         if grating == 'base':
             grating = self.meta['base grating']
         if aperture == 'best':
-            aperture = self.meta[f'best base grating aperture']
+            aperture = self.meta['best base grating aperture']
+        if aperture == 'base':
+            aperture = self.meta['base aperture']
         config_filters = {
             'grating': grating,
             'aperture': aperture
@@ -477,6 +493,7 @@ class DetectabilityDatabase:
         statlist = []
         for offset in offsets:
             offset_snrs = config_snrs.filtered({'time offset': offset})
+            offset_snrs = offset_snrs.clean_duplicates()
             if len(offset_snrs) < min_sample_check:
                 raise ValueError(f"Num of samples for {grating} {aperture} {offset} case falls short of"
                                  f" user-set limit of {min_sample_check}.")
@@ -495,6 +512,25 @@ class DetectabilityDatabase:
         imed = isort[len(isort) // 2]
         return self.snrs[imed]
 
+    def clean_duplicates(self, keys='all'):
+        if keys == 'all':
+            keys = ['eta',
+                    'mdot_star',
+                    'Tion',
+                    'mass',
+                    'time offset',
+                    'grating',
+                    'aperture',
+                    'lya reconstruction case']
+        temp = unique(self.snrs, keys=keys)
+        return DetectabilityDatabase(temp)
+
+    def trim_to_offset_sampling(self):
+        new = self.filter_obs_config(grating='base', aperture='base')
+        new = new.filtered({'lya reconstruction case': 'median'})
+        new = new.clean_duplicates()
+        return new
+
     @classmethod
     def build_db_with_nested_offset_aperture_exploration(
             cls,
@@ -504,6 +540,7 @@ class DetectabilityDatabase:
             all_apertures: list[str],
             offsets: u.Quantity,
             offset_max_safe: u.Quantity,
+            detection_threshold=3,
             verbose=True,
     ):
         """
@@ -524,19 +561,22 @@ class DetectabilityDatabase:
             [0] # lya case -- 0 = median
         )
 
+        kws_for_best_selectors = dict(slctn_fn=best_by_det_frac,
+                                      slctn_fn_kws=dict(detection_threshold=detection_threshold))
+
         # record best overall offset
-        best_offset = db1.best_offset()
+        best_offset = db1.best_offset(**kws_for_best_selectors)
         db1.meta['best time offset'] = best_offset
 
         # pick offset to use from a smaller "safe" range
-        best_safe_offset = db1.best_offset(offset_max_safe)
+        best_safe_offset = db1.best_offset(offset_max_safe, **kws_for_best_selectors)
         db1.meta['best safe time offset'] = best_safe_offset
 
         # run for all apertures at best safe, pick best aperture, record
         if verbose: print('Finding the best aperture.')
         grating_apertures = [(grating, ap) for ap in all_apertures]
         db2 = snr_computer([best_safe_offset], grating_apertures, [0])
-        aperture = db2.best_aperture()
+        aperture = db2.best_aperture(**kws_for_best_selectors)
         db2.meta[f'best base grating aperture'] = str(aperture)
 
         # run for all lya cases at 0, best_safe, and best offset
@@ -573,6 +613,7 @@ class DetectabilityDatabase:
             'lya reconstruction case': 'median'
         }
         base_db = self.filtered(base_filters)
+        base_db = base_db.clean_duplicates()
         self.meta['best time offset'] = base_db.best_offset()
         self.meta['best safe time offset'] = base_db.best_offset(offset_max_safe)
 

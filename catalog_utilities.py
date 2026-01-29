@@ -2,6 +2,7 @@ import re
 import warnings
 from math import nan
 from contextlib import contextmanager
+from typing import Callable, Iterable, Literal, Sequence, Union
 
 import numpy as np
 from astropy import table, coordinates as coord, time, units as u
@@ -576,3 +577,117 @@ def filter_table(tbl, column_value_dictionary, copy=True):
 def get_row_filled(row, key, fill_value):
     val = row[key]
     return fill_value if np.ma.is_masked(val) else val
+
+
+PickMode = Literal["max", "min"]
+PickModeOrFunc = Union[PickMode, Callable[[np.ndarray], int]]
+def pick_best_rows_by_group(
+    t: table.Table,
+    group_keys: Union[str, Sequence[str]],
+    pick_key: str,
+    mode: PickModeOrFunc = "max",
+    *,
+    tie_breaker_keys: Sequence[str] = (),
+    keep: Literal["first", "last"] = "last",
+) -> table.Table:
+    """
+    Group rows by `group_keys`, then keep exactly one row per group:
+    the row that is "best" according to `pick_key` under `mode`.
+
+    Parameters
+    ----------
+    t
+        Astropy Table or QTable.
+    group_keys
+        Column name (str) or list/tuple of column names used to define groups.
+    pick_key
+        Column used to select the best row within each group.
+    mode
+        - "max": pick row with maximum `pick_key` in each group
+        - "min": pick row with minimum `pick_key` in each group
+        - callable: a function f(values) -> index, where `values` is a 1D numpy
+          array of the group's `pick_key` values, and the return is the *position*
+          within that group's rows (0..n-1) to keep.
+    tie_breaker_keys
+        Optional additional columns used to make the selection deterministic
+        when there are ties in `pick_key`. Applied after sorting by `pick_key`.
+        Example: tie_breaker_keys=("time",) with keep="last" picks the latest time
+        among tied best `pick_key` rows.
+    keep
+        When multiple rows are equally "best" after all sorting/tie-breakers:
+        keep "first" or "last".
+
+    Returns
+    -------
+    Table
+        A new table with one selected row per group.
+
+    Notes
+    -----
+    - This function sorts a copy of the table; original is not modified.
+    - For masked columns, masked values can affect comparisons/sorting; ensure
+      your `pick_key` is well-defined (or handle via a custom callable mode).
+    """
+    if isinstance(group_keys, str):
+        group_keys = (group_keys,)
+    else:
+        group_keys = tuple(group_keys)
+
+    if not group_keys:
+        raise ValueError("group_keys must contain at least one column name.")
+    if pick_key not in t.colnames:
+        raise KeyError(f"pick_key '{pick_key}' not in table columns.")
+    for k in group_keys:
+        if k not in t.colnames:
+            raise KeyError(f"group key '{k}' not in table columns.")
+    for k in tie_breaker_keys:
+        if k not in t.colnames:
+            raise KeyError(f"tie_breaker key '{k}' not in table columns.")
+
+    if callable(mode):
+        # General path: compute per-group indices without relying on sorting
+        # (more flexible, potentially slower).
+        # We preserve original row order within each group as given by Table.groups.
+        tg = t.group_by(list(group_keys))
+        starts = tg.groups.indices[:-1]
+        ends = tg.groups.indices[1:]
+
+        chosen_global = []
+        for s, e in zip(starts, ends):
+            vals = np.asarray(tg[pick_key][s:e])
+            j = int(mode(vals))
+            if j < 0 or j >= (e - s):
+                raise IndexError(
+                    f"Custom mode returned {j}, but group size is {e - s}."
+                )
+            chosen_global.append(s + j)
+
+        return tg[np.array(chosen_global, dtype=int)]
+
+    if mode not in ("max", "min"):
+        raise ValueError("mode must be 'max', 'min', or a callable(values)->index.")
+
+    if keep not in ("first", "last"):
+        raise ValueError("keep must be 'first' or 'last'.")
+
+    # Fast deterministic path via sorting and taking the boundary row in each group.
+    t2 = t.copy()
+    sort_cols = list(group_keys) + [pick_key] + list(tie_breaker_keys)
+
+    # Ascending sort gives max at the end; descending gives min at the end.
+    # Astropy's Table.sort supports reverse=True for global reverse.
+    # We use the trick: for mode='min', reverse=True so the minimum lands last.
+    reverse = (mode == "min")
+    t2.sort(sort_cols, reverse=reverse)
+
+    # Build group identity per row, then pick either last or first row per group.
+    keys_arr = np.array([tuple(row[k] for k in group_keys) for row in t2], dtype=object)
+    if len(t2) == 0:
+        return t2
+
+    if keep == "last":
+        take = np.r_[keys_arr[1:] != keys_arr[:-1], True]
+    else:  # keep == "first"
+        take = np.r_[True, keys_arr[1:] != keys_arr[:-1]]
+
+    return t2[take]

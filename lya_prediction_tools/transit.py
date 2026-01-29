@@ -227,13 +227,18 @@ def flat_transit_transmission(
         time_range: u.Quantity,
         rv_star: u.Quantity,
         rv_range:u.Quantity):
-    timemask = utils.is_in_range(tgrid, *time_range)
-    vgrid = lya.w2v(wgrid.to_value('AA')) * u.km/u.s - rv_star
+
     flat_depth = opaque_tail_depth(planet)
 
+    timemask = utils.is_in_range(tgrid, *time_range)
+    ti = np.flatnonzero(np.asarray(timemask.filled(False), dtype=bool))
+
+    vgrid = lya.w2v(wgrid.to_value('AA')) * u.km / u.s - rv_star
     flat_transit_wavemask = utils.is_in_range(vgrid, *rv_range)
+    wi = np.flatnonzero(np.asarray(flat_transit_wavemask.filled(False), dtype=bool))
+
     flat_transmission = np.ones((len(tgrid), len(wgrid)))
-    flat_transmission[np.ix_(timemask, flat_transit_wavemask)] = 1 - flat_depth
+    flat_transmission[np.ix_(ti, wi)] = 1 - flat_depth
 
     return flat_transmission, flat_depth
 

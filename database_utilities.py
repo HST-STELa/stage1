@@ -562,3 +562,4 @@ def timestamp(date_only=False):
         return date
     else:
         return now_no_colons
+
