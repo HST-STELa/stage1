@@ -68,7 +68,7 @@ def combine(newcat, oldcat, cols):
 
 #%%
 cols = 'pl_name Flya_earth_no_ISM transit_snr_nominal stage1 stage1_rank decision'.split()
-root = Path('/Users/parke/Repos/STELa/stage1/target_selection_data/intermediates')
+root = Path('/target_selection_data/intermediates')
 
 
 for i in range(1,9):
