@@ -432,6 +432,10 @@ def generic_transit_snr(
 
             fbln = ax.errorbar(vspec, fb, eb, errorevery=5, label='baseline')
             ftln = ax.errorbar(vspec, ft, et, fmt='-C2', errorevery=5, label='transit')
+            scalefac = np.max(fb)/np.max(d)/2
+            ds, dse = d*scalefac, de*scalefac
+            dln, = ax.plot(vspec, ds, '-C1', label=f'diff $\\times$ {scalefac:.1f}')
+            ax.errorbar(vspec, ds, dse, fmt='none', color='C1', elinewidth=0.5, alpha=0.5)
             ag, = ax.plot(vspec, et, ':C3', label='uncty with airglow')
 
             transit_vgrid = lya.w2v(transit_wavegrid) - rv_star.to_value('km s-1')
@@ -451,7 +455,7 @@ def generic_transit_snr(
             for rng in v_absp:
                 aspan = ax.axvspan(*rng, color='C2', alpha=0.2, ls='none', label='transit')
 
-            ax.legend(handles=(fbln, ftln, ag, nspan, aspan))
+            ax.legend(handles=(fbln, ftln, dln, ag, nspan, aspan))
             ax2.legend(handles=(tln,))
             wavefigs.append(fig)
             # endregion

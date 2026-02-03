@@ -25,6 +25,7 @@ from lya_prediction_tools import lya
 
 #%% settings
 
+pass
 # make a copy of this script in the script_runs folder with the date (and a label, if needed)
 # then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
 # changes or one-off mods to the script.
@@ -214,97 +215,127 @@ for case in cases:
     sig = np.median(temp['transit sigma'])
     print(f'{case}: {sig:.3f}')
 
+"""okay weird. snr decreases from 0 to 1 sig for both cleaned and full snr table.
+looking at "max snr" plot, it seems weird, and its different than when I made 
+plots based on Ava's results. going to try rerunning with an old version of transit.py"""
 
-#%% lightcurve comparison
+#%% reprocess det vol
 
-"""
-just making a note here that to do the lightcurve comparison I had to checkout old commits
-for both the database and codebase so that I could load up and plot the pre-bugfix sim
-so it doesn't lend itself to a nice clean script. hence no saved script for that.
-"""
-
-
-#%% load snr db for 10 h offset
-
-snr_db = load_snr_db(planet, host, 'model')
-snrs_10 = snr_db.filtered({'time offset': 10 * u.h})
-snrs_10.snrs = table.QTable(snrs_10.snrs)
-
-
-#%% corner plot for 10 h offset
-
-labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],log10(M_planet)\n[Mearth]'.split(',')
-
-# construct parameter vectors
-lTion = snrs_10['Tion'].quantity.to_value('dex(h)')
-lMdot = snrs_10['mdot_star'].quantity.to_value('dex(g s-1)')
-leta = np.log10(snrs_10['eta'].data)
-lMp = snrs_10['mass'].quantity.to_value('dex(Mearth)')
-lya_sigma = [tutils.LyaReconstruction.lbl2sig[lbl] for lbl in snrs_10['lya reconstruction case']]
-param_vecs = [leta, lTion, lMdot, lMp]
-
-snr_vec = snrs_10['transit sigma']
-
-cfig, _ = pu.detection_volume_corner(param_vecs, snr_vec, snr_threshold=sigma_threshold, labels=labels)
-cfig.suptitle(planet.dbname)
-# utils.save_pdf_png(cfig, host.transit_folder / filenamer.det_vol_corner_basename)
-
-cfig, _ = pu.median_snr_corner(param_vecs, snr_vec, labels=labels)
-cfig.suptitle(planet.dbname)
-# utils.save_pdf_png(cfig, host.transit_folder / filenamer.mdn_snr_corner_basename)
-pass
-
-
-#%% diagnostic plot for best case 10 h offset
+"""here I checked out the 12/15 revision of transit.py"""
 
 tst_type = 'model'
+grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
+transit = get_transit(planet, host, tst_type)
+get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
+build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
+
+
+def build_planet_snrs(grating, base_aperture, all_apertures):
+    snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
+                      offsets, max_safe_offset, verbose=True)
+    return snrs
+
+
+snrs = build_planet_snrs(grating, base_aperture, all_apertures)
+# optionally add COS
+if consider_cos:
+    cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
+    cos_snrs.snrs.meta = {}
+    snrs += cos_snrs
+
+snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
+
+
+#%% diagnostics
+
+filenamer = tutils.FileNamer(tst_type, planet, host)
 transit = get_transit(planet, host, tst_type)
 _, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
+best_snrs = load_best_snrs(planet, host, tst_type)
+best_snrs.snrs = table.QTable(best_snrs.snrs)
 
-case_snr_row = snrs_10.best_case()
-viewcols = [
-    'transit sigma',
-    'eta',
-    'mdot_star',
-    'Tion',
-    'mass',
-    'time offset',
-    'grating',
-    'aperture',
-    'lya reconstruction case'
-]
-case_snr_row[viewcols]
+label_case_pairs = [('median', best_snrs.median_case())]
+if tst_type == 'model':
+    label_case_pairs.append(('max', best_snrs.best_case()))
+for label, case_snr_row in label_case_pairs:
+    wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
+    tutils.save_diagnostic_plots(wfig, tfig, 'max', host, filenamer)
 
-keycols = [
-    'eta',
-    'mdot_star',
-    'Tion',
-    'mass'
-]
-tt = transit.loc_transmission(**dict(case_snr_row[keycols]), rtol=0.01)
-v = lya.w2v(transit.wavegrid) - host.params['st_radv'].to_value('km s-1')
-# by inspecting the later plot I see the integration band spans -95–-45
-# so I just found the corresponding range of indices
-plt.figure()
-plt.plot(transit.timegrid, tt[:,53:77], color='C0', alpha=0.3)
-plt.xlabel('time')
+"""well, I get the same thing with the old transit.py as the new one. I'm a little suspicious of the integration range
+the code is using. It seems to be leaving out the peak of the line, maybe in favor or deeper transit where
+ flux is lower, but still seems odd. going to dive into hd 63433 c. """
 
+#%% diagnostics for hd 63433 c, gj436 b, whatever else I want
+
+target = 'toi-776'
+host = tutils.Host(target, host_catalog, planet_catalog)
+planet = host.planets[1]
+planet.sim_letter
+
+transit = get_transit(planet, host, tst_type)
+_, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
+best_snrs = load_best_snrs(planet, host, tst_type)
+best_snrs.snrs = table.QTable(best_snrs.snrs)
+
+case_snr_row = best_snrs.best_case()
 wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
-# tutils.save_diagnostic_plots(wfig, tfig, 'max', host, filenamer)
-pass
 
-#%% diagnostic plots for other offset, otherwise same params
 
-from copy import copy
-off_row = copy(case_snr_row)
+"""
+hmmm well plotting the difference line has me convinced the range picker is actually doing a good job.
+the error bars are growing in regions it excludes
 
-for offset in [0, 2, 5, 10]:
-    # snrs_off = snr_db.filtered({'time offset': offset * u.h})
-    # snrs_off.snrs = table.QTable(snrs_off.snrs)
-    off_row['time offset'] = offset*u.h
-    wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, off_row)
-    offlbl = f'time offset = {offset} h'
-    wfig.suptitle(offlbl)
-    tfig.suptitle(offlbl)
-    wfig.savefig(scratchfolder / f'diagnostic spectrum {offlbl}.png', dpi=300)
-    tfig.savefig(scratchfolder / f'diagnostic lightcurve {offlbl}.png', dpi=300)
+so... back to figureing out why the snr drops with increasing lya for gj 436
+"""
+
+#%% back to gj 436
+
+target = 'gj436'
+host = tutils.Host(target, host_catalog, planet_catalog)
+planet = host.planets[0]
+transit = get_transit(planet, host, 'model')
+snr_db = load_snr_db(planet, host, 'model')
+best_snrs = load_best_snrs(planet, host, 'model')
+best_snrs = best_snrs.clean_duplicates()
+
+
+#%% pick and plot best snr case for gj436 with differing lya
+
+_, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
+lya0snrs = best_snrs.filtered({'lya reconstruction case':'median'})
+lya1snrs = best_snrs.filtered({'lya reconstruction case':'high_1sig'})
+
+np.median(lya0snrs['transit sigma'])
+np.median(lya1snrs['transit sigma'])
+np.max(lya1snrs['transit sigma'])
+np.max(lya0snrs['transit sigma'])
+"""
+interesting, the max values are higher for higher lya. makes me think this is maybe a fluke.
+
+I'll compute difference in sigma for same cases and try to plot the biggest one.
+"""
+
+sortcols = 'eta Tion mdot_star mass'.split()
+lya0snrs.snrs.sort(sortcols)
+lya1snrs.snrs.sort(sortcols)
+
+diff = lya1snrs['transit sigma'] - lya0snrs['transit sigma']
+iworst = np.argmin(diff)
+
+case_snr_row = lya0snrs[iworst]
+wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
+wfig.suptitle('median lya')
+tfig.suptitle('median lya')
+
+case_snr_row = lya1snrs[iworst]
+wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
+wfig.suptitle('+1sig lya')
+tfig.suptitle('+1sig lya')
+
+"""
+okay, this seems like a fluke. for the median case the code picks only one hump of lya
+whereas for the +1 sig case it is picking both, and this seems to drop the sigma slightly
+probably a result of when variability gets added in, so I'm not going to worry about it further since
+it is so slight
+"""
+

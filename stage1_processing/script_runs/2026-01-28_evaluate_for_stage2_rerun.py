@@ -163,6 +163,7 @@ def load_snr_db(planet, host, tst_type: Literal['model', 'flat']):
 def load_best_snrs(planet, host, tst_type: Literal['model', 'flat']):
     snrs = load_snr_db(planet, host, tst_type)
     best_snrs = snrs.filter_obs_config(aperture='best', offset='best safe')
+    best_snrs = best_snrs.clean_duplicates()
     return best_snrs
 
 def get_lya_flux(host):
@@ -221,6 +222,7 @@ for target in utils.printprogress(targets, prefix='host '):
 
             snrs = build_planet_snrs(grating, base_aperture, all_apertures)
             # optionally add COS
+            snrs.meta['COS considered'] = consider_cos
             if consider_cos:
                 cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
                 cos_snrs.snrs.meta = {}
@@ -228,6 +230,12 @@ for target in utils.printprogress(targets, prefix='host '):
 
             snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
 
+
+
+#%% now run remainder for all targets
+
+targets_all = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+targets = list(targets_all)
 
 #%% make diagnostic plots
 
@@ -280,3 +288,230 @@ for target in tqdm(targets):
         utils.save_pdf_png(cfig, host.transit_folder / filenamer.mdn_snr_corner_basename)
 
         plt.close('all')
+
+
+
+#%% match in catalog of flags in case any were left out of staging area catalog
+
+with catutils.catch_QTable_unit_warnings():
+    planet_catalog_current = preloads.planets.copy()
+    newflags = [name for name in planet_catalog_current.colnames if 'flag_' in name and name not in planet_catalog.colnames]
+    planetcols_for_joining = planet_catalog_current[['id'] + newflags]
+    planet_catalog = table.join(planet_catalog, planetcols_for_joining, keys='id', join_type='left')
+
+planet_catalog.add_index('tic_id')
+
+#%% assemble table of properties
+
+lya_bins = (-150, -50, 50, 150) * u.km / u.s
+
+eval_rows = []
+targets = sorted(targets)
+for target in tqdm(targets):
+    host = tutils.Host(target, host_catalog, planet_catalog)
+    for planet in host.planets:
+        # add entries to the row in the order they should appear in the table
+        row = {}
+
+        row['hostname'] = host.hostname
+        row['planet'] = planet.stela_suffix
+
+        # region model snrs
+        snr_db = load_snr_db(planet, host, 'model')
+        slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5 ** 4)
+
+        row['best safe\ntransit offset'] = slctd_offsets[1]
+        row['best overall\ntransit offset'] = slctd_offsets[2]
+
+        off_lbls = ['no', 'safe', 'best']
+        stat_sets = zip(det_fracs, max_snrs, off_lbls)
+        for det_frac, max_snr, off_lbl in stat_sets:
+            row[f'sim {off_lbl} offset \nmax snr'] = max_snr
+            row[f'sim {off_lbl} offset \nfrac w snr > {sigma_threshold}'] = det_frac
+
+        row['sim\nbest aperture'] = snr_db.meta['best base grating aperture']
+
+        cos = 'g130m' in snr_db['grating']
+        row['COS\nconsidered?'] = cos
+        if cos:
+            cos_snrs = snr_db.filter_obs_config(grating='g130m', aperture='psa', offset='best safe')
+            cos_snrs = cos_snrs.clean_duplicates()
+            cosfrac, maxcossnr = cos_snrs.det_frac_and_max_snr(sigma_threshold)
+            row['sim COS safe offset\nmax snr'] = maxcossnr
+            row[f'sim COS safe offset\nfrac w snr > {sigma_threshold}'] = cosfrac
+            if det_fracs[1] > 0:
+                row['cos det\nfrac ratio'] = cosfrac / det_fracs[1]
+            row['cos snr\nratio'] = maxcossnr / max_snrs[1]
+        # endregion
+
+        # region flat transit
+        # load snr table
+        snr_db_flat = load_snr_db(planet, host, 'flat')
+        snr_db_flat = snr_db_flat.filter_obs_config(aperture='best', offset='best safe')
+        snr_db_flat = snr_db_flat.clean_duplicates()
+        flat_snr = snr_db_flat.median_case()['transit sigma']
+        row['flat transit\nsnr'] = flat_snr
+        row['flat transit\nbest aperture'] = snr_db_flat.meta['best base grating aperture']
+        # endregion
+
+        Flya = get_lya_flux(host)
+        row['Lya Flux\n(erg s-1 cm-2)'] = Flya
+
+        Mp = planet.params['pl_bmasse'].to_value('Mearth')
+        Mp_err = 0.5 * (planet.params['pl_bmasseerr1']
+                        - planet.params['pl_bmasseerr2'])
+        Mp_prec = Mp_err / Mp
+        if not np.isfinite(Mp_prec) or Mp_prec == 0:
+            Mp_prec = np.ma.masked
+        row['mass (Me)'] = Mp
+        row['mass\nprecision'] = Mp_prec
+        if planet.params['pl_bmassesrc'] == 'inferred from Rp':
+            mass_source = 'M-R relationship'
+        else:
+            mass_source_rename = {'Mass': 'known', 'M-R relationship': 'M-R relationship'}
+            mass_source = str(planet.params['pl_bmassprov'])
+            mass_source = mass_source_rename[mass_source]
+        row['mass\nsource'] = mass_source
+        mass_flag = np.ma.masked
+        if planet.params['pl_rade'] > 7 * u.Rearth:
+            mass_flag = 'giant'
+        if planet.params['flag_young']:
+            mass_flag = 'young'
+        row['mass\nflag'] = mass_flag
+
+        row['radius (Re)'] = planet.params['pl_rade'].to_value('Rearth')
+        row['orbital\nperiod (d)'] = planet.params['pl_orbper'].to_value('d')
+        row['stellar\neff temp (K)'] = host.params['st_teff'].to_value('K')
+        age = host.params['st_age'].to_value('Gyr')
+        if not np.ma.is_masked(age):
+            agelim_int = host.params['st_agelim']
+            if not np.ma.is_masked(agelim_int):
+                row['age\nlimit'] = catutils.limit_int2str[agelim_int]
+            row['age (Gyr)'] = host.params['st_age'].to_value('Gyr')
+
+        row['obsvtn\ngrating'] = host.anticipated_grating
+
+        flag_cols = [name for name in planet_catalog.colnames if 'flag_' in name]
+        for col in flag_cols:
+            row[col] = planet.params[col]
+
+        transit = tutils.get_transit_from_simulation(host, planet)
+        row['H ionztn\ntime (h)'] = np.median(transit.params['Tion']).to_value('h')
+
+        eval_rows.append(row)
+
+# get column ordering from longest row
+imax = np.argmax([len(row) for row in eval_rows])
+ordered_cols = list(eval_rows[imax].keys())
+
+eval_table = Table(rows=eval_rows)
+eval_table = eval_table[ordered_cols]
+
+eval_table['TIC'] = preloads.stela_names.loc['hostname', eval_table['hostname']]['tic_id']
+
+# some grooming
+for col in eval_table.colnames:
+    if 'flag_' in col:
+        eval_table[col] = eval_table[col].astype(bool)
+formats_general = {
+    'period': '.1f',
+    'frac w': '.3f',
+    'max snr': '.2f',
+    'ratio': '.2f',
+    'flux': '.1e',
+    'radius': '.2f',
+    'temp': '.0f',
+    'ionztn': '.2f'
+}
+formats = {}
+for substr, fmt in formats_general.items():
+    for name in eval_table.colnames:
+        if substr in name.lower():
+            eval_table[name].format = fmt
+            formats[name] = fmt
+
+#%% match in the catalog of escape detections
+
+escape_detections = catutils.escape_catalog_merge_targets('download')
+
+det_ids = np.char.add(escape_detections['Target Star'], escape_detections['Planet Letter'])
+pcat_ids = np.char.add(planet_catalog_current['hostname'].astype(str),
+                       dbutils.planet_suffixes(planet_catalog_current).astype(str))
+eval_ids = np.char.add(eval_table['hostname'], eval_table['planet'])
+
+# check to be sure names in escape detections match into planet catalog
+suspect = ~np.isin(det_ids, pcat_ids)
+if np.any(suspect):
+    print("These names don't have a match in the planet catalog."
+          "(Note this could be do to cuts to planet catalog, such as requiring < 100 d periods (e.g., HD 136352d).)")
+    print(det_ids[suspect])
+
+# match using name + letter
+det_colnames = [name for name in escape_detections.colnames if 'detected' in name.lower()]
+det_slim = escape_detections[det_colnames]
+det_slim['temp'] = det_ids
+eval_table['temp'] = eval_ids
+eval_table = table.join(eval_table, det_slim, keys='temp', join_type='left')
+eval_table.remove_column('temp')
+
+#%% match in requested targets
+
+files = list(paths.stage2_requests.glob('*.txt'))
+path_check_table, = paths.selection_intermediates.glob('*pt1*.ecsv')
+check_table = catutils.load_and_mask_ecsv(path_check_table)
+
+
+def any_tois(planet_names):
+    for name in planet_names:
+        x = re.findall(r'TOI-\d+\.0\d', name)
+        if x:
+            return True
+    return False
+
+
+eval_table['TICletter'] = np.char.add(  # temporary column for matchin
+    eval_table['TIC'].astype(str),
+    eval_table['planet']
+)
+check_table['TICletter'] = np.char.add(  # temporary column for matching
+    check_table['tic_id'].astype(str),
+    check_table['pl_letter'].astype(str).filled('')
+)
+for file in files:
+    requested_planets = catutils.read_requested_targets(file)
+    if any_tois(requested_planets):
+        raise NotImplementedError
+
+    # match with TIC to ensure avoid misses
+    hosts_letters = list(map(dbutils.split_hostname_planet_letter, requested_planets))
+    hosts, letters = zip(*hosts_letters)
+    tics = dbutils.query.query_simbad_for_tic_ids(hosts)
+    tics_letters = np.char.add(tics, letters)
+
+    # mark matches in a "requested" column
+    request_name = 'requested\n' + requested_planets.name
+    eval_table[request_name] = np.isin(eval_table['TICletter'], tics_letters)
+
+    # print requested targets with no match in STELa tables
+    not_in_list = ~np.isin(tics_letters, check_table['TICletter'])
+    if np.any(not_in_list):
+        print(f'\n{requested_planets.name} planets not matched to any planet known to STELa:')
+        for name in requested_planets[not_in_list]:
+            print(f'\n\t{name}')
+        print('Consider checking that they are correctly named in the requested list txt file.')
+
+eval_table.remove_column('TICletter')
+
+#%% save table
+
+# save csv to open in spreadsheet viewers
+eval_filename = 'stage2_evaluation_metrics.csv'
+eval_path = paths.catalogs / eval_filename
+eval_table.write(eval_path, overwrite=True, formats=formats, fast_writer=False)
+
+# save as an ecsv too for round tripping
+eval_table_ecsv = eval_table.copy()
+for name in eval_table_ecsv.colnames:
+    eval_table_ecsv.rename_column(name, name.replace('\n', ' ').replace('  ', ' '))
+eval_path_ecsv = paths.catalogs / eval_filename.replace('csv', 'ecsv')
+eval_table_ecsv.write(eval_path_ecsv, overwrite=True)

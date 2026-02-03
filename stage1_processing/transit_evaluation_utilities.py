@@ -1,3 +1,4 @@
+import re
 import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -351,6 +352,7 @@ class Planet(object):
         self.optical_transit_duration = planet_row['pl_trandur']
         self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 30 * u.h))  # long egress for tails
         self.dbname = f'{host_dbname}-{self.stela_suffix}'
+        self.sim_name = f'{host_dbname}{self.sim_letter}'
 
 @dataclass
 class TransitModelSet:
@@ -514,14 +516,11 @@ class DetectabilityDatabase:
 
     def clean_duplicates(self, keys='all'):
         if keys == 'all':
-            keys = ['eta',
-                    'mdot_star',
-                    'Tion',
-                    'mass',
-                    'time offset',
-                    'grating',
-                    'aperture',
-                    'lya reconstruction case']
+            keys = []
+            for name in self.snrs.colnames:
+                match = re.match('(transit|normaliz)', name)
+                if not match:
+                    keys.append(name)
         temp = unique(self.snrs, keys=keys)
         return DetectabilityDatabase(temp)
 
@@ -585,6 +584,7 @@ class DetectabilityDatabase:
         db3 = snr_computer([0 * u.h, best_safe_offset, best_offset], [(grating, aperture)], cases)
 
         db = db1 + db2 + db3
+        db = db.clean_duplicates()
 
         db.meta['base grating'] = grating
         db.meta['base aperture'] = baseline_aperture

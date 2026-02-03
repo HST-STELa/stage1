@@ -26,51 +26,6 @@ from lya_prediction_tools import stis
 from lya_prediction_tools import lya
 
 
-#%% occasional use: move model transit spectra into target folders
-
-models_inbox = paths.inbox / '2025-11-17 transit predictions'
-
-files = list(models_inbox.glob('*.h5'))
-
-odd_names = {
-    'aumic': 'au-mic',
-    'dstuca': 'ds-tuc-a',
-}
-def parse_ethan_targname(file):
-    name = file.name
-    name = name.replace('.h5', '')
-    if re.findall(r'0\d$', name): # name ends in a number, so planet must be a 2-digit number
-        targname = name[:-2]
-        suffix = name[-2:]
-    else:
-        targname = name[:-1]
-        suffix = name[-1:]
-    targname = odd_names.get(targname, targname)
-    return targname, suffix
-
-names_planets = [parse_ethan_targname(file) for file in files]
-targnames_ethan, planet_suffixes = zip(*names_planets)
-targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
-targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
-
-def move_files(dry_run=True):
-    for targname, planet, file in zip(targnames_file, planet_suffixes, files):
-        newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
-        newfolder = paths.target_data(targname) / 'transit predictions'
-
-        if dry_run:
-            print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
-        else:
-            if not newfolder.exists():
-                os.mkdir(newfolder)
-            sh.copy(file, newfolder / newname)
-
-move_files(dry_run=True)
-for_reals = input('\nProceed with copying the files? (enter/n)')
-if for_reals == '':
-    move_files(dry_run=False)
-
-
 #%% settings
 
 # make a copy of this script in the script_runs folder with the date (and a label, if needed)
@@ -92,7 +47,7 @@ staging_area = paths.packages / '2025-09-26.stage2.eval2.staging_area'
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
 
-sigma_threshold = 3
+sigma_threshold = 1
 min_samples = 5**4 # used as a check later to ensure all grid pts of Ethan's sims were sampled
 
 
@@ -155,7 +110,6 @@ with catutils.catch_QTable_unit_warnings():
     planet_catalog = table.QTable(planet_catalog)
     host_catalog = catutils.planets2hosts(planet_catalog)
     planet_catalog.add_index('tic_id')
-    host_catalog = table.QTable.read(staging_area / 'host_catalog.ecsv')
     host_catalog.add_index('tic_id')
 
 
@@ -226,87 +180,6 @@ def consrtuct_snr_samplers(host, transit, tst_type):
     return get_snr_iterable, get_snr_single
 
 
-#%% loop through planets of all hosts to compute transit sigmas
-
-build_snrs = tutils.DetectabilityDatabase.build_db_with_nested_offset_aperture_exploration
-
-for target in utils.printprogress(targets, prefix='host '):
-    host = tutils.Host(target, host_catalog, planet_catalog)
-    grating, base_aperture, all_apertures, consider_cos = get_obs_config_info(host)
-    for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
-        for tst_type in tst_types:
-            transit = get_transit(planet, host, tst_type)
-            get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
-            def build_planet_snrs(grating, base_aperture, all_apertures):
-                snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
-                                  offsets, max_safe_offset, verbose=True)
-                return snrs
-
-            snrs = build_planet_snrs(grating, base_aperture, all_apertures)
-            # optionally add COS
-            snrs.meta['COS considered'] = consider_cos
-            if consider_cos:
-                cos_snrs = build_planet_snrs('g130m', 'psa', ['psa'])
-                cos_snrs.snrs.meta = {}
-                snrs += cos_snrs
-
-            snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
-
-
-#%% make diagnostic plots
-
-for target in tqdm(targets):
-    host = tutils.Host(target, host_catalog, planet_catalog)
-    for planet in host.planets:
-        for tst_type in tst_types:
-            filenamer = tutils.FileNamer(tst_type, planet, host)
-            transit = get_transit(planet, host, tst_type)
-            _, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
-            best_snrs = load_best_snrs(planet, host, tst_type)
-            best_snrs.snrs = table.QTable(best_snrs.snrs)
-
-            label_case_pairs = [('median', best_snrs.median_case())]
-            if tst_type == 'model':
-                label_case_pairs.append(('max', best_snrs.best_case()))
-            for label, case_snr_row in label_case_pairs:
-                wfig, tfig = tutils.make_diagnostic_plots(planet, transit, get_snr, case_snr_row)
-                tutils.save_diagnostic_plots(wfig, tfig, 'max', host, filenamer)
-
-            plt.close('all')
-
-
-#%% make corner plots
-
-labels = 'log10(eta),log10(T_ion)\n[h],log10(Mdot_star)\n[g s-1],log10(M_planet)\n[Mearth],σ_Lya'.split(',')
-
-for target in tqdm(targets):
-    host = tutils.Host(target, host_catalog, planet_catalog)
-    for planet in host.planets:
-        best_snrs = load_best_snrs(planet, host,'model')
-        filenamer = tutils.FileNamer('model', planet, host)
-
-        # construct parameter vectors
-        lTion = best_snrs['Tion'].quantity.to_value('dex(h)')
-        lMdot = best_snrs['mdot_star'].quantity.to_value('dex(g s-1)')
-        leta = np.log10(best_snrs['eta'].data)
-        lMp = best_snrs['mass'].quantity.to_value('dex(Mearth)')
-        lya_sigma = [tutils.LyaReconstruction.lbl2sig[lbl] for lbl in best_snrs['lya reconstruction case']]
-        param_vecs = [leta, lTion, lMdot, lMp, lya_sigma]
-
-        snr_vec = best_snrs['transit sigma']
-
-        cfig, _ = pu.detection_volume_corner(param_vecs, snr_vec, snr_threshold=sigma_threshold, labels=labels)
-        cfig.suptitle(planet.dbname)
-        utils.save_pdf_png(cfig, host.transit_folder / filenamer.det_vol_corner_basename)
-
-        cfig, _ = pu.median_snr_corner(param_vecs, snr_vec, labels=labels)
-        cfig.suptitle(planet.dbname)
-        utils.save_pdf_png(cfig, host.transit_folder / filenamer.mdn_snr_corner_basename)
-
-        plt.close('all')
-
-
-
 #%% match in catalog of flags in case any were left out of staging area catalog
 
 with catutils.catch_QTable_unit_warnings():
@@ -347,7 +220,7 @@ for target in tqdm(targets):
 
         row['sim\nbest aperture'] = snr_db.meta['best base grating aperture']
 
-        cos = snr_db.meta['COS considered']
+        cos = 'g130m' in snr_db['grating']
         row['COS\nconsidered?'] = cos
         if cos:
             cos_snrs = snr_db.filter_obs_config(grating='g130m', aperture='psa', offset='best safe')

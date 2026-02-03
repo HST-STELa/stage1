@@ -25,10 +25,9 @@ from stage1_processing import transit_evaluation_utilities as tutils
 from lya_prediction_tools import stis
 from lya_prediction_tools import lya
 
+#%% get names of targets in Ethan's new sims
 
-#%% occasional use: move model transit spectra into target folders
-
-models_inbox = paths.inbox / '2025-11-17 transit predictions'
+models_inbox = paths.inbox / '2026-01-28 transit predictions high velocity wind'
 
 files = list(models_inbox.glob('*.h5'))
 
@@ -52,26 +51,31 @@ names_planets = [parse_ethan_targname(file) for file in files]
 targnames_ethan, planet_suffixes = zip(*names_planets)
 targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
 targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
-
-def move_files(dry_run=True):
-    for targname, planet, file in zip(targnames_file, planet_suffixes, files):
-        newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
-        newfolder = paths.target_data(targname) / 'transit predictions'
-
-        if dry_run:
-            print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
-        else:
-            if not newfolder.exists():
-                os.mkdir(newfolder)
-            sh.copy(file, newfolder / newname)
-
-move_files(dry_run=True)
-for_reals = input('\nProceed with copying the files? (enter/n)')
-if for_reals == '':
-    move_files(dry_run=False)
+targets_hiv = sorted(list(set(targnames_file)))
 
 
-#%% settings
+#%% copy model files
+
+pass
+# def move_files(dry_run=True):
+#     for targname, planet, file in zip(targnames_file, planet_suffixes, files):
+#         newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
+#         newfolder = paths.target_data(targname) / 'transit predictions'
+#
+#         if dry_run:
+#             print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
+#         else:
+#             if not newfolder.exists():
+#                 os.mkdir(newfolder)
+#             sh.copy(file, newfolder / newname)
+#
+# move_files(dry_run=True)
+# for_reals = input('\nProceed with copying the files? (enter/n)')
+# if for_reals == '':
+#     move_files(dry_run=False)
+pass
+
+#%% set
 
 # make a copy of this script in the script_runs folder with the date (and a label, if needed)
 # then run that sript. This avoids constant merge conflicts in the Git repo for things like settings
@@ -80,9 +84,34 @@ if for_reals == '':
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = set(target_lists.eval_no(1)) | set(target_lists.eval_no(2)) - {'v1298tau'}
+n_sets = 4
+i_set = 3 # so I can do poor man's multiprocessing and divide into chunks
 
-tst_types = ('model', 'flat')
+
+#%% filter out those already run
+
+files = snr_files = list(paths.data_targets.rglob('*tail-model*sigmas*.ecsv'))
+from datetime import datetime
+threshold_date = datetime(2026, 1, 29, 15)
+
+newfiles = []
+for f in files:
+    modtime = f.stat().st_mtime
+    modtime = datetime.fromtimestamp(modtime)
+
+    if modtime > threshold_date:
+        newfiles.append(f)
+targets_run = [f.name.split('.')[0] for f in newfiles]
+targets_run = [dbutils.split_hostname_planet_letter(tgt, '-')[0] for tgt in targets_run]
+targets_run = set(targets_run)
+
+targets_to_run = sorted(list(set(targets_hiv) - set(targets_run)))
+target_sets = np.array_split(list(targets_to_run), n_sets)
+targets = target_sets[i_set]
+
+#%% other settings
+
+tst_types = ('model',)
 
 mpl.use('Agg') # plots in the background so new windows don't constantly interrupt my typing
 # mpl.use('qt5agg') # plots are shown
@@ -155,7 +184,6 @@ with catutils.catch_QTable_unit_warnings():
     planet_catalog = table.QTable(planet_catalog)
     host_catalog = catutils.planets2hosts(planet_catalog)
     planet_catalog.add_index('tic_id')
-    host_catalog = table.QTable.read(staging_area / 'host_catalog.ecsv')
     host_catalog.add_index('tic_id')
 
 
@@ -163,7 +191,13 @@ with catutils.catch_QTable_unit_warnings():
 
 def get_transit(planet, host, tst_type: Literal['model', 'flat']):
     if tst_type == 'model':
-        return tutils.get_transit_from_simulation(host, planet)
+        files = list(models_inbox.glob(f'{planet.sim_name}*.h5'))
+        if len(files) == 1:
+            return tutils.get_transit_from_simulation(host, planet)
+        if len(files) > 1:
+            raise ValueError
+        else:
+            return None
     elif tst_type == 'flat':
         transit_flat = tutils.construct_flat_transit(
             planet, host, obstimes, exptimes,
@@ -236,6 +270,9 @@ for target in utils.printprogress(targets, prefix='host '):
     for planet in utils.printprogress(host.planets, 'dbname', prefix='\tplanet '):
         for tst_type in tst_types:
             transit = get_transit(planet, host, tst_type)
+            if transit is None:
+                print(f'Skipping {planet.dbname} bc no new sim file.')
+                continue
             get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
             def build_planet_snrs(grating, base_aperture, all_apertures):
                 snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
@@ -253,6 +290,10 @@ for target in utils.printprogress(targets, prefix='host '):
             snrs.write(path_snrs(planet, host, tst_type), overwrite=True)
 
 
+#%% now run remainder for all targets
+
+targets = sorted(list(targets_hiv))
+
 #%% make diagnostic plots
 
 for target in tqdm(targets):
@@ -261,6 +302,8 @@ for target in tqdm(targets):
         for tst_type in tst_types:
             filenamer = tutils.FileNamer(tst_type, planet, host)
             transit = get_transit(planet, host, tst_type)
+            if transit is None:
+                continue
             _, get_snr = consrtuct_snr_samplers(host, transit, tst_type)
             best_snrs = load_best_snrs(planet, host, tst_type)
             best_snrs.snrs = table.QTable(best_snrs.snrs)
@@ -319,22 +362,26 @@ planet_catalog.add_index('tic_id')
 
 #%% assemble table of properties
 
-lya_bins = (-150, -50, 50, 150) * u.km/u.s
+lya_bins = (-150, -50, 50, 150) * u.km / u.s
 
 eval_rows = []
 targets = sorted(targets)
 for target in tqdm(targets):
     host = tutils.Host(target, host_catalog, planet_catalog)
     for planet in host.planets:
+        transit = tutils.get_transit_from_simulation(host, planet)
+        if transit is None:
+            continue
+
         # add entries to the row in the order they should appear in the table
         row = {}
-        
+
         row['hostname'] = host.hostname
         row['planet'] = planet.stela_suffix
 
         # region model snrs
         snr_db = load_snr_db(planet, host, 'model')
-        slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5**4)
+        slctd_offsets, det_fracs, max_snrs = snr_db.offset_stats(sigma_threshold, min_sample_check=5 ** 4)
 
         row['best safe\ntransit offset'] = slctd_offsets[1]
         row['best overall\ntransit offset'] = slctd_offsets[2]
@@ -347,7 +394,7 @@ for target in tqdm(targets):
 
         row['sim\nbest aperture'] = snr_db.meta['best base grating aperture']
 
-        cos = snr_db.meta['COS considered']
+        cos = 'g130m' in snr_db['grating']
         row['COS\nconsidered?'] = cos
         if cos:
             cos_snrs = snr_db.filter_obs_config(grating='g130m', aperture='psa', offset='best safe')
@@ -356,8 +403,8 @@ for target in tqdm(targets):
             row['sim COS safe offset\nmax snr'] = maxcossnr
             row[f'sim COS safe offset\nfrac w snr > {sigma_threshold}'] = cosfrac
             if det_fracs[1] > 0:
-                row['cos det\nfrac ratio'] = cosfrac/det_fracs[1]
-            row['cos snr\nratio'] = maxcossnr/max_snrs[1]
+                row['cos det\nfrac ratio'] = cosfrac / det_fracs[1]
+            row['cos snr\nratio'] = maxcossnr / max_snrs[1]
         # endregion
 
         # region flat transit
@@ -374,9 +421,9 @@ for target in tqdm(targets):
         row['Lya Flux\n(erg s-1 cm-2)'] = Flya
 
         Mp = planet.params['pl_bmasse'].to_value('Mearth')
-        Mp_err = 0.5 *(planet.params['pl_bmasseerr1']
-                       - planet.params['pl_bmasseerr2'])
-        Mp_prec = Mp_err/Mp
+        Mp_err = 0.5 * (planet.params['pl_bmasseerr1']
+                        - planet.params['pl_bmasseerr2'])
+        Mp_prec = Mp_err / Mp
         if not np.isfinite(Mp_prec) or Mp_prec == 0:
             Mp_prec = np.ma.masked
         row['mass (Me)'] = Mp
@@ -389,7 +436,7 @@ for target in tqdm(targets):
             mass_source = mass_source_rename[mass_source]
         row['mass\nsource'] = mass_source
         mass_flag = np.ma.masked
-        if planet.params['pl_rade'] > 7*u.Rearth:
+        if planet.params['pl_rade'] > 7 * u.Rearth:
             mass_flag = 'giant'
         if planet.params['flag_young']:
             mass_flag = 'young'
@@ -411,7 +458,6 @@ for target in tqdm(targets):
         for col in flag_cols:
             row[col] = planet.params[col]
 
-        transit = tutils.get_transit_from_simulation(host, planet)
         row['H ionztn\ntime (h)'] = np.median(transit.params['Tion']).to_value('h')
 
         eval_rows.append(row)
@@ -446,7 +492,6 @@ for substr, fmt in formats_general.items():
             eval_table[name].format = fmt
             formats[name] = fmt
 
-
 #%% match in the catalog of escape detections
 
 escape_detections = catutils.escape_catalog_merge_targets('download')
@@ -471,12 +516,12 @@ eval_table['temp'] = eval_ids
 eval_table = table.join(eval_table, det_slim, keys='temp', join_type='left')
 eval_table.remove_column('temp')
 
-
 #%% match in requested targets
 
 files = list(paths.stage2_requests.glob('*.txt'))
 path_check_table, = paths.selection_intermediates.glob('*pt1*.ecsv')
 check_table = catutils.load_and_mask_ecsv(path_check_table)
+
 
 def any_tois(planet_names):
     for name in planet_names:
@@ -485,11 +530,12 @@ def any_tois(planet_names):
             return True
     return False
 
-eval_table['TICletter'] = np.char.add( # temporary column for matchin
+
+eval_table['TICletter'] = np.char.add(  # temporary column for matchin
     eval_table['TIC'].astype(str),
     eval_table['planet']
 )
-check_table['TICletter'] = np.char.add( # temporary column for matching
+check_table['TICletter'] = np.char.add(  # temporary column for matching
     check_table['tic_id'].astype(str),
     check_table['pl_letter'].astype(str).filled('')
 )
@@ -517,7 +563,6 @@ for file in files:
         print('Consider checking that they are correctly named in the requested list txt file.')
 
 eval_table.remove_column('TICletter')
-
 
 #%% save table
 

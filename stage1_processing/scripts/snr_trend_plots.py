@@ -19,18 +19,24 @@ keep_cols = (
     'time offset',
 )
 
+def simplify_db(db):
+    tbl = db.snrs[keep_cols]
+    tbl.meta = {}
+    return tbl
+
 tbls = []
+best_off_tbls = []
 for file in tqdm(snr_files):
+    planet = file.name.split('.')[0]
+    snrdb.snrs['planet'] = planet
     snrdb = tutils.DetectabilityDatabase.from_file(file)
     snrdb = snrdb.trim_to_offset_sampling()
-    best_off = snrdb.filter_obs_config(offset='best')
-    tbl = snrdb.snrs[keep_cols]
-    tbl.meta = {}
-    planet = file.name.split('.')[0]
-    tbl['planet'] = planet
-    tbls.append(tbl)
+    best_off = snrdb.filter_obs_config(offset='best').clean_duplicates()
+    tbls.append(simplify_db(snrdb))
+    best_off_tbls.append(simplify_db(snrdb))
 
 bigtbl = table.vstack(tbls)
+best_off_bigtbl = table.vtsack(best_off_tbls)
 
 
 #%% pick subsets based on best offsets
