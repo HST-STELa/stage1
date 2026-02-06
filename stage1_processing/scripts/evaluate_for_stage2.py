@@ -92,7 +92,7 @@ staging_area = paths.packages / '2025-09-26.stage2.eval2.staging_area'
 np.seterr(divide='raise', over='raise', invalid='raise') # whether to raise arithmetic warnings as errors
 lyarecon_flag_tables = list(paths.inbox.rglob('*lya*recon*/README*'))
 
-sigma_threshold = 3
+sigma_threshold = 1
 min_samples = 5**4 # used as a check later to ensure all grid pts of Ethan's sims were sampled
 
 
