@@ -352,7 +352,7 @@ class Planet(object):
         self.optical_transit_duration = planet_row['pl_trandur']
         self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 30 * u.h))  # long egress for tails
         self.dbname = f'{host_dbname}-{self.stela_suffix}'
-        self.sim_name = f'{host_dbname}{self.sim_letter}'
+        self.sim_name = f'{host_dbname}{self.stela_suffix}'
 
 @dataclass
 class TransitModelSet:
@@ -670,6 +670,8 @@ def get_transit_from_simulation(host, planet):
         transmission_array,
         x_params
     )
+
+    transitobj.meta = params
 
     return transitobj
 
