@@ -80,6 +80,7 @@ targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
 targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
 
 def move_to_target_folders(dry_run=True):
+    raise ValueError("Somehow this failed and put the wrong names on files. Probs bc I didn't rename files to newfiles below. Careful on resuse.")
     for targname, planet, file in zip(targnames_file, planet_suffixes, files):
         newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
         newfolder = paths.target_data(targname) / 'transit predictions'
@@ -98,5 +99,28 @@ check_and_move(move_to_inbox)
 
 
 # %% copy to target folders
+
+check_and_move(move_to_target_folders)
+
+# %% try again this time using inbox files bc I deleted the dnlds already
+
+files = list(models_inbox.glob('*.h5'))
+
+names_planets = [parse_ethan_targname(file) for file in files]
+targnames_ethan, planet_suffixes = zip(*names_planets)
+targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
+targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
+
+def move_to_target_folders(dry_run=True):
+    for targname, planet, file in zip(targnames_file, planet_suffixes, files):
+        newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
+        newfolder = paths.target_data(targname) / 'transit predictions'
+
+        if dry_run:
+            print(f'{file.name} --> {'/'.join(newfolder.parts[-2:])}/{newname}')
+        else:
+            if not newfolder.exists():
+                os.mkdir(newfolder)
+            sh.copy(file, newfolder / newname)
 
 check_and_move(move_to_target_folders)
