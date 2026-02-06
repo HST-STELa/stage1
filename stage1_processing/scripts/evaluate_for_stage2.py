@@ -1,4 +1,3 @@
-from functools import lru_cache
 import re
 from typing import Literal
 import os
@@ -23,7 +22,6 @@ from stage1_processing import processing_utilities as pu
 from stage1_processing import transit_evaluation_utilities as tutils
 
 from lya_prediction_tools import stis
-from lya_prediction_tools import lya
 
 
 #%% occasional use: move model transit spectra into target folders
