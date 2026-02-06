@@ -4,8 +4,6 @@ import shutil as sh
 from pathlib import Path
 from datetime import datetime
 
-import numpy as np
-
 import paths
 import database_utilities as dbutils
 
@@ -14,6 +12,7 @@ import database_utilities as dbutils
 
 models_dnld = Path('/Users/parke/Downloads/batch2_high_sw')
 models_inbox = paths.inbox / '2026-02-06 transit predictions high velocity wind'
+os.makedirs(models_inbox, exist_ok=True)
 
 
 # %% naming
@@ -47,38 +46,40 @@ if ans == '':
         os.remove(f)
 
 
-# %% identify and delete old files
+# %% copy tools
 
 files = list(models_dnld.glob('*.h5'))
 
-files = snr_files = list(paths.data_targets.rglob('*tail-model*sigmas*.ecsv'))
+threshold_date = datetime(2026, 2, 3, 0)
 
-
-threshold_date = datetime(2026, 1, 28, 17)
-
-oldfiles = []
+newfiles = []
 for f in files:
     modtime = f.stat().st_mtime
     modtime = datetime.fromtimestamp(modtime)
 
-    if modtime < threshold_date:
-        oldfiles.append(f)
-targets_all = [f.name.split('.')[0] for f in oldfiles]
-targets_all = [dbutils.split_hostname_planet_letter(tgt, '-')[0] for tgt in targets_all]
-targets_all = set(targets_all)
+    if modtime > threshold_date:
+        newfiles.append(f)
 
-targets_all = sorted(list(targets_all))
-target_sets = np.array_split(list(targets_all), 3)
-targets = target_sets[i_set]
+def check_and_move(fn):
+    print('To be copied: ')
+    fn(dry_run=True)
+    for_reals = input('\nProceed? (enter/n)')
+    if for_reals == '':
+        fn(dry_run=False)
 
+def move_to_inbox(dry_run=True):
+    for file in newfiles:
+        if dry_run:
+            print(f'{file.name} --> {'/'.join(models_inbox.parts[-2:])}/{file.name}')
+        else:
+            sh.copy(file, models_inbox / file.name)
 
-
-names_planets = [parse_ethan_targname(file) for file in files]
+names_planets = [parse_ethan_targname(file) for file in newfiles]
 targnames_ethan, planet_suffixes = zip(*names_planets)
 targnames_stela = dbutils.resolve_stela_name_flexible(targnames_ethan)
 targnames_file = dbutils.target_names_stela2file(targnames_stela.astype(str))
 
-def move_files(dry_run=True):
+def move_to_target_folders(dry_run=True):
     for targname, planet, file in zip(targnames_file, planet_suffixes, files):
         newname = f'{targname}-{planet}.outflow-tail-model.transmission-grid.h5'
         newfolder = paths.target_data(targname) / 'transit predictions'
@@ -90,29 +91,12 @@ def move_files(dry_run=True):
                 os.mkdir(newfolder)
             sh.copy(file, newfolder / newname)
 
-move_files(dry_run=True)
-for_reals = input('\nProceed with copying the files? (enter/n)')
-if for_reals == '':
-    move_files(dry_run=False)
+
+# %% copy to inbox
+
+check_and_move(move_to_inbox)
 
 
+# %% copy to target folders
 
-#%% get targets that haven't been run yet
-files = snr_files = list(paths.data_targets.rglob('*tail-model*sigmas*.ecsv'))
-from datetime import datetime
-threshold_date = datetime(2026, 1, 28, 17)
-
-oldfiles = []
-for f in files:
-    modtime = f.stat().st_mtime
-    modtime = datetime.fromtimestamp(modtime)
-
-    if modtime < threshold_date:
-        oldfiles.append(f)
-targets_all = [f.name.split('.')[0] for f in oldfiles]
-targets_all = [dbutils.split_hostname_planet_letter(tgt, '-')[0] for tgt in targets_all]
-targets_all = set(targets_all)
-
-targets_all = sorted(list(targets_all))
-target_sets = np.array_split(list(targets_all), 3)
-targets = target_sets[i_set]
+check_and_move(move_to_target_folders)
