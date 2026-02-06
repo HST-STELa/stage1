@@ -61,3 +61,5 @@ off_snrs = best_snrs.trim_to_offset_sampling()
 
 #%% smoke test of group and select function
 
+"""the idea is to test the function that I will use to reduce these tables to a best offset for the 
+snr mesh plots"""
