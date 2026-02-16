@@ -21,6 +21,8 @@ eval_filename = 'stage2_evaluation_metrics.ecsv'
 eval_path = paths.catalogs / eval_filename
 eval_table = catutils.load_and_mask_ecsv(eval_path)
 
+frac_floor = 3e-3
+
 slide_size = [9, 5]
 mpl.rcParams['savefig.dpi'] = 300
 
@@ -107,7 +109,7 @@ def make_detectability_plot(ykey, yfloor=0):
 
 date = dbutils.timestamp(date_only=True)
 
-frac_fig, frac_ax = make_detectability_plot(f'sim safe offset frac w snr > {x}', 1e-4)
+frac_fig, frac_ax = make_detectability_plot(f'sim safe offset frac w snr > {x}', frac_floor)
 frac_ax.set_ylabel('Simulation Detectability Fraction')
 frac_fig.tight_layout()
 frac_fig.savefig(paths.scratch / f'{date} detectability fraction vs lya flux plot.png')
@@ -169,7 +171,7 @@ def make_scatter(skey, scalefunc=None):
 date = dbutils.timestamp(date_only=True)
 
 def frac_scale(s):
-    s = np.clip(s, 1e-4, np.inf)
+    s = np.clip(s, frac_floor, np.inf)
     s = np.cbrt(s)*100
     return s
 frac_fig_scat, frac_ax_scat = make_scatter(f'sim safe offset frac w snr > {x}', frac_scale)
