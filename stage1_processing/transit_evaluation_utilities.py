@@ -725,12 +725,12 @@ def build_snr_sampler_fns(
     ra, dec = host.params['ra'], host.params['dec']
 
     def snr_single_case(offset, grating, aperture, lya_case,
-                        diagnostic_plots=False, transit_keys=None, transit_key_rtol=None):
+                        diagnostic_plots=False, transit_keys=None, transit_key_rtol=0.05):
 
         if transit_keys is None:
             transmission = transit_model.transmission
         else:
-            transmission = transit_model.loc_transmission(**transit_keys, rtol=0.05)
+            transmission = transit_model.loc_transmission(**transit_keys, rtol=transit_key_rtol)
 
         spec = get_spectrograph_object(grating, aperture, ra, dec)
 
