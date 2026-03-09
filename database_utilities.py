@@ -453,6 +453,12 @@ def delete_files_by_hst_id(ids, directory='.'):
             os.remove(file)
 
 
+def load_obs_tbl(target_filename):
+    folder = paths.target_hst_data(target_filename)
+    file, = folder.glob(f'{target_filename}.observation-table.ecsv')
+    return table.Table.read(file)
+
+
 def filter_observations(
         obs_table,
         config_substrings=None,
