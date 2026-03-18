@@ -33,11 +33,13 @@ plt.ion()
 # then commited and pushed so we all benefit from them
 
 targets = target_lists.new_data(last_n=1)
+# targets = ['toi-620'] # second run to refine traces calstis couldn't find
+targets = ['toi-1801', 'hd73344', 'toi-5388', 'k2-3'] # third run to see why these didn't get extracted
 instruments = 'hst-stis'
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
-redo_extractions = False
+redo_extractions = True
 # note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
 # delete the files produced by the extraction (including intermediates)
 
@@ -145,24 +147,21 @@ while True:
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
 
-    print(f'\n{target} observation table:\n')
-    obs_tbl.pprint(-1, -1)
-
     obs_tbl_usbl = obs_tbl[obs_tbl['usable'].filled(True)]
+    print(f'\n{target} observation table:\n')
+    obs_tbl.pprint(-1,-1)
+
     stis_tag_files_in_tbl = []
     for row in obs_tbl_usbl:
         if 'hst-stis' in row['science config']:
             stis_tag_files_in_tbl.extend(row['key science files'])
-    stis_tag_files_in_dir = dbutils.find_data_files(
-        'tag',
-        instruments=instruments,
-        ids=obs_tbl_usbl['archive id'].tolist())
+    stis_tag_files_in_dir = dbutils.find_data_files('tag', instruments=instruments)
     stis_tag_files_in_dir = list(map(str, stis_tag_files_in_dir))
 
     n_tbl = len(stis_tag_files_in_tbl)
     n_obs = len(stis_tag_files_in_dir)
     if n_tbl != n_obs:
-        warnings.warn(f"There are {n_tbl} usable observations in the observation manifest table but {n_obs} in the directory for {target}."
+        warnings.warn(f"There are {n_tbl} in the observation manifest table but {n_tbl} in the directory for {target}."
                       f"\nOnly the files in the table will be extracted.")
 
 
@@ -197,7 +196,7 @@ while True:
 
     def skip(file_name):
         id = dbutils.parse_filename(file_name)['id']
-        return obs_tbl_usbl.loc['archive id', id]['skip_extraction']
+        return obs_tbl_usbl.loc.with_index('archive id')[id]['skip_extraction']
 
 
 
@@ -244,113 +243,107 @@ while True:
     """
 
     matplotlib.use('Qt5Agg')
-    flts_to_do = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
-    flts_to_do = no_e140ms(flts_to_do)
+    fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
+    fltfiles = no_e140ms(fltfiles)
 
-    while flts_to_do:
-        matplotlib.use('Qt5Agg')
-        fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
-        fltfiles = no_e140ms(fltfiles)
+    ids, locs = [], []
+    for ff in fltfiles:
+        if not redo_extractions and skip(ff):
+            continue
 
-        flts_to_redo_trc_slctn = []
-        flts_to_xtrct = []
+        if 'stis-e140m' in ff.name:
+            continue
+        h = fits.open(ff)
+        id = h[0].header['asn_id'].lower()
+        ids.append(id)
 
-        ids, locs = [], []
-        for ff in flts_to_do:
-            if not redo_extractions and skip(ff):
-                continue
+        img = h[1].data
+        plt.figure()
+        plt.title(Path(ff).name)
+        plt.imshow(np.cbrt(img), aspect='auto')
 
-            if 'stis-e140m' in ff.name:
-                continue
+        fx = dbutils.modify_file_label(ff, 'x1d')
+        if fx.exists():
+            hx = fits.open(fx)
+            y = hx[1].data['extrlocy']
+            x = np.arange(img.shape[1]) + 0.5
+            iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
+        else:
+            plt.annotate('calstis cross correlation to locate spectrum failed', xy=(0.05,0.99),
+                         xycoords='axes fraction', va='top', color='w')
+            print('Calstis did not create an x1d for this file. Maybe run this cell again to refine trace location.')
 
-            flts_to_xtrct.append(ff)
+        a1 = sum(x[[0,-1]])/2
+        y_predicted, offsets = stx.predicted_trace_location(h, return_pieces=True)
+        pln, = plt.plot(a1, y_predicted, 'y+', ms=10, label='predicted location')
 
-            h = fits.open(ff)
-            id = h[0].header['asn_id'].lower()
-            ids.append(id)
+        aperture = h[0].header['propaper']
+        offset_lbls = [f'{key}={value:.1f}' for key, value in offsets.items()]
+        offset_lbl = f'aperture: {aperture}\nY position of + from: ' + ', '.join(offset_lbls)
+        plt.annotate(offset_lbl, xy=(0.05,0.05), xycoords='axes fraction', color='w', fontsize='small')
 
-            img = h[1].data
-            plt.figure()
-            plt.title(Path(ff).name)
-            plt.imshow(np.cbrt(img), aspect='auto')
+        xy = utils.click_coords()
+        xclick, yclick = xy[-1]
 
-            fx = dbutils.modify_file_label(ff, 'x1d')
-            if fx.exists():
-                hx = fits.open(fx)
-                y = hx[1].data['extrlocy']
-                x = np.arange(img.shape[1]) + 0.5
-                iln = plt.plot(x, y.T, color='r', lw=0.5, alpha=0.5, label='intial pipeline extraction')[0]
-            else:
-                flts_to_redo_trc_slctn.append(ff)
-                plt.annotate('calstis cross correlation to locate spectrum failed', xy=(0.05,0.99),
-                             xycoords='axes fraction', va='top', color='w')
+        if xclick < 100:
+            xclick = a1
+            yclick = y_predicted
+            plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
 
-            a1 = sum(x[[0,-1]])/2
-            y_predicted, offsets = stx.predicted_trace_location(h, return_pieces=True)
-            pln, = plt.plot(a1, y_predicted, 'y+', ms=10, label='predicted location')
+        if fx.exists():
+            # find offset to nearest trace
+            yt = np.array([np.interp(xclick, x, yy) for yy in y])
+            dist = np.abs(yt - yclick)
+            imin = np.argmin(dist)
+            dy = yclick - yt[imin]
+            a2, = hx[1].data['a2center'] + dy
+        else:
+            a2 = yclick
 
-            aperture = h[0].header['propaper']
-            offset_lbls = [f'{key}={value:.1f}' for key, value in offsets.items()]
-            offset_lbl = f'aperture: {aperture}\nY position of + from: ' + ', '.join(offset_lbls)
-            plt.annotate(offset_lbl, xy=(0.05,0.05), xycoords='axes fraction', color='w', fontsize='small')
+        if fx.exists():
+            nln = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')[0]
+            plt.legend(handles=(iln, pln, nln))
+        else:
+            nln = plt.axhline(a2, color='w', alpha=0.5, label='manual selection')
+            plt.legend(handles=(pln, nln))
 
-            xy = utils.click_coords()
-            xclick, yclick = xy[-1]
+        plt.autoscale()
+        plt.savefig(Path('/Users/parke/Google Drive/Research/STELa/scratch/yloc prediction tests')
+                    / ff.name.replace('_flt.fits', '_extraction.png'), dpi=300)
 
-            if xclick < 100:
-                xclick = a1
-                yclick = y_predicted
-                plt.annotate('predicted location used', xy=(0.05, 0.95), xycoords='axes fraction', color='r', va='top')
+        locs.append(a2)
+        h.close()
 
-            if fx.exists():
-                # find offset to nearest trace
-                yt = np.array([np.interp(xclick, x, yy) for yy in y])
-                dist = np.abs(yt - yclick)
-                imin = np.argmin(dist)
-                dy = yclick - yt[imin]
-                a2, = hx[1].data['a2center'] + dy
-            else:
-                a2 = yclick
+    tracelocs = dict(zip(ids, locs))
 
-            if fx.exists():
-                nln = plt.plot(x, y.T + dy, color='w', alpha=0.5, label='after manual correction')[0]
-                plt.legend(handles=(iln, pln, nln))
-            else:
-                nln = plt.axhline(a2, color='w', alpha=0.5, label='manual selection')
-                plt.legend(handles=(pln, nln))
-
-            plt.autoscale()
-            plt.savefig(Path('/Users/parke/Google Drive/Research/STELa/scratch/yloc prediction tests')
-                        / ff.name.replace('_flt.fits', '_extraction.png'), dpi=300)
-
-            locs.append(a2)
-            h.close()
-            tracelocs = dict(zip(ids, locs))
-
-            utils.query_next_step(batch_mode, care_level, 2)
-
-        flts_to_do = flts_to_redo_trc_slctn
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% extract at user-defined trace locations
 
-        # remove existing x1d files
-        if flts_to_xtrct:
-            print('Proceed with deleting and recreating x1ds associated with?')
-            print('\n'.join([f.name for f in flts_to_xtrct]))
-            _ = input('enter/n? ')
-            if _ == '':
-                for fltfile in flts_to_xtrct:
-                    x1dfile = dbutils.modify_file_label(fltfile, 'x1d')
-                    if x1dfile.exists():
-                        os.remove(x1dfile)
+    fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
+    fltfiles = no_e140ms(fltfiles)
+    fltfiles = [_ff for _ff in fltfiles if not skip(_ff)]
 
-                    x1d_params = get_x1dparams(x1dfile)
-                    id = fits.getval(fltfile, 'asn_id').lower()
-                    traceloc = tracelocs[id]
-                    stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
+    # remove existing x1d files
+    if fltfiles:
 
-        utils.query_next_step(batch_mode, care_level, 2)
+        print('Proceed with deleting and recreating x1ds associated with?')
+        print('\n'.join([f.name for f in fltfiles]))
+        _ = input('enter/n? ')
+        if _ == '':
+            for fltfile in fltfiles:
+                x1dfile = dbutils.modify_file_label(fltfile, 'x1d')
+                if x1dfile.exists():
+                    os.remove(x1dfile)
+
+                x1d_params = get_x1dparams(x1dfile)
+                id = fits.getval(fltfile, 'asn_id').lower()
+                traceloc = tracelocs[id]
+                stis.x1d.x1d(str(fltfile), str(x1dfile), a2center=traceloc, **x1d_params)
+
+
+    utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% revise uncertainties

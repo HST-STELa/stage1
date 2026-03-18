@@ -104,7 +104,7 @@ def flag_duplicates(planet_catalog, hst_observations, match_dist=match_dist_defa
     obs = obs[i_hst]
 
     # get tic ids of all observation targets
-    obs.sort('targname') # must sort bc np.unique will do so and it will mess me up when puting tic_ids back in
+    obs.sort('targname') # must sort bc np.unique will do so and it will mess me up when putting tic_ids back in
     obs_names = obs['targname']
     unq_names, i_map2obstbl = np.unique(obs_names, return_inverse=True)
     simbad_names = db.groom_hst_names_for_simbad(unq_names)

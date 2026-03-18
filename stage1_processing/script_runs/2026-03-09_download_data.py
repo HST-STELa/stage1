@@ -27,7 +27,7 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = target_lists.observed_since('2025-12-15')
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -47,7 +47,7 @@ hst_database = MastMissions(mission='hst')
 # note that you need to have created and stored a token for this, see
 # https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
 # you can specify the exact toke you want to use with token=...
-hst_database.login()
+hst_database.login() # security risk, don't write token here or it might get synced to GitHub
 
 #%% target iterator
 
@@ -206,7 +206,16 @@ while True:
         filename = f'{pieces['id']}_{pieces['type']}.fits'
         if id in obs_tbl['archive id']:
             i = obs_tbl.loc_indices[id]
-            obs_tbl['key science files'][i] = filename
+            assert not hasattr(i, '__iter__')
+            ksf = obs_tbl['key science files'][i]
+            if isinstance(ksf, np.ndarray):
+                ksf = ksf.tolist()
+            if np.ma.is_masked(ksf):
+                ksf = []
+            if filename in ksf:
+                continue
+            ksf.append(filename)
+            obs_tbl['key science files'][i] = ksf
         else:
             row = {}
             pi = fits.getval(file, 'PR_INV_L')

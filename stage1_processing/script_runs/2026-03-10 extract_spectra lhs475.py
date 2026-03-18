@@ -32,7 +32,7 @@ plt.ion()
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(last_n=1)
+targets = ['lhs475']
 instruments = 'hst-stis'
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
@@ -332,7 +332,7 @@ while True:
         flts_to_do = flts_to_redo_trc_slctn
 
 
-#%% extract at user-defined trace locations
+    #%% extract at user-defined trace locations
 
         # remove existing x1d files
         if flts_to_xtrct:

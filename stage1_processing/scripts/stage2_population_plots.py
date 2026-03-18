@@ -1,3 +1,5 @@
+import re
+
 from astropy import table
 import numpy as np
 from matplotlib import pyplot as plt
@@ -6,6 +8,8 @@ import matplotlib as mpl
 import paths
 import catalog_utilities as catutils
 import database_utilities as dbutils
+
+mpl.use('qt5agg')
 
 
 #%% settings
@@ -81,8 +85,10 @@ def make_detectability_plot(ykey, yfloor=0):
             rky = masks['rocky'][mask]
             ln, = ax.plot(xx[~rky], yy[~rky], 'o', *args, **kws)
             ax.plot(xx[rky], yy[rky], 'o', alpha=0.33, *args, **kws)
-            ax.annotate('transulcent = rocky', xy=(0.98,0.33), xycoords='axes fraction',
-                        bbox=dict(fc='white', pad=1, alpha=0.5))
+            ax.annotate('translucent = rocky',
+                        xy=(0.98,0.33), xycoords='axes fraction',
+                        ha='right', va='center',
+                        bbox=dict(fc='white', pad=1, alpha=0.5, ls='none'))
         else:
             ln, = ax.plot(xx, yy, 'o', *args, **kws)
         if addlbls:
@@ -91,13 +97,13 @@ def make_detectability_plot(ykey, yfloor=0):
                 ax.annotate(' ' + lbl, xy=(_x,_y), fontsize='xx-small', rotation=45)
         return ln
 
-    plot_set(masks['allpts'], addlbls=False, dim_rocks=True, **pt_styles['allpts'])
-    plot_set(masks['detections'], addlbls=True, dim_rocks=True, **pt_styles['detections'])
-    plot_set(masks['tentative'], addlbls=True, dim_rocks=True, **pt_styles['tentative'])
-    plot_set(masks['nondetections'], addlbls=True, dim_rocks=True, **pt_styles['nondetections'])
-    plot_set(masks['unknown'], addlbls=True, dim_rocks=True, **pt_styles['unknown'])
+    lna = plot_set(masks['allpts'], addlbls=False, dim_rocks=True, **pt_styles['allpts'])
+    lnd = plot_set(masks['detections'], addlbls=True, dim_rocks=True, **pt_styles['detections'])
+    lnt = plot_set(masks['tentative'], addlbls=True, dim_rocks=True, **pt_styles['tentative'])
+    lnn = plot_set(masks['nondetections'], addlbls=True, dim_rocks=True, **pt_styles['nondetections'])
+    lnu = plot_set(masks['unknown'], addlbls=True, dim_rocks=True, **pt_styles['unknown'])
 
-    plt.legend(fontsize='small')
+    plt.legend(handles=(lna, lnd, lnt, lnn, lnu), fontsize='small')
 
     return fig, ax
 

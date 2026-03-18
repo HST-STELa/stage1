@@ -12,7 +12,7 @@ from stage1_processing import preloads
 
 def eval_no(n):
     prog = preloads.progress_table
-    mask = prog["Stage 2 Eval\nBatch"] == n
+    mask = prog[f"Stage 2 Eval\nBatch {n}"] == True
     tics =  prog['TIC ID'][mask]
     selected = preloads.stela_names.loc['tic_id', tics]
     return selected['hostname_file'].tolist()
@@ -93,3 +93,16 @@ def new_data(last_n=1):
     names = np.hstack(names_lists[-last_n:])
     names = list(set(names))
     return names
+
+bespoke = { # use lists not tuples bc tbl indexing does not like tuples
+    "missed archivals 2026-03-10" :
+        ['hd260655',
+         'hat-p-20',
+         'hip67522',
+         'toi-4307',
+         'gj3929',
+         'lhs3844',
+         'toi-6713',
+         'toi-802'],
+    "lya archival 2026-03-11" : ['hat-p-11', 'hd3167', 'lhs1140', 'wasp-107', 'toi-1759', 'hd191939', 'toi-1685', 'hd39091', 'l168-9', 'gj9827', 'wasp-29', 'trappist-1', 'toi-561', 'k2-25', 'ltt1445a', 'hd42813', 'hd63935', 'hd86226', 'toi-2076', 'toi-836', 'wasp-127', 'wasp-77a', 'ds-tuc-a', 'lhs475', 'l98-59', 'toi-421', 'hip116454', 'hat-p-20', 'hd219134', 'ltt9779', 'toi-776', 'gj3929', 'gj1214', 'hd73583', 'hd97658', 'toi-270', 'k2-233', 'hd189733', 'gj367', 'k2-136', 'toi-260', '55cnc', 'hd15337', 'gj486', 'hd136352', 'toi-1201', 'kepler-444', 'toi-741', 'toi-1774', 'hd209458', 'wasp-52', 'gliese12', 'au-mic', 'hip94235', 'gj1132', 'toi-1231', 'gj436', 'k2-18', 'wasp-80', 'gj3470', 'k2-3', 'wasp-38', 'hd63433', 'toi-178', 'hd260655', 'wasp-69', 'toi-1203', 'toi-431', 'hd149026', 'hat-p-26', 'gj357']
+}

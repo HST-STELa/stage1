@@ -27,13 +27,13 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = target_lists.bespoke['lya archival 2026-03-11']
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
 dnld_from_insts = 'COS,STIS'
 dnld_from_specs = "G140M,G140L,E140M,G130M,G160M"
-dnld_availability = 'PUBLIC,PROPRIETARY'
+dnld_availability = 'PUBLIC'
 
 
 #%% list to track targets for which new data have been downloaded

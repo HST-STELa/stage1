@@ -22,7 +22,7 @@ import catalog_utilities as catutils
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
-from stage1_processing.observation_table import ObsTable
+from stage1_processing import observation_table as obs_tbl_tools
 
 
 #%% settings
@@ -145,7 +145,7 @@ while True:
     tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
     data_dir = paths.target_hst_data(target)
 
-    obs_tbl = ObsTable.load_from_targname(target)
+    obs_tbl = obs_tbl_tools.load_obs_tbl(target)
     # obs_tbl = dbutils.clear_usability_values(obs_tbl,reason_substr='acquisition')
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
@@ -263,7 +263,7 @@ while True:
         plt.close('all')
 
         if bad_acq:
-            obs_tbl.add_flag(assoc_obs_mask, 'Acquisition untrustworthy.')
+            obs_tbl['flags'][assoc_obs_mask] = 'Acquisition untrustworthy.'
             obs_tbl['usability status'][assoc_obs_mask] = 'has issues'
 
 
@@ -274,13 +274,11 @@ while True:
 
     plt.close('all')
 
-    usbl_mask = obs_tbl['usable'].filled(True)
-    usbl_tbl = obs_tbl[usbl_mask]
+    usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
     configs = np.unique(usbl_tbl['science config'])
     for config in configs:
         config_mask = usbl_tbl['science config'] == config
         cnfg_tbl = usbl_tbl[config_mask]
-        cnfg_tbl['flags'] = cnfg_tbl['flags'].filled('')
         for row in cnfg_tbl:
             id = row['archive id']
             fig = plt.figure()
@@ -288,13 +286,13 @@ while True:
             plt.title(file.name)
             data = fits.getdata(file, 1)
             plt.step(data['wavelength'].T, data['flux'].T, where='mid')
-            plt.annotate('\n'.join(list(row['flags'])), xy=(0.02,0.98), xycoords='axes fraction', va='top')
+            plt.annotate('\n'.join(list(row['flags'])), xy=(0.02,0.98), xycoords='axes fraction')
 
         print('Click outside the plots to continue.')
         xy = utils.click_coords(fig)
 
         while True:
-            id_endings = input('Any spectra that should have flags added? Give last few letters of the ids, separated by commas.\n'
+            id_endings = input('Any spectra that should be flagged? Give last few letters of the ids, separated by commas.\n'
                               'Hit enter if none. Prompt will loop until an empty answer is given.')
             if id_endings == '':
                 break
@@ -304,27 +302,35 @@ while True:
                 mask |= np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
             i_mask, = np.nonzero(mask)
 
-            usable_ans = input(f'Are {', '.join(id_endings)} unusable(u), have issues (i), all clear (a), or no issues and '
-                               f'just want to record flags with no change to usability status (enter)?')
-            if usable_ans == '':
-                pass
-            elif usable_ans.startswith('a'):
-                obs_tbl['usability status'][mask] = 'all clear'
-            elif usable_ans.startswith('u'):
-                obs_tbl['usable'][mask] = False
-                obs_tbl['usability status'][mask] = 'unusable'
-                reason = input(f'Enter reason for marking {id_ending} as unusable.')
-                obs_tbl['reason unusable'][mask] = reason
-            elif usable_ans.startswith('i'):
-                obs_tbl['usability status'][mask] = 'has issues'
-            else:
-                usable_ans = input('Bad input. Try again. Answer must be u, i, a, or enter.')
-
-            flagstring = input(f'Enter flags to be added, separated by commas:')
-            flags = flagstring.split(',')
-            flags.remove('')
-            for flag in flags:
-                obs_tbl.add_flag(mask, flag)
+            while True:
+                usable_ans = input(f'Are {', '.join(id_endings)} unusable(u), have issues (i), all clear with flags (f), or just all clear (enter)?')
+                if usable_ans == '':
+                    obs_tbl['usable'][mask] = False
+                    obs_tbl['usability status'][mask] = 'all clear'
+                    break
+                elif usable_ans.startswith('u'):
+                    obs_tbl['usable'][mask] = False
+                    obs_tbl['usability status'][mask] = 'unusable'
+                    reason = input(f'Enter reason for flagging {id_ending} as unusable.')
+                    obs_tbl['reason unusable'][mask] = reason
+                    break
+                elif usable_ans.startswith('i'):
+                    obs_tbl['usability status'][mask] = 'has issues'
+                    reasons = input(f'Enter the issues, separated by commas.')
+                    reasons = re.split(', *', reasons)
+                    for i in i_mask:
+                        obs_tbl['flags'][i] = list(obs_tbl['flags'][i]) + reasons
+                    break
+                elif usable_ans.startswith('f'):
+                    obs_tbl['usable'][mask] = True
+                    obs_tbl['usability status'][mask] = 'all clear'
+                    flags = input(f'What other flags should be recorded, separated by commas.')
+                    flags = re.split(', *', flags)
+                    for i in i_mask:
+                        obs_tbl['flags'][i] = list(obs_tbl['flags'][i]) + flags
+                    break
+                else:
+                    usable_ans = input('Bad input. Try again. Answer must be u, i, f, or enter.')
 
         plt.close('all')
 
@@ -334,11 +340,8 @@ while True:
 #%% mark files not listed as unusable and without flags as usuable
 
     no_flags = [np.ma.is_masked(flags) or len(flags) == 0 for flags in obs_tbl['flags'] ]
-    status = obs_tbl['usability status'].filled('')
-    no_issues = (status == 'all clear') | (status == 'unchecked') | (status == '')
-    mark_usable = no_flags & no_issues & obs_tbl['usable'].filled(True)
+    mark_usable = no_flags & obs_tbl['usable'].mask
     obs_tbl['usable'][mark_usable] = True
-    obs_tbl['usability status'][mark_usable] = 'all clear'
 
 
 #%% take a gander
@@ -352,7 +355,7 @@ while True:
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last acq check'] = datetime.now().isoformat()
-    obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
+    obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
     utils.query_next_step(batch_mode, care_level, 1)
 

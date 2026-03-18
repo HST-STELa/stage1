@@ -33,7 +33,6 @@ eval_cat_hosts.write(staging_area / 'host_catalog.ecsv', overwrite=True)
 
 #%% add mass range to use for sims
 
-
 Mlo = np.zeros(len(eval_cat))
 Mhi = np.zeros(len(eval_cat))
 M = eval_cat['pl_bmasse']

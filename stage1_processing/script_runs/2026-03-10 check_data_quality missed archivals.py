@@ -34,7 +34,7 @@ from stage1_processing.observation_table import ObsTable
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data()
+targets = target_lists.bespoke["missed archivals 2026-03-10"]
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 matplotlib.use('Qt5Agg')

@@ -21,7 +21,6 @@ import hst_utilities as hutils
 from lya_prediction_tools import lya, ism, stis
 from stage1_processing import preloads
 from stage1_processing import target_lists
-from stage1_processing.observation_table import ObsTable
 
 
 #%% settings
@@ -33,7 +32,7 @@ from stage1_processing.observation_table import ObsTable
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets_for_lya_flux_calcs = target_lists.observed_since('2025-09-04', type='lya')
+targets_for_lya_flux_calcs = target_lists.observed_since('2025-12-10', type='lya')
 saveplots = True
 have_a_look = True
 obs_filters = dict(targets=targets_for_lya_flux_calcs, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)
@@ -232,20 +231,9 @@ for tic_id in tics:
     sys_planets = planets.loc[tic_id]
 
     # find the appropriate file
-    files = dbutils.find_coadd_or_x1ds(
-        target_filename,
-        out_of_transit_coadd=True,
-        instruments=insts,
-        directory=data_dir)
-    if len(files) > 1:
-        obstbl = ObsTable.load_from_targname(target_filename)
-        files = obstbl.filter_files_by_usability_status(
-            files,
-            allow=('has issues', 'all clear')
-        )
-
+    files = dbutils.find_coadd_or_x1ds(target_filename, instruments=insts, directory=data_dir)
     if len(files) == 0:
-        print(f'No validated x1d file(s) or coadd found for {target_filename}. Moving on.')
+        print(f'No x1d file found for {target_filename}. Moving on.')
         add_empty_lya_row()
         continue
     if len(files) > 1:

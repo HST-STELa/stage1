@@ -36,7 +36,7 @@ checked = selection_inputs / 'hand_checked'
 other = selection_inputs / 'other'
 requested = selection_inputs / 'requested_targets'
 hst_database_folder = selection_inputs / 'hst_database'
-hst_database_https = 'https://archive.stsci.edu/pub/catalogs/paec-7-present.cat'
+hst_database_https = 'https://archive.stsci.edu/pub/catalogs/paec_7-present.cat'
 # note that we don't want the ss catalog bc it includes solar system objects
 
 reports = selection_outputs / 'target_request_reports'
@@ -51,3 +51,4 @@ data_reduction_tools = Path('data_reduction_tools')
 
 mdwarf_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/14V4VAoDKTPLT_qSqW64henNFJyI74fZI/export?format=xlsx&gid=1771378421'
 escape_catalog_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/1dEvK_yr4eP9nq2zorvs0k3Lyt8UrqYznmb80mY4Z5X0/export?format=xlsx&gid=0'
+observation_progress_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/1-Ng0aoIWy3MqmGaNZcVOjMxBdqLO9W9qTmvx3VOD63k/export?format=xlsx&gid=0'

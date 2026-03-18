@@ -691,3 +691,61 @@ def pick_best_rows_by_group(
         take = np.r_[True, keys_arr[1:] != keys_arr[:-1]]
 
     return t2[take]
+
+
+
+def append_to_column_of_lists(tbl: table.Table, colname: str, rows, obj, raise_nonlist_error=True):
+    """
+    Append `obj` to each selected element of an object-type table column.
+
+    Parameters
+    ----------
+    tbl : astropy.table.Table
+        Input table.
+    colname : str
+        Name of the target column. Intended for an object-type column whose
+        elements are either Python lists or masked.
+    rows : int, slice, sequence of int, or boolean mask
+        Any normal row selector that works on a 1D numpy array.
+    obj : any
+        Object to append.
+    raise_nonlist_error : True|False
+        Raise an error if a selected element is not a list. Otherwise, make the selected element into a list.
+
+    Notes
+    -----
+    - Operates in place.
+    - If a selected element is masked, it becomes `[obj]`.
+    - If a selected element is an existing list, `obj` is appended.
+    - If a selected element is neither masked nor a list, a TypeError is raised.
+    """
+    col = tbl[colname]
+    n = len(tbl)
+
+    # Normalize the row selector to explicit integer indices
+    all_idx = np.arange(n)
+    try:
+        idx = np.atleast_1d(all_idx[rows])
+    except Exception as e:
+        raise ValueError(f"Could not interpret row selector {rows!r}") from e
+
+    # Handle scalar selection cleanly
+    idx = np.asarray(idx, dtype=int).ravel()
+
+    for i in idx:
+        val = col[i]
+
+        if np.ma.is_masked(val):
+            col[i] = [obj]
+            if hasattr(col, "mask"):
+                col.mask[i] = False
+        elif isinstance(val, list):
+            val.append(obj)
+        else:
+            if raise_nonlist_error:
+                raise TypeError(
+                    f"Row {i} of column {colname!r} contains {type(val).__name__}, "
+                    "expected a list or a masked value."
+                )
+            else:
+                col[i] = [val, obj]

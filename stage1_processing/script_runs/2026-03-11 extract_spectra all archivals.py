@@ -32,7 +32,7 @@ plt.ion()
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(last_n=1)
+targets = target_lists.bespoke['lya archival 2026-03-11']
 instruments = 'hst-stis'
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
@@ -248,7 +248,6 @@ while True:
     flts_to_do = no_e140ms(flts_to_do)
 
     while flts_to_do:
-        matplotlib.use('Qt5Agg')
         fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
         fltfiles = no_e140ms(fltfiles)
 
@@ -332,7 +331,7 @@ while True:
         flts_to_do = flts_to_redo_trc_slctn
 
 
-#%% extract at user-defined trace locations
+    #%% extract at user-defined trace locations
 
         # remove existing x1d files
         if flts_to_xtrct:
@@ -393,8 +392,9 @@ while True:
 
 #%% plot extraction locations
 
-    fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
+    matplotlib.use('Agg')
 
+    fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
     for ff in fltfiles:
         img = fits.getdata(ff, 1)
         f1 = dbutils.modify_file_label(ff, 'x1d')

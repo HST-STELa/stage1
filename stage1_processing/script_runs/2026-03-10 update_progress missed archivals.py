@@ -33,7 +33,7 @@ from stage1_processing.observation_table import ObsTable
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets_for_lya_flux_calcs = target_lists.observed_since('2025-09-04', type='lya')
+targets_for_lya_flux_calcs = target_lists.bespoke["missed archivals 2026-03-10"]
 saveplots = True
 have_a_look = True
 obs_filters = dict(targets=targets_for_lya_flux_calcs, instruments=['hst-stis-g140m', 'hst-stis-e140m'], directory=paths.data_targets)

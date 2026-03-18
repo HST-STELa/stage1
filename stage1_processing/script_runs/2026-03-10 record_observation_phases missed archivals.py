@@ -28,7 +28,7 @@ matplotlib.use('agg')
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(4)
+targets = target_lists.bespoke["missed archivals 2026-03-10"]
 
 
 #%% catalog setup

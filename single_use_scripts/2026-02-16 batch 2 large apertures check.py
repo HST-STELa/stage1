@@ -32,7 +32,7 @@ from lya_prediction_tools import stis
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = 'toi-2443 toi-431'.split()
+targets = 'toi-2443 toi-431 hd63935 l98-59 ltt1445a'.split()
 
 tst_type = 'model'
 

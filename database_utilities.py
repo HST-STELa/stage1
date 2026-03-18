@@ -179,7 +179,6 @@ def planet_suffixes(catalog):
     return suffixes
 
 
-
 def hst_filename2stela(path, target='from_header'):
     h = fits.open(path)
     h0, h1 = h[0].header, h[1].header
@@ -267,7 +266,7 @@ def find_data_files(
     targets needs to be 'any' or a list of targets like ['k2-9', 'toi-1204']
     instruments can be 'any'; a single string capturing just observatory, isntrument, or spectrograph
     like 'hst', 'hst-stis', or 'hst-stis-g140m'; or a list of full instrument strings like
-    ['hst-stis-g140m', 'hst_stis-e140m']
+    ['hst-stis-g140m', 'hst-stis-e140m']
     """
     directory = Path(directory)
     files = list(directory.rglob(f'*_{extension}.fits'))
@@ -453,12 +452,6 @@ def delete_files_by_hst_id(ids, directory='.'):
             os.remove(file)
 
 
-def load_obs_tbl(target_filename):
-    folder = paths.target_hst_data(target_filename)
-    file, = folder.glob(f'{target_filename}.observation-table.ecsv')
-    return table.Table.read(file)
-
-
 def filter_observations(
         obs_table,
         config_substrings=None,
@@ -522,7 +515,7 @@ def find_coadd_or_x1ds(target, out_of_transit_coadd=False, **file_srch_kws):
     else:
         files = [f for f in files if '_oot_' not in f.name]
     if not files:
-        files = find_data_files('x1d', **file_srch_kws)
+        files = find_data_files('x1d', targets=[target], **file_srch_kws)
     return files
 
 

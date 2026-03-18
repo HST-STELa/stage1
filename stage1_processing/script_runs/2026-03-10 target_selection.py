@@ -48,10 +48,10 @@ toggle_mid_cycle_update = True
 hand_add_visits = []
 
 # can use this for targets that should no longer make rank for stage 1 and that are not flight ready, not Lya bright, and without archival lya transit
-hand_remove_visits = 'BS OS BR'.split()
+hand_remove_visits = 'BT BU BV BW BX BY BZ CA CB CC OT OU OV OW OY OZ PA PB PC'.split()
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
-backup_orbits = 5
+backup_orbits = 0
 # backup_orbits = int(round(0.2 * 204))
 
 toggle_plots = True
@@ -63,9 +63,9 @@ toggle_save_new_stela_names = True # necessary to avoid errors if, e.g., new hos
 toggle_save_visit_labels = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
-toggle_remake_filtered_hst_archive = True  # needed if it has been a while since the last remake
+toggle_remake_filtered_hst_archive = False  # last update was 12-01-2025 and I've remade since then
 
-diff_label = 'target-backfill-2025-09'
+diff_label = 'target-backfill-2026-03'
 toggle_checkpoint_saves = True
 toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
@@ -732,8 +732,6 @@ if toggle_checkpoint_saves:
 
 #%% filter HST observation table (only run if new catalog downloaded)
 
-"""get the latest catalog of all existing and planned observations at https://archive.stsci.edu/pub/catalogs/, paec-7-present.cat
-be careful not to download the _ss_ catalog as I think it is solar system objects"""
 
 if toggle_remake_filtered_hst_archive:
     hst_filtered = dc.filter_hst_observations(paths.hst_database_https)
@@ -1500,11 +1498,41 @@ if toggle_checkpoint_saves:
 if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__cut-low-snr__add-flags-scores.ecsv')
 
+#%% PRUNE to TTRB-approved targets
+
+allowed = table.Table.read(paths.locked / 'ttrb approved.targets', format='ascii.csv', data_start=5, header_start=4)
+allowed_hst_names = allowed['# Name in the Proposal']
+allowed_hst_names = [n for n in allowed_hst_names if '-OFFSET' not in n]
+allowed_tics = dbutils.stela_name_tbl.loc['hostname_hst', allowed_hst_names]['tic_id']
+allowed_match = np.isin(allowed_tics, cat['tic_id'])
+print(f'{sum(~allowed_match)} TTRB-allowed targets are not in the catalog.')
+catutils.set_index(cat, 'tic_id')
+cat = cat.loc[allowed_tics[allowed_match]]
+
+#%% checkpoint
+
+if toggle_checkpoint_saves:
+    cat.write(paths.selection_intermediates / 'chkpt7-1__allowed_targets_only.ecsv', overwrite=True)
+
+
+#%% load checkpoint
+
+if toggle_checkpoint_saves:
+    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7-1__allowed_targets_only.ecsv')
+
+
+#%% make sure already-observed targets are selectable
+
+already_observed = catutils.read_requested_targets(paths.requested / 'stela_already_observed.txt')
+cat.add_index('hostname')
+iloc = cat.loc_indices['hostname', already_observed]
+cat['stage1'][iloc] = True
+cat['decision'][iloc] = np.char.add(cat['decision'][iloc].astype('str'), ' Later reintroduced because already observed.')
 
 #%% verify ISR table
 
 """check nobody used a hostname in the table that doesn't match to a target"""
-unmatched = catutils.unmatched_names(ref.mdwarf_isr['Target'], merged['hostname'])
+unmatched = catutils.unmatched_names(ref.mdwarf_isr['Current Exo Archive Name'], merged['hostname'])
 if len(unmatched) > 0:
     raise KeyError(f'These names in the M dwarf ISR table have no match: {unmatched.tolist()}')
 
@@ -1534,6 +1562,7 @@ else:
     # load the hand updated observing status sheet to ID lemons
     path_main_table = dbutils.pathname_max(paths.status_input, 'Observation Progress*.xlsx')
     progress_tbl = catutils.read_excel(path_main_table)
+    progress_tbl = progress_tbl[progress_tbl["Global\nRank"] < 200]
     progress_tbl.add_index('Target')
     drop = progress_tbl['Pass to\nStage 1b?'] == False
     lemons = progress_tbl['Target'][drop]
@@ -1554,13 +1583,10 @@ else:
     # make a table for accounting
     plantbl = table.Table(data=(labeltbl['target'].copy(), labeltbl['tic_id'].copy(), lya_planned, fuv_planned),
                           names='name tic_id lya fuv'.split())
-    available_planned = lya_planned | fuv_planned
-    plantbl = plantbl[available_planned]
+    mask_inplan = lya_planned | fuv_planned
+    plantbl = plantbl[mask_inplan]
     planned_targets = plantbl['name'].tolist()
     plantbl.add_index('tic_id')
-
-    # make sure all targets in phase 2 have a match
-    assert np.all(np.in1d(plantbl['tic_id'], cat['tic_id']))
 
     # count how many freed-up orbits there are that we can allocate
     plantbl['lemon'] = False
@@ -1603,6 +1629,7 @@ if backup_orbits:
     catutils.add_filled_masked_column(cat, 'stage1_backup', False, dtype=bool)
 
 cat['stage1_orbit_total'] = table.MaskedColumn(len(cat), mask=True, dtype=int)
+
 
 
 #%% add any new potential targets to STELa name table
@@ -1690,17 +1717,6 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     elif name in planned_targets:
         iplan = plantbl.loc_indices[name]
         planned = plantbl[iplan]
-        if e140m:
-            plan_cost = 1
-        else:
-            plan_cost = int(planned['lya']) + int(planned['fuv'])
-        free_cost = stela_orbits - plan_cost
-
-        if plan_cost > available_planned:
-            raise ValueError('Trying to allocate more planned orbits than expected.')
-        status = 'planned'
-        available_planned -= plan_cost
-        available_free -= free_cost
 
         # record for accounting
         register_lya, register_fuv = False, False
@@ -2005,7 +2021,7 @@ simbad = apt.get_simbad_info(targets['simbad_id'].filled('?'))
 apt.fill_spectral_types(targets, simbad)
 apt.fill_optical_magnitudes(targets, simbad)
 apt_target_table = apt.make_apt_target_table(targets, simbad)
-past_targets = table.Table.read(paths.locked / 'apt_target_export.targets', format='ascii.csv', data_start=5, header_start=4)
+past_targets = table.Table.read(paths.locked / 'ttrb approved.targets', format='ascii.csv', data_start=5, header_start=4)
 
 # identify new targets by coordinates in case of name changes
 apt_coords = coord.SkyCoord(apt_target_table['RA'], apt_target_table['DEC'], unit=(u.hourangle, u.deg))
@@ -2054,7 +2070,7 @@ if toggle_save_outputs:
     old_target_new_info.write(paths.selection_outputs / 'new_info_old_targets.csv', overwrite=True)
 
 
-#%% M dwarfs not in ISR table
+#%% M dwarfs not in ISR table (might want to check that they aren't just name changes)
 
 """You will need to rerun the selection if any of these must be observed with E140M, since that will make more orbits
 available."""
@@ -2062,7 +2078,7 @@ available."""
 if toggle_save_outputs:
     Ms = apt_info['Mdwarf']
     Mnames = apt_info['name'][Ms]
-    not_in_isr = ~np.in1d(Mnames, ref.mdwarf_isr['Target'])
+    not_in_isr = ~np.in1d(Mnames, ref.mdwarf_isr['Current Exo Archive Name'])
     Ms_to_add = Mnames[not_in_isr]
     np.savetxt(paths.selection_outputs / 'Mdwarfs_to_add_to_ISR_table.txt', Ms_to_add, fmt='%s')
 
