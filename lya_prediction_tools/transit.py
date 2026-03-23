@@ -243,6 +243,33 @@ def flat_transit_transmission(
     return flat_transmission, flat_depth
 
 
+def time_bin_tranmission(time_bin_edges, transit_timegrid, transit_transmission):
+    """
+
+    Parameters
+    ----------
+    time_bin_edges : 1D array
+    transit_timegrid : 1D array
+    transit_transmission : 2D array with [n_wave_pts, n_time_pts] shape
+
+    Returns
+    -------
+    transmission array averaged over time bins with shape [n_wave_pts, n_time_bin_edges - 1]
+
+    Note
+    ----
+    to use for a large array of transit_transmissions, try
+    timebin = lambda trans: time_bin_tranmission(time_bin_edges, transit_timegrid, trans)
+    result = np.apply_along_axis(timebin, 0, trans)
+
+    """
+
+    # average the transits over the observation intervals using the "intergolate" function I wrote
+    bin_to_obs = lambda trans: utils.intergolate(time_bin_edges, transit_timegrid, trans, left=1, right=1)
+    trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transit_transmission)
+    return trans_tbinned
+
+
 def generic_transit_snr(
         obstimes,
         exptimes,
@@ -267,6 +294,7 @@ def generic_transit_snr(
     by pre-computing wavelength and time gridded values and variability estimates that don't change across transit
     cases."""
 
+    # region preamble
     assert lya_recon_flux.ndim == 1
     if transit_transmission_ary.ndim == 2:
         transit_transmission_ary = transit_transmission_ary[None, :, :]
@@ -323,6 +351,7 @@ def generic_transit_snr(
         baseline_time_range,
         1000
     )
+    # endregion
 
     rows = []
     wavefigs = []
@@ -331,8 +360,7 @@ def generic_transit_snr(
         row = {}
 
         # average the transits over the observation intervals using the "intergolate" function I wrote
-        bin_to_obs = lambda trans: utils.intergolate(obs_edges, transit_timegrid, trans, left=1, right=1)
-        trans_tbinned = np.apply_along_axis(bin_to_obs, 0, transit_transmission)
+        trans_tbinned = time_bin_tranmission(obs_edges, transit_timegrid, transit_transmission)
         trans_obs = trans_tbinned[obs_mask]
 
         # interp lya and transmission onto the same wavelength grid

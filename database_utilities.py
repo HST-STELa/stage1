@@ -2,9 +2,9 @@ from pathlib import Path
 import os
 import re
 import warnings
-from collections import defaultdict
 from itertools import cycle
 from datetime import datetime
+from typing import Optional, Union, List, Iterable
 
 import numpy as np
 from astropy.io import fits
@@ -562,3 +562,80 @@ def timestamp(date_only=False):
     else:
         return now_no_colons
 
+
+def one_glob(
+    directory: Union[str, Path],
+    pattern: str,
+    *,
+    error_on_multiple: bool = True,
+) -> Optional[Path]:
+    directory = Path(directory)
+    matches = list(directory.glob(pattern))
+
+    if not matches:
+        return None
+
+    if error_on_multiple and len(matches) > 1:
+        raise ValueError(
+            f"Multiple matches for pattern '{pattern}' in '{directory}': {matches}"
+        )
+
+    return matches[0]
+
+
+def _to_datetime(t: Union[datetime, float, int, str]) -> datetime:
+    """Normalize input into a datetime object."""
+    if isinstance(t, datetime):
+        return t
+    if isinstance(t, (int, float)):
+        return datetime.fromtimestamp(t)
+    if isinstance(t, str):
+        return datetime.fromisoformat(t)
+    raise TypeError(f"Unsupported time type: {type(t)}")
+
+
+def files_modified_after(
+    folder: Union[str, Path],
+    pattern: str,
+    after: Union[datetime, float, int, str],
+    recursive: bool = True,
+) -> List[Path]:
+    """
+    Return files in `folder` matching `pattern` modified after `after`.
+
+    Parameters
+    ----------
+    folder : str | Path
+        Root directory to search in
+    pattern : str
+        Glob pattern (e.g., '*.py', '*.fits')
+        NOTE: do NOT include '**' — recursion is controlled by `recursive`
+    after : datetime | float | int | str
+        Threshold time
+    recursive : bool
+        If True, uses rglob; otherwise glob
+
+    Returns
+    -------
+    List[Path]
+    """
+    folder = Path(folder)
+    after_dt = _to_datetime(after)
+
+    if not folder.is_dir():
+        raise ValueError(f"{folder} is not a valid directory")
+
+    paths: Iterable[Path]
+    if recursive:
+        paths = folder.rglob(pattern)
+    else:
+        paths = folder.glob(pattern)
+
+    results = []
+    for p in paths:
+        if p.is_file():
+            mtime = datetime.fromtimestamp(p.stat().st_mtime)
+            if mtime > after_dt:
+                results.append(p)
+
+    return results

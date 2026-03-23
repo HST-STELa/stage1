@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import List, Mapping, Literal, Callable, Union
 from copy import copy
+from importlib import reload
 
 import numpy as np
 import numpy.typing as npt
@@ -228,7 +229,7 @@ def best_by_det_frac(tbl: Table, category_column: str, detection_threshold):
 
 class Host(object):
     lya_reconstruction : LyaReconstruction
-    def __init__(self, name, host_catalog, planet_catalog):
+    def __init__(self, name, host_catalog=preloads.hosts, planet_catalog=preloads.planets):
         dbname = name
         tic_id, hostname = stela_name_tbl.loc['hostname_file', dbname][['tic_id', 'hostname']]
         self.dbname = name
@@ -267,6 +268,12 @@ class Host(object):
         # lya reconstruction
         lya_reconstruction_file, = self.folder.rglob('*lya-recon*')
         self.lya_reconstruction = get_lyarecon_object(lya_reconstruction_file)
+
+    @classmethod
+    def from_host_name(cls, host_catalog_name):
+        host_dbname = preloads.stela_names.loc['hostname', host_catalog_name]['hostname_file']
+        return Host(host_dbname, preloads.hosts, preloads.planets)
+
 
 @dataclass
 class VariabilityPredictor:
@@ -353,6 +360,24 @@ class Planet(object):
         self.in_transit_range = u.Quantity((-self.optical_transit_duration / 2, 30 * u.h))  # long egress for tails
         self.dbname = f'{host_dbname}-{self.stela_suffix}'
         self.sim_name = f'{host_dbname}{self.stela_suffix}'
+
+    @classmethod
+    def from_planet_name(cls, planet_catalog_name):
+        slimcat = preloads.planets[~preloads.planets['pl_name'].mask]
+        index_names = [idx.columns[0].name for idx in slimcat.indices]
+        for key in ('pl_name', 'tic_id'):
+            if key not in index_names:
+                slimcat.add_index(key)
+
+        plrow = slimcat.loc['pl_name', planet_catalog_name]
+        tic = plrow['tic_id']
+        allrows = slimcat.loc['tic_id', [tic]]
+        plidx = allrows.loc_indices['pl_name', planet_catalog_name]
+        host_cat_name = plrow['hostname']
+        host_dbname = preloads.stela_names.loc['hostname', host_cat_name]['hostname_file']
+
+        return Planet(plrow, plidx, host_dbname)
+
 
 @dataclass
 class TransitModelSet:
@@ -882,3 +907,15 @@ def clip_transit_set(
     for key in new_transit.params.keys():
         new_transit.params[key] = new_transit.params[key][::stride]
     return new_transit
+
+
+def H_ionization_xsection(hv):
+    hv_ion = 13.6 * u.eV
+    xnorm = 6.3e-18 * u.cm ** 2
+    x = xnorm * (hv / hv_ion) ** -3
+    if hasattr(hv, '__iter__'):
+        x[hv < hv_ion] = 0
+    else:
+        if hv < hv_ion:
+            return 0
+    return x.to('cm2')

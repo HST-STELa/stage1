@@ -27,13 +27,32 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
 dnld_from_insts = 'COS,STIS'
 dnld_from_specs = "G140M,G140L,E140M,G130M,G160M"
 dnld_availability = 'PUBLIC,PROPRIETARY'
+
+
+#%%
+
+targets_all = target_lists.everything_in_database()
+
+targets = []
+for target in targets_all:
+    obstblpath = obs_tbl_tools.get_path(target)
+    if not obstblpath.exists():
+        targets.append(target)
+    else:
+        obstbl = obs_tbl_tools.load_obs_tbl(target)
+        if len(obstbl) == 0:
+            targets.append(target)
+
+
+#%% list to track targets for which new data have been downloaded
+
+targets_w_new_data = []
 
 
 #%% setup for MAST query
@@ -165,6 +184,7 @@ while True:
         new_files = files_in_archive[new_files_mask]
 
         if new_files:
+            targets_w_new_data.append(target)
             print()
             print('Attempting download of:')
             new_files['instrument_name filters filename access'.split()].pprint(-1)
@@ -404,3 +424,10 @@ while True:
 
   except StopIteration:
     break
+
+
+#%% save table of targets for which data was downloaded
+
+os.chdir(paths.stage1_code)
+filename = f'targets_w_new_data_downloaded_{dbutils.timestamp()}.txt'
+np.savetxt(paths.new_data_lists / filename, targets_w_new_data, fmt='%s')

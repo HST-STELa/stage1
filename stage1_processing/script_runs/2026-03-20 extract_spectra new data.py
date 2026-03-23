@@ -32,14 +32,86 @@ plt.ion()
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(last_n=1)
 instruments = 'hst-stis'
 batch_mode = True
-care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 redo_extractions = False
 # note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
 # delete the files produced by the extraction (including intermediates)
+
+#%% targets from commit log
+
+logstr = """targets/hd17156/hst/hd17156.observation-table.ecsv
+targets/hip113103/hst/hip113103.observation-table.ecsv
+targets/k2-9/hst/k2-9.observation-table.ecsv
+targets/kepler-10/hst/kepler-10.observation-table.ecsv
+targets/kepler-37/hst/kepler-37.observation-table.ecsv
+targets/toi-122/hst/toi-122.observation-table.ecsv
+targets/toi-1266/hst/toi-1266.observation-table.ecsv
+targets/toi-1268/hst/toi-1268.observation-table.ecsv
+targets/toi-133/hst/_.all clear.ofhjaq010.txt
+targets/toi-133/hst/_.has issues.none.txt
+targets/toi-133/hst/_.unchecked.none.txt
+targets/toi-133/hst/_.unusable.none.txt
+targets/toi-1451/hst/_.all clear.ofhjf1010.txt
+targets/toi-1451/hst/_.has issues.none.txt
+targets/toi-1451/hst/_.unchecked.none.txt
+targets/toi-1451/hst/_.unusable.none.txt
+targets/toi-1696/hst/toi-1696.observation-table.ecsv
+targets/toi-1728/hst/toi-1728.observation-table.ecsv
+targets/toi-1742/hst/toi-1742.observation-table.ecsv
+targets/toi-1751/hst/toi-1751.observation-table.ecsv
+targets/toi-1752/hst/_.all clear.ofhjf6010.txt
+targets/toi-1752/hst/_.has issues.none.txt
+targets/toi-1752/hst/_.unchecked.none.txt
+targets/toi-1752/hst/_.unusable.none.txt
+targets/toi-198/hst/_.all clear.lfh941poq-lfh941pqq-lfh941psq-lfh941puq-ofhjg1010.txt
+targets/toi-198/hst/_.has issues.none.txt
+targets/toi-198/hst/_.unchecked.none.txt
+targets/toi-198/hst/_.unusable.none.txt
+targets/toi-2136/hst/toi-2136.observation-table.ecsv
+targets/toi-214/hst/_.all clear.ofhjd1010.txt
+targets/toi-214/hst/_.has issues.none.txt
+targets/toi-214/hst/_.unchecked.none.txt
+targets/toi-214/hst/_.unusable.none.txt
+targets/toi-2276/hst/toi-2276.observation-table.ecsv
+targets/toi-233/hst/toi-233.observation-table.ecsv
+targets/toi-4451/hst/_.all clear.ofhjd9010.txt
+targets/toi-4451/hst/_.has issues.none.txt
+targets/toi-4451/hst/_.unchecked.none.txt
+targets/toi-4451/hst/_.unusable.none.txt
+targets/toi-4529/hst/_.all clear.ofhjd9010.txt
+targets/toi-4529/hst/_.has issues.none.txt
+targets/toi-4529/hst/_.unchecked.none.txt
+targets/toi-4529/hst/_.unusable.none.txt
+targets/toi-4556/hst/_.all clear.ofhjd9010.txt
+targets/toi-4556/hst/_.has issues.none.txt
+targets/toi-4556/hst/_.unchecked.none.txt
+targets/toi-4556/hst/_.unusable.none.txt
+targets/toi-4632/hst/toi-4632.observation-table.ecsv
+targets/toi-4643/hst/_.all clear.ofhjm6010.txt
+targets/toi-4643/hst/_.has issues.none.txt
+targets/toi-4643/hst/_.unchecked.none.txt
+targets/toi-4643/hst/_.unusable.none.txt
+targets/toi-5788/hst/toi-5788.observation-table.ecsv
+targets/toi-6054/hst/_.all clear.ofhji2010.txt
+targets/toi-6054/hst/_.has issues.none.txt
+targets/toi-6054/hst/_.unchecked.none.txt
+targets/toi-6054/hst/_.unusable.none.txt
+targets/toi-680/hst/_.all clear.ld5b66qdq-ld5b66qgq.txt
+targets/toi-680/hst/_.has issues.none.txt
+targets/toi-680/hst/_.unchecked.none.txt
+targets/toi-680/hst/_.unusable.none.txt"""
+
+files = logstr.split('\n')
+targets = [f.split('/')[1] for f in files]
+targets = sorted(list(set(targets)))
+
+for target in targets:
+    fd = paths.target_hst_data(target)
+    if not fd.exists():
+        targets.remove(target)
 
 
 #%% set extraction parameters

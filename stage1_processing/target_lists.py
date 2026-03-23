@@ -1,5 +1,8 @@
 from datetime import datetime
 import re
+import warnings
+from pathlib import Path
+from typing import Union, Iterable, List
 
 import numpy as np
 from astropy.table import Table, Row, vstack
@@ -8,6 +11,7 @@ import database_utilities as dbutils
 import paths
 
 from stage1_processing import preloads
+from stage1_processing.observation_table import ObsTable
 
 
 def eval_no(n):
@@ -93,6 +97,40 @@ def new_data(last_n=1):
     names = np.hstack(names_lists[-last_n:])
     names = list(set(names))
     return names
+
+
+def last_data_review_before(date):
+    targets_all = everything_in_database()
+    targets_filtered = []
+    notbl = []
+    for target in targets_all:
+        try:
+            obstbl = ObsTable.load_from_targname(target)
+            last_review = obstbl.meta.get('last data review')
+            if last_review:
+                last_review = datetime.fromisoformat(last_review)
+                if last_review < dbutils._to_datetime(date):
+                    targets_filtered.append(target)
+            else:
+                targets_filtered.append(target)
+
+        except FileNotFoundError:
+            notbl.append(target)
+
+    if notbl:
+        msg = 'No observation table found for these targets in the database:\n\t'
+        msg += '\n\t'.join(notbl)
+        warnings.warn()
+
+    return targets_filtered
+
+
+def data_modified_after(after, data_srch_ptrn='*hst-stis*_tag.fits'):
+    files = dbutils.files_modified_after(paths.data_targets, data_srch_ptrn, after, True)
+    targets = [dbutils.parse_filename(f)['target'] for f in files]
+    targets = sorted(list(set(targets)))
+    return targets
+
 
 bespoke = { # use lists not tuples bc tbl indexing does not like tuples
     "missed archivals 2026-03-10" :

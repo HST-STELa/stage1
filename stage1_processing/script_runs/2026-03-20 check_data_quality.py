@@ -34,7 +34,11 @@ from stage1_processing.observation_table import ObsTable
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data()
+targets = (
+    set(target_lists.data_modified_after('2026-03-05')) |
+    set(target_lists.bespoke['lya archival 2026-03-11'])
+)
+targets = sorted(list(targets))
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 matplotlib.use('Qt5Agg')
@@ -267,7 +271,7 @@ while True:
             obs_tbl['usability status'][assoc_obs_mask] = 'has issues'
 
 
-#%% now look through the spectra and flag any not yet caught that might be unusable
+    #%% now look through the spectra and flag any not yet caught that might be unusable
 
     """Data could be good but look like crap, so spectra should only be flagged unusable
     if they clearly differ from the norm in a serious way, I think."""
@@ -281,21 +285,155 @@ while True:
         config_mask = usbl_tbl['science config'] == config
         cnfg_tbl = usbl_tbl[config_mask]
         cnfg_tbl['flags'] = cnfg_tbl['flags'].filled('')
+
+        spectra = []
+
+        # mark any with all zeros or nans as unusable and don't bother plotting
         for row in cnfg_tbl:
             id = row['archive id']
-            fig = plt.figure()
             file, = data_dir.glob(f'*{id}_x1d.fits')
-            plt.title(file.name)
             data = fits.getdata(file, 1)
-            plt.step(data['wavelength'].T, data['flux'].T, where='mid')
-            plt.annotate('\n'.join(list(row['flags'])), xy=(0.02,0.98), xycoords='axes fraction', va='top')
+
+            wave = np.ravel(np.asarray(data['wavelength'], dtype=float))
+            flux = np.ravel(np.asarray(data['flux'], dtype=float))
+
+            finite = np.isfinite(wave) & np.isfinite(flux)
+            if not np.any(finite):
+                mask = obs_tbl['archive id'] == id
+                obs_tbl['usable'][mask] = False
+                obs_tbl['usability status'][mask] = 'unusable'
+                obs_tbl['reason unusable'][mask] = 'Spectrum is entirely NaN or non-finite.'
+                obs_tbl.add_flag(mask, 'All spectral values are NaN/non-finite.')
+                continue
+
+            wave = wave[finite]
+            flux = flux[finite]
+
+            order = np.argsort(wave)
+            wave = wave[order]
+            flux = flux[order]
+
+            if np.all(flux == 0):
+                mask = obs_tbl['archive id'] == id
+                obs_tbl['usable'][mask] = False
+                obs_tbl['usability status'][mask] = 'unusable'
+                obs_tbl['reason unusable'][mask] = 'Spectrum is all zeros.'
+                continue
+
+            spectra.append(dict(
+                id=id,
+                file=file,
+                row=row,
+                wavelength=wave,
+                flux=flux,
+            ))
+
+        # interpolate the remaining data onto the same wavelength grid and find median and median abs dev
+        if len(spectra) == 0:
+            continue
+
+        wmins = [np.nanmin(spec['wavelength']) for spec in spectra]
+        wmaxs = [np.nanmax(spec['wavelength']) for spec in spectra]
+        wmin = max(wmins)
+        wmax = min(wmaxs)
+
+        if not np.isfinite(wmin) or not np.isfinite(wmax) or wmax <= wmin:
+            raise ValueError(f'No common wavelength overlap for {target} {config}')
+
+        ngrid = int(np.median([len(spec['wavelength']) for spec in spectra]))
+        ngrid = max(ngrid, 200)
+        wave_grid = np.linspace(wmin, wmax, ngrid)
+
+        interp_fluxes = []
+        for spec in spectra:
+            interp_flux = np.interp(
+                wave_grid,
+                spec['wavelength'],
+                spec['flux'],
+                left=np.nan,
+                right=np.nan,
+            )
+            spec['interp_flux'] = interp_flux
+            interp_fluxes.append(interp_flux)
+
+        interp_fluxes = np.asarray(interp_fluxes)
+        median_flux = np.nanmedian(interp_fluxes, axis=0)
+        mad_flux = np.nanmedian(np.abs(interp_fluxes - median_flux), axis=0)
+
+        # plot the spectra together in batches of no more than 5 on top of a thick background line
+        # showing median and a light shaded region showing median abs dev
+        figs = []
+        m = 5
+        for start in range(0, len(spectra), m):
+            batch = spectra[start:start+m]
+            fig, ax = plt.subplots(figsize=(10, 5))
+            figs.append(fig)
+
+            ax.fill_between(
+                wave_grid,
+                median_flux - mad_flux,
+                median_flux + mad_flux,
+                color='k',
+                alpha=0.2,
+                zorder=1,
+                label = '_'
+            )
+            ax.plot(
+                wave_grid,
+                median_flux,
+                lw=2,
+                color='k',
+                alpha=0.7,
+                zorder=2,
+                label='median',
+            )
+
+            for spec in batch:
+                ax.step(
+                    spec['wavelength'],
+                    spec['flux'],
+                    where='mid',
+                    zorder=3,
+                    label=str(spec['id'])[-6:],
+                )
+
+            title_ids = ', '.join([str(spec['id'])[-6:] for spec in batch])
+            ax.set_title(f'{target} | {config} | {title_ids}')
+            ax.set_xlabel('Wavelength')
+            ax.set_ylabel('Flux')
+            ax.legend(fontsize='small', ncol=2)
+
+            notes = []
+            for spec in batch:
+                flags = spec['row']['flags']
+                if np.ma.is_masked(flags) or flags == '':
+                    continue
+                if isinstance(flags, str):
+                    flag_text = flags
+                else:
+                    try:
+                        flag_text = ', '.join(map(str, flags))
+                    except TypeError:
+                        flag_text = str(flags)
+                notes.append(f"{str(spec['id'])[-6:]}: {flag_text}")
+
+            if len(notes) > 0:
+                ax.annotate(
+                    '\n'.join(notes),
+                    xy=(0.02, 0.98),
+                    xycoords='axes fraction',
+                    va='top',
+                    fontsize='small',
+                )
+
+            fig.tight_layout()
 
         print('Click outside the plots to continue.')
-        xy = utils.click_coords(fig)
+        xy = utils.click_coords(figs[-1])
 
         while True:
-            id_endings = input('Any spectra that should have flags added? Give last few letters of the ids, separated by commas.\n'
-                              'Hit enter if none. Prompt will loop until an empty answer is given.')
+            id_endings = input('Any spectra with issues, flags, or unusable? Give last few letters of the ids, separated by commas.\n'
+                               'Hit enter if none. Prompt will loop until an empty answer is given.')
             if id_endings == '':
                 break
             id_endings = re.split(', *', id_endings)
@@ -304,7 +442,7 @@ while True:
                 mask |= np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
             i_mask, = np.nonzero(mask)
 
-            usable_ans = input(f'Are {', '.join(id_endings)} unusable(u), have issues (i), all clear (a), or no issues and '
+            usable_ans = input(f'Are {", ".join(id_endings)} unusable(u), have issues (i), all clear (a), or no issues and '
                                f'just want to record flags with no change to usability status (enter)?')
             if usable_ans == '':
                 pass

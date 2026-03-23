@@ -553,3 +553,12 @@ def closest_within_rtol(value, array, rtol):
             f"No value within relative tolerance {rtol} of {value}. "
             f"Closest value was {closest} (rel. error = {rel_err:.3g})"
         )
+
+
+def roots(x, y):
+    """Linearly interpolate all roots of y given vectors x and y."""
+    idx = np.where(np.sign(y[:-1]) != np.sign(y[1:]))[0]
+    x0, x1 = x[idx], x[idx+1]
+    y0, y1 = y[idx], y[idx+1]
+    roots = x0 - y0 * (x1 - x0) / (y1 - y0)
+    return np.array(roots)

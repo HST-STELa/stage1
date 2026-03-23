@@ -32,10 +32,11 @@ plt.ion()
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.new_data(last_n=1)
+targets = target_lists.bespoke['lya archival 2026-03-11']
 instruments = 'hst-stis'
 batch_mode = True
-care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
+accept_usability_after = datetime(2026, 3, 5)
 
 redo_extractions = False
 # note that the above will redo all extractions for the target. If you want to redo specific extractions, just go
@@ -145,9 +146,6 @@ while True:
 
     obs_tbl = obs_tbl_tools.load_obs_tbl(target)
 
-    print(f'\n{target} observation table:\n')
-    obs_tbl.pprint(-1, -1)
-
     obs_tbl_usbl = obs_tbl[obs_tbl['usable'].filled(True)]
     stis_tag_files_in_tbl = []
     for row in obs_tbl_usbl:
@@ -168,15 +166,22 @@ while True:
 
 #%% identify existing STIS extractions
 
-    obs_tbl_usbl['skip_extraction'] = False
-    obs_tbl_usbl['skip_extraction'].description = (
+    obs_tbl['skip_extraction'] = False
+    obs_tbl['skip_extraction'].description = (
         "Temporary column telling the extraction script whether to extract the data or not. Can likely be deleted if"
         "still present later."
     )
 
-    for row in obs_tbl_usbl:
+    if 'last acq check' in obs_tbl.meta:
+        last_check = datetime.fromisoformat(obs_tbl.meta['last acq check'])
+        check_acceptable = last_check > accept_usability_after
+    else:
+        check_acceptable = False
+    for row in obs_tbl:
         if 'hst-cos' in row['science config']:
             continue
+        if check_acceptable and row['usable'] == False:
+            row['skip_extraction'] = True
         sci_names = row['key science files']
         for name in sci_names:
             sci_file, = dbutils.find_stela_files_from_hst_filenames(name, data_dir)
@@ -193,12 +198,23 @@ while True:
                             os.remove(del_file)
                 else:
                     row['skip_extraction'] = True
-    obs_tbl_usbl.add_index('archive id')
+    obs_tbl.add_index('archive id')
 
     def skip(file_name):
         id = dbutils.parse_filename(file_name)['id']
-        return obs_tbl_usbl.loc['archive id', id]['skip_extraction']
+        return obs_tbl.loc['archive id', id]['skip_extraction']
 
+#%% skip if no new
+
+    any_new = all(
+        ~obs_tbl['skip_extraction'] &
+        (np.char.count(obs_tbl['science config'].filled('').astype('str'), 'stis') > 0)
+    )
+    if not any_new:
+        continue
+    else:
+        print(f'\n{target} observation table:\n')
+        obs_tbl.pprint(-1, -1)
 
 
 #%% update calibration files and perform initial extraction
@@ -248,7 +264,6 @@ while True:
     flts_to_do = no_e140ms(flts_to_do)
 
     while flts_to_do:
-        matplotlib.use('Qt5Agg')
         fltfiles = dbutils.find_data_files('flt', instruments=instruments, targets=[target])
         fltfiles = no_e140ms(fltfiles)
 
@@ -332,7 +347,7 @@ while True:
         flts_to_do = flts_to_redo_trc_slctn
 
 
-#%% extract at user-defined trace locations
+    #%% extract at user-defined trace locations
 
         # remove existing x1d files
         if flts_to_xtrct:
@@ -366,7 +381,7 @@ while True:
 
 #%% delete skip column
 
-    obs_tbl_usbl.remove_column('skip_extraction')
+    obs_tbl.remove_column('skip_extraction')
 
 #%% check obs_tbl
 
@@ -385,6 +400,7 @@ while True:
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last stis extraction'] = datetime.now().isoformat()
+    obs_tbl.meta['last data review'] = datetime.now().isoformat()
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
     utils.query_next_step(batch_mode, care_level, 1)
@@ -392,8 +408,9 @@ while True:
 
 #%% plot extraction locations
 
-    fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
+    matplotlib.use('Agg')
 
+    fltfiles = dbutils.find_data_files('flt', instruments='hst-stis', directory=data_dir)
     for ff in fltfiles:
         img = fits.getdata(ff, 1)
         f1 = dbutils.modify_file_label(ff, 'x1d')
