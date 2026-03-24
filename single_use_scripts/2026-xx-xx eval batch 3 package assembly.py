@@ -186,8 +186,6 @@ for file in tqdm(xray_files):
 
 #%% inspect a random assortment
 
-
-
 inspct_files = choices(xray_files, k=5)
 for file in inspct_files:
     targname = file.name[:-10]
@@ -208,6 +206,8 @@ for file in inspct_files:
     ax0.set_yscale('log')
     ax1.step(data['wavelength'], data['bin_width'])
     ax1.set_ylabel('bin width')
+
+
 
 #%% close plots
 
@@ -241,6 +241,8 @@ cat_not_xray = set(hostnames) - targets_xray
 
 """
 TOI-1730 is a rename. Christian used lhs 1903. Wasp-84 is a mystery.
+
+Update: it was a mix up on his end. wasp-84 was swapped for l22-69. 
 """
 
 #%% add x-ray spectra to package
