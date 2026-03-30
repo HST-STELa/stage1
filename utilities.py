@@ -3,6 +3,7 @@ from math import nan
 import sys
 from pathlib import Path
 from collections import Counter
+import re
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -562,3 +563,51 @@ def roots(x, y):
     y0, y1 = y[idx], y[idx+1]
     roots = x0 - y0 * (x1 - x0) / (y1 - y0)
     return np.array(roots)
+
+
+def is_null_item(item):
+    # Strings: remove punctuation, then treat empty/whitespace as null
+    if isinstance(item, str):
+        item = re.sub(r"[,.;|()]", "", item)
+        if item == "" or item.isspace():
+            return True
+
+    # Proper masked scalar
+    if item is np.ma.masked:
+        return True
+
+    # Masked arrays, including weird empty ones like masked_array([])
+    if np.ma.isMaskedArray(item):
+        if item.size == 0:
+            return True
+        if np.all(np.ma.getmaskarray(item)):
+            return True
+
+    # Empty containers / arrays
+    try:
+        if len(item) == 0:
+            return True
+    except TypeError:
+        pass
+
+    return False
+
+
+def is_effectively_empty(val) -> bool:
+    # Already masked scalar
+    if val is np.ma.masked:
+        return True
+
+    # Empty masked array, e.g.
+    # masked_array(data=[], mask=[], fill_value=..., dtype=...)
+    if np.ma.isMaskedArray(val):
+        return val.size == 0
+
+    # Empty plain containers / arrays
+    if isinstance(val, (list, tuple, np.ndarray)):
+        return len(val) == 0
+
+    if type(val) is str and val.isspace():
+        return True
+
+    return False

@@ -32,14 +32,14 @@ planetcat = catutils.load_and_mask_ecsv(
 
 #%% id batch 3 hosts
 
-hostnames_file = target_lists.eval_no(3)
-tics = dbutils.stela_name_tbl.loc['hostname_file', hostnames_file]['tic_id']
+eval_targets = target_lists.eval_no(3)
+tics = dbutils.stela_name_tbl.loc['hostname_file', eval_targets]['tic_id']
 
 
 #%% find targets that need coadds
 
 needs_coadd = []
-for host in hostnames_file:
+for host in eval_targets:
     x1dpath = dbutils.find_coadd_or_x1ds(
         host,
         out_of_transit_coadd=True,
@@ -56,7 +56,7 @@ lya_folder = staging_area / 'lya_data'
 if not lya_folder.exists():
     os.mkdir(lya_folder)
 
-for host in hostnames_file:
+for host in eval_targets:
     x1dpath, = dbutils.find_coadd_or_x1ds(
         host,
         out_of_transit_coadd=True,
@@ -71,7 +71,7 @@ for host in hostnames_file:
 #%% planets missing from catalog
 
 missing = ~np.isin(tics, planetcat['tic_id'])
-missing_names = hostnames_file[missing]
+missing_names = eval_targets[missing]
 
 
 #%% make planet and host tables
@@ -136,7 +136,7 @@ for file in tqdm(xray_files):
         targname, = dbutils.groom_hst_names_for_simbad([targname])
         targname, = dbutils.resolve_stela_name_w_simbad([targname])
     targname_file, = dbutils.target_names_stela2file([targname])
-    if targname_file not in hostnames_file:
+    if targname_file not in eval_targets:
         warnings.warn(f"{targname_file} in provided x-ray spectra but not in eval batch. Skipping.")
         continue
 
@@ -216,7 +216,6 @@ plt.close('all')
 
 #%% figure out mimatch in x-ray targets
 
-targets_eval = target_lists.eval_no(eval_no)
 targets_xray = []
 for file in xray_files:
     targname = file.name[:-10]
@@ -224,11 +223,11 @@ for file in xray_files:
     targname_file, = dbutils.target_names_stela2file([targname])
     targets_xray.append(targname_file)
 
-targets_eval = set(targets_eval)
+eval_targets = set(eval_targets)
 targets_xray = set(targets_xray)
 
-xray_not_eval = targets_xray - targets_eval
-eval_not_xray = targets_eval - targets_xray
+xray_not_eval = targets_xray - eval_targets
+eval_not_xray = eval_targets - targets_xray
 
 
 #%% load host catalog to see if that's the problem
@@ -247,13 +246,12 @@ Update: it was a mix up on his end. wasp-84 was swapped for l22-69.
 
 #%% add x-ray spectra to package
 
-targets = target_lists.eval_no(eval_no)
 destination = staging_area / 'xray_reconstructions'
 if not destination.exists():
     os.mkdir(destination)
 
 missed = []
-for target in targets:
+for target in eval_targets:
     folder = paths.target_data(target) / 'reconstructions'
     xray_file = dbutils.one_glob(folder, '*xray-recon.fits', error_on_multiple=True)
     if xray_file:
@@ -264,3 +262,43 @@ for target in targets:
         missed.append(target)
 
 print(missed)
+
+
+#%% lya: check that all targets have files
+
+lya_inbox = paths.inbox / '2026-03-24 lya reconstructions'
+lya_files = sorted(lya_inbox.glob('*lya_recon.csv'))
+lya_targets = [f.name.split('.')[0] for f in lya_files]
+assert set(lya_targets) == set(eval_targets)
+
+#%% lya: plot a random smattering
+
+lya_files_random = choices(lya_files, k=5)
+for f in lya_files_random:
+    tbl = table.Table.read(f)
+
+    plt.figure()
+    plt.title(f.name.split('.')[0])
+    plt.plot(tbl['wave_lya'], tbl['lya_model unconvolved_median'])
+    plt.plot(tbl['wave_lya'], tbl['lya_intrinsic unconvolved_median'])
+
+
+#%% distribute and stage lya-recon files
+
+dry_run = False
+fd_lya_stage = staging_area / 'lya_reconstructions'
+for f in lya_files:
+    target = f.name.split('.')[0]
+    fd_targrecon = paths.target_data(target) / 'reconstructions'
+    newname = f.name.replace('lya_recon', 'lya-recon')
+    tgpath = fd_targrecon / newname
+    stgpath = fd_lya_stage / newname
+    if dry_run:
+        print(f"{dbutils.path_string_last_n(f, 2)} --> {dbutils.path_string_last_n(tgpath, 3)}")
+        print(f"{dbutils.path_string_last_n(f, 2)} --> {dbutils.path_string_last_n(stgpath, 3)}")
+        print()
+    else:
+        shutil.copy(f, tgpath)
+        shutil.copy(f, stgpath)
+
+

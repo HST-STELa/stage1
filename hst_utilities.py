@@ -1,6 +1,8 @@
 import re
 import warnings
 from pathlib import Path
+import io
+import contextlib
 
 import numpy as np
 from astroquery.mast import MastMissions
@@ -229,3 +231,92 @@ def mitigate_error_inflation(f, e, n_var=10, n_window=50):
     e_mod = np.clip(e_mod, 0, e)
 
     return e_mod
+
+
+def _acq_msg_print(msgs, verbosity, tastis_output=None):
+    if verbosity == 1:
+        if msgs:
+            print('\n\n'.join(msgs))
+        else:
+            print('No issues identified.')
+    if verbosity == 2:
+        print(tastis_output)
+
+
+def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
+    """return true/false based on whether slew was roughly equal to centroid offset"""
+    h = fits_object
+    msgs = []
+
+    plate_scale_xd_dic = dict(G130M=100 / 1000, G160M=90 / 1000, G140L=90 / 1000, G230L=24 / 1000,
+                              MIRRORA=23.5 / 1000, MIRRORB=23.5 / 1000)
+    plate_scale_xd = plate_scale_xd_dic[h[0].header['opt_elem']]
+
+    counts = h[1].data['counts']
+    if counts == 0:
+        msgs.append('COS PEAKXD counts were zero.')
+
+    centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd # arcsec
+    slew = h[0].header['ACQSLEWY'] # arcsec
+
+    atol = 0.1 # arcsec
+    if not np.isclose(centroid_offset, slew, atol=atol):
+        msgs.append(f'COS PEAKXD slew > {atol} arcsec difference from image centroid.')
+
+    _acq_msg_print(msgs, verbosity)
+
+    return msgs
+
+
+def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
+    """return True/False if the ACQ/PEAKD is reasonable/suspect based on whether the slew is between the top two
+    dwell points in erms of counts"""
+    msgs = []
+    h = fits_object
+
+    offsets = h[1].data['DISP_OFFSET']  # arcsec
+    counts = h[1].data['counts']
+
+    if np.all(counts == 0):
+        msgs.append('COS PEAKD counts zero at all dwell points.')
+    elif np.all(counts <= 100):
+        msgs.append('COS PEAKD counts < 100 at all dwell points. Values > 100 are typical.')
+
+    if not np.all(counts == 0):
+        slew = h[0].header['ACQSLEWX']  # arcsec
+        wgtd_offset = np.sum(offsets*counts)/np.sum(counts) # arcsec
+        atol = 0.1 # arcsec
+        if not np.isclose(wgtd_offset, slew, atol):
+            msgs.append(f'COS PEAKD slewed more than {atol} arcsec away from the count-weighed mean of dwell points.')
+
+    _acq_msg_print(msgs, verbosity)
+
+    return msgs
+
+
+def auto_validate_stis_acq(acq_path, verbosity=1):
+    """Run the tastis acquistion checking tool and return any warnings that result. Optionally print
+    the final tastis synopsis (verbosity=1), the full output (2), or nothing (0)."""
+
+    import stistools as stis # import here so that hst_utilities works even if stistools not in env
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        stis.tastis.tastis(str(acq_path))  # full printout from this is noisy, but helpful if you want to inspect closely
+    output = buf.getvalue()
+    pieces = output.split('-------------------------------------------------------------------------------')
+    synopsis = pieces[-1]
+
+    msgs = []
+    for msg in synopsis.split('\n\n'):
+        msg = msg.replace('\n', ' ')
+        if not (
+            msg.strip() == ''
+            or 'succe' in msg
+            or '===========' in msg
+        ):
+            msgs.append(msg)
+
+    _acq_msg_print(msgs, verbosity, output)
+
+    return msgs
