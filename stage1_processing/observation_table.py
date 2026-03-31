@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -12,10 +13,11 @@ import utilities as utils
 
 
 class ObsTable(table.Table):
-    standard_column_specs = ( # name, dtype, subtype
+    standard_column_specs = (
+        # name, dtype, semantic subtype for object columns
         ('observatory', 'O', str),
         ('science config', 'O', str),
-        ('start', 'U', None,),
+        ('start', 'U', None),
         ('program', 'int64', None),
         ('pi', 'O', str),
         ('archive id', 'O', str),
@@ -27,6 +29,141 @@ class ObsTable(table.Table):
         ('key science files', 'O', list),
         ('supporting files', 'O', dict),
     )
+
+    _OBJECT_SUBTYPE_METAKEY = 'object_column_semantic_subtypes'
+
+    standard_columns = [x[0] for x in standard_column_specs]
+    column_spec_map = {name: (dtype, subtype) for name, dtype, subtype in standard_column_specs}
+    object_column_subtypes = {
+            name: subtype
+            for name, dtype, subtype in standard_column_specs
+            if dtype in ('O', object, 'object')
+        }
+    object_columns = list(object_column_subtypes.keys())
+
+    @staticmethod
+    def _is_masked_scalar(x):
+        return x is np.ma.masked
+
+    @staticmethod
+    def _is_null_like(x):
+        if x is np.ma.masked or x is None:
+            return True
+        if np.ma.isMaskedArray(x) and x.size == 0:
+            return True
+        return False
+
+    @classmethod
+    def _coerce_object_value_for_write(cls, val, expected_subtype, colname):
+        """
+        Convert object-column payloads into plain Python JSON-serializable values.
+        Return None for null/masked values.
+        """
+        if cls._is_null_like(val):
+            return None
+
+        # Convert NumPy things to plain Python
+        if np.ma.isMaskedArray(val):
+            # non-empty masked arrays should become ordinary Python containers/scalars
+            val = val.tolist()
+        elif isinstance(val, np.ndarray):
+            val = val.tolist()
+
+        if expected_subtype is str:
+            # Repair old bad saves where string columns became single-element lists
+            if isinstance(val, list):
+                if len(val) == 0:
+                    return None
+                if len(val) == 1 and isinstance(val[0], str):
+                    return val[0]
+                raise TypeError(
+                    f"Column {colname!r} should contain strings; got list value {val!r}"
+                )
+            if isinstance(val, str):
+                return val
+            raise TypeError(
+                f"Column {colname!r} should contain strings; got {type(val).__name__}: {val!r}"
+            )
+
+        if expected_subtype is list:
+            # Repair old bad saves where list columns became bare strings
+            if isinstance(val, str):
+                return [val]
+            if isinstance(val, tuple):
+                return list(val)
+            if isinstance(val, list):
+                return val
+            raise TypeError(
+                f"Column {colname!r} should contain lists; got {type(val).__name__}: {val!r}"
+            )
+
+        if expected_subtype is dict:
+            if isinstance(val, dict):
+                return val
+            raise TypeError(
+                f"Column {colname!r} should contain dicts; got {type(val).__name__}: {val!r}"
+            )
+
+        # fallback: plain Python conversion if possible
+        return val
+
+    @classmethod
+    def _repair_object_value_on_read(cls, val, expected_subtype, colname):
+        """
+        Repair values read back from ECSV according to the semantic subtype.
+        """
+        if cls._is_null_like(val):
+            return None
+
+        if np.ma.isMaskedArray(val):
+            if val.size == 0:
+                return None
+            val = val.tolist()
+        elif isinstance(val, np.ndarray):
+            val = val.tolist()
+
+        if expected_subtype is str:
+            if isinstance(val, str):
+                return val
+            if isinstance(val, list):
+                if len(val) == 0:
+                    return None
+                if len(val) == 1 and isinstance(val[0], str):
+                    return val[0]
+            raise TypeError(
+                f"While reading, column {colname!r} should be string-like but got {type(val).__name__}: {val!r}"
+            )
+
+        if expected_subtype is list:
+            if isinstance(val, list):
+                return val
+            if isinstance(val, tuple):
+                return list(val)
+            if isinstance(val, str):
+                return [val]
+            raise TypeError(
+                f"While reading, column {colname!r} should be list-like but got {type(val).__name__}: {val!r}"
+            )
+
+        if expected_subtype is dict:
+            if isinstance(val, dict):
+                return val
+            raise TypeError(
+                f"While reading, column {colname!r} should be dict-like but got {type(val).__name__}: {val!r}"
+            )
+
+        return val
+
+    @classmethod
+    def _make_masked_object_column(cls, values, name):
+        mask = [v is None for v in values]
+        data = [None if m else v for v, m in zip(values, mask)]
+        return table.MaskedColumn(
+            data=np.array(data, dtype=object),
+            mask=np.array(mask, dtype=bool),
+            name=name,
+            dtype=object,
+        )
 
     @classmethod
     def initialize_blank(cls, science_files=()):
@@ -52,8 +189,8 @@ class ObsTable(table.Table):
         columns = [
             table.MaskedColumn(data=['hst'] * n, name='observatory', dtype='object'),
             table.MaskedColumn(length=n, name='science config', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='start', dtype='S20', mask=True),
-            table.MaskedColumn(length=n, name='program', dtype='int', mask=True),
+            table.MaskedColumn(length=n, name='start', dtype='U20', mask=True),
+            table.MaskedColumn(length=n, name='program', dtype='int64', mask=True),
             table.MaskedColumn(length=n, name='pi', dtype='object', mask=True),
             table.MaskedColumn(length=n, name='archive id', dtype='object', mask=True),
             table.MaskedColumn(length=n, name='key science files', dtype='object', mask=True),
@@ -62,10 +199,10 @@ class ObsTable(table.Table):
             table.MaskedColumn(length=n, name='usability status', dtype='object', mask=True),
             table.MaskedColumn(length=n, name='reason unusable', dtype='object', mask=True),
             table.MaskedColumn(length=n, name='flags', dtype='object', mask=True),
-            table.MaskedColumn(length=n, name='notes', dtype='object', mask=True)
+            table.MaskedColumn(length=n, name='notes', dtype='object', mask=True),
         ]
 
-        tbl = ObsTable(columns)
+        tbl = cls(columns)
 
         for i, asc_files in enumerate(key_science_files):
             pi = fits.getval(data_dir / asc_files[0], 'PR_INV_L')
@@ -87,28 +224,115 @@ class ObsTable(table.Table):
 
     @classmethod
     def load_from_targname(cls, target):
-        path_obs_tbl = ObsTable.get_path(target)
-        return ObsTable.read(path_obs_tbl)
+        path_obs_tbl = cls.get_path(target)
+        return cls.read(path_obs_tbl)
 
     @classmethod
-    def read(cls, path):
+    def read(cls, path, *args, **kwargs):
         obs_tbl = catutils.load_and_mask_ecsv(path)
-        obs_tbl = ObsTable(obs_tbl)
+        obs_tbl = cls(obs_tbl)
 
-        missing_cols = set(ObsTable.standard_columns) - set(obs_tbl.colnames)
+        missing_cols = set(cls.standard_columns) - set(obs_tbl.colnames)
         for col in missing_cols:
-            obs_tbl[col] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype='object')
+            dtype, subtype = cls.column_spec_map[col]
+            obs_tbl[col] = table.MaskedColumn(length=len(obs_tbl), mask=True, dtype=dtype)
 
-        for col in ObsTable.object_columns:
-            obs_tbl[col] = obs_tbl[col].astype('object')
+        # Determine expected semantic subtype for object columns.
+        # Prefer explicit class spec; optionally merge with metadata from file.
+        saved_subtypes = obs_tbl.meta.get(cls._OBJECT_SUBTYPE_METAKEY, {})
+        expected_subtypes = dict(saved_subtypes)
+        expected_subtypes.update(cls.object_column_subtypes)
+
+        for colname, expected_subtype in expected_subtypes.items():
+            if colname not in obs_tbl.colnames:
+                continue
+
+            old = obs_tbl[colname]
+            old_mask = np.array(getattr(old, 'mask', np.zeros(len(old), dtype=bool)), dtype=bool)
+
+            repaired = []
+            repaired_mask = []
+
+            for i, val in enumerate(old):
+                if old_mask[i] or cls._is_null_like(val):
+                    repaired.append(None)
+                    repaired_mask.append(True)
+                    continue
+
+                new_val = cls._repair_object_value_on_read(val, expected_subtype, colname)
+                if new_val is None:
+                    repaired.append(None)
+                    repaired_mask.append(True)
+                else:
+                    repaired.append(new_val)
+                    repaired_mask.append(False)
+
+            obs_tbl.replace_column(
+                colname,
+                table.MaskedColumn(
+                    data=np.array(repaired, dtype=object),
+                    mask=np.array(repaired_mask, dtype=bool),
+                    name=colname,
+                    dtype=object,
+                )
+            )
 
         # organize columns in default order
-        new_cols = set(obs_tbl.colnames) - set(ObsTable.standard_columns)
+        new_cols = set(obs_tbl.colnames) - set(cls.standard_columns)
         new_cols_original_order = [c for c in obs_tbl.colnames if c in new_cols]
-        col_order = list(ObsTable.standard_columns) + new_cols_original_order
-        obs_tbl = obs_tbl[col_order]
+        col_order = list(cls.standard_columns) + new_cols_original_order
+        obs_tbl = cls(obs_tbl[col_order])
 
         return obs_tbl
+
+    def write(self, *args, **kwargs):
+        """
+        Write a temporary cleaned copy so object columns round-trip robustly.
+        """
+        tbl = self.copy(copy_data=True)
+        subtype_meta = {}
+
+        for colname, expected_subtype in self.object_column_subtypes.items():
+            if colname not in tbl.colnames:
+                continue
+
+            old = tbl[colname]
+            old_mask = np.array(getattr(old, 'mask', np.zeros(len(old), dtype=bool)), dtype=bool)
+
+            cleaned = []
+            cleaned_mask = []
+
+            for i, val in enumerate(old):
+                if old_mask[i] or self._is_null_like(val):
+                    cleaned.append(None)
+                    cleaned_mask.append(True)
+                    continue
+
+                new_val = self._coerce_object_value_for_write(val, expected_subtype, colname)
+                if new_val is None:
+                    cleaned.append(None)
+                    cleaned_mask.append(True)
+                else:
+                    cleaned.append(new_val)
+                    cleaned_mask.append(False)
+
+            tbl.replace_column(
+                colname,
+                table.MaskedColumn(
+                    data=np.array(cleaned, dtype=object),
+                    mask=np.array(cleaned_mask, dtype=bool),
+                    name=colname,
+                    dtype=object,
+                )
+            )
+            subtype_meta[colname] = expected_subtype.__name__
+
+        tbl.meta[self._OBJECT_SUBTYPE_METAKEY] = subtype_meta
+
+        kwargs.setdefault('format', 'ascii.ecsv')
+        kwargs.setdefault('overwrite', False)
+
+        return super(ObsTable, tbl).write(*args, **kwargs)
 
     def add_flags(self, row_idx, comma_sep_flags):
         self.add_comma_sep_str_to_list_col('flags', row_idx, comma_sep_flags)
@@ -132,7 +356,6 @@ class ObsTable(table.Table):
         new_data = []
         new_mask = []
 
-        # existing mask if present, otherwise all False
         old_mask = getattr(old, "mask", np.zeros(len(old), dtype=bool))
 
         for i, val in enumerate(old):
@@ -141,7 +364,6 @@ class ObsTable(table.Table):
                 new_mask.append(True)
                 continue
 
-            # treat scalar/string as one-item list
             if isinstance(val, str) or not hasattr(val, "__iter__"):
                 items = [val]
             else:
@@ -157,8 +379,8 @@ class ObsTable(table.Table):
                 new_mask.append(False)
 
         new_col = table.MaskedColumn(
-            data=new_data,
-            mask=new_mask,
+            data=np.array(new_data, dtype=object),
+            mask=np.array(new_mask, dtype=bool),
             name=colname,
             dtype=object,
         )
@@ -184,6 +406,27 @@ class ObsTable(table.Table):
         mask = np.isin(file_ids, good_obs_ids)
         filtered_paths = np.array(paths)[mask]
         return list(filtered_paths)
+
+    def clear_usability_values(self, id_substr=None, reason_substr=None, other_columns_to_clear=None):
+        """Does what the name suggests. Use reason_substr if you only want to clear, e.g., rows where the reason includes
+        "acquisition"."""
+        cleared_tbl = self.copy()
+        if other_columns_to_clear is None:
+            other_columns_to_clear = []
+        if id_substr is None:
+            id_substr = ''
+        if reason_substr is None:
+            reason_substr = ''
+
+        def get_substr_mask(colname, sub):
+            str_col = self[colname].filled('').astype(str)
+            return np.char.count(str_col, sub) > 0
+
+        mask = get_substr_mask('archive id', id_substr) & get_substr_mask('reason unusable', reason_substr)
+        colanmes_to_clear = ['usable', 'reason unusable'] + other_columns_to_clear
+        for name in colanmes_to_clear:
+            cleared_tbl[name].mask |= mask
+        return cleared_tbl
 
 
 # for backwards compatability

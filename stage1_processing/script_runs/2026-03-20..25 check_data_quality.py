@@ -41,7 +41,7 @@ targets = (
     set(target_lists.bespoke['lya archival 2026-03-11'])
 )
 targets = sorted(list(targets))
-targets = targets[6:]
+targets = targets[8:]
 clear_flags = True
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
@@ -145,12 +145,6 @@ while True:
     data_dir = paths.target_hst_data(target)
 
     obs_tbl = obt.ObsTable.load_from_targname(target)
-    obs_tbl.clean_nulls_col_of_lists('flags')
-    obs_tbl.clean_nulls_col_of_lists('notes')
-    try:
-        obs_tbl.clean_nulls_col_of_lists('reason unusable')
-    except:
-        pass
 
     # clear any flags other than no data or shutter closed
     if clear_flags:
@@ -158,7 +152,7 @@ while True:
         reason_col = backup_obs_tbl['reason unusable'].filled('').astype(str)
         keep_rows_mask = (reason_col == 'No data taken.') | (reason_col == 'Shutter closed.')
         keep_rows_idx, = np.nonzero(keep_rows_mask)
-        obs_tbl = dbutils.clear_usability_values(obs_tbl,other_columns_to_clear=['flags', 'usability status'])
+        obs_tbl = obs_tbl.clear_usability_values(obs_tbl,other_columns_to_clear=['flags', 'usability status'])
         obs_tbl['usable'][keep_rows_idx] = False # gotta use idx instead of mask for bool column, weird astropy bug?
         obs_tbl['reason unusable'][keep_rows_idx] = reason_col[keep_rows_idx]
         obs_tbl['usability status'][keep_rows_idx] = 'unusable' # maybe gotta use idx here too
