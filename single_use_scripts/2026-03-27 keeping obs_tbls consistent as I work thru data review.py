@@ -2,6 +2,7 @@
 import numpy as np
 from astropy import table
 
+import paths
 from stage1_processing import observation_table as obt
 
 #%% def acq rule
@@ -146,44 +147,32 @@ for target in targets:
         break
 
 
+#%% hack to fix annoying np masked array objects appearing when tables are loaded
 
-#%% fix empty list cols in all tbls, rewrite with serialize=data_mask and target in meta
+# after this hack, the problem should be permanently fixed by overriding the write function in my ObsTbl class
 
-from stage1_processing import target_lists
-targets = target_lists.everything_in_database()
-keep_checking = True
+import paths
+obs_tbl_paths = sorted(paths.data_targets.rglob('*observation-table.ecsv'))
 
-# BOOKMARK see textedit file
+for otpth in obs_tbl_paths:
+    with open(otpth, 'r') as f:
+        contents = f.read()
+    new_contents = contents.replace("'float64[null]'", "json")
+    with open(otpth, 'w') as f:
+        f.write(new_contents)
 
-for target in targets:
-    print(target.upper())
-    obs_tbl = obt.ObsTable.load_from_targname(target)
-    obs_tbl[viewcols].pprint(-1,-1)
-    print()
-    print()
-    for name in ('usability status', 'flags', 'notes', 'reason unusable'):
-        obs_tbl.clean_nulls_col_of_lists(name)
 
-    for name in ('usability status', 'reason unusable'):
-        if len(obs_tbl) == 1:
-            mask = obs_tbl[name].mask
-            while hasattr(mask, '__len__'):
-                mask = mask[0]
-            if not mask:
-                obs_tbl[name] = obs_tbl[name][0]
-        else:
-            i_good, = np.nonzero(~obs_tbl[name].mask)
-            for i in i_good:
-                rsn = obs_tbl[name][i]
-                obs_tbl[name][i] = rsn[0]
-    obs_tbl.meta['target'] = target
-    obs_tbl[viewcols].pprint(-1, -1)
-    if keep_checking:
-        a = input('save?')
-    else:
-        a = 'y'
 
-    if a in ['a', 'y']:
-        obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
-    if a == 'a':
-        keep_checking = False
+#%% check that all masked array elements are truly gone
+
+for otpth in obs_tbl_paths:
+    ot = obt.ObsTable.read(otpth)
+    for key in ot.colnames:
+        col = ot[key]
+        if col.dtype == 'O':
+            for elmnt in col:
+                assert type(elmnt) is not np.ma.MaskedArray
+
+
+#%% move wordy flags to notes
+

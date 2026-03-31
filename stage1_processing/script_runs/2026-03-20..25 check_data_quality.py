@@ -41,7 +41,7 @@ targets = (
     set(target_lists.bespoke['lya archival 2026-03-11'])
 )
 targets = sorted(list(targets))
-targets = targets[4:]
+targets = targets[6:]
 clear_flags = True
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
@@ -297,6 +297,8 @@ while True:
 
     plt.close('all')
 
+    viewcols = ['archive id', 'usable', 'usability status', 'reason unusable', 'flags', 'notes']
+
     catutils.set_index(obs_tbl, 'archive id')
     usbl_mask = obs_tbl['usable'].filled(True)
     usbl_tbl = obs_tbl[usbl_mask]
@@ -423,6 +425,7 @@ while True:
                 ax.set_ylim(ylo, yhi)
 
             title_ids = ', '.join([str(spec['id'])[-6:] for spec in batch])
+            print(f'Fig {fig.number}: {title_ids}')
             ax.set_title(f'{target} | {config} | {title_ids}')
             ax.set_xlabel('Wavelength')
             ax.set_ylabel('Flux')
@@ -481,7 +484,7 @@ while True:
 
             i_mask, = np.nonzero(mask)
 
-            obs_tbl[['archive id', 'usable', 'usability status', 'flags', 'notes']][i_mask].pprint(-1,-1)
+            obs_tbl[viewcols][i_mask].pprint(-1,-1)
             while True:
                 usable_ans = input(f'Update usability? enter=no change, u=unusable, i=has issues, a=all clear')
                 if usable_ans == '':
@@ -518,7 +521,7 @@ while True:
                     obs_tbl.add_notes(i_mask, notestring)
 
             print('Tbl updated to:')
-            obs_tbl[['archive id', 'usable', 'usability status', 'flags', 'notes']][i_mask].pprint(-1, -1)
+            obs_tbl[viewcols][i_mask].pprint(-1, -1)
 
         plt.close('all')
 

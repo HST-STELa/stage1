@@ -12,28 +12,21 @@ import utilities as utils
 
 
 class ObsTable(table.Table):
-    standard_columns = (
-        'observatory',
-        'science config',
-        'start',
-        'program',
-        'pi',
-        'archive id',
-        'usable',
-        'usability status',
-        'reason unusable',
-        'flags',
-        'notes',
-        'key science files',
-        'supporting files',
+    standard_column_specs = ( # name, dtype, subtype
+        ('observatory', 'O', str),
+        ('science config', 'O', str),
+        ('start', 'U', None,),
+        ('program', 'int64', None),
+        ('pi', 'O', str),
+        ('archive id', 'O', str),
+        ('usable', bool, None),
+        ('usability status', 'O', str),
+        ('reason unusable', 'O', str),
+        ('flags', 'O', list),
+        ('notes', 'O', list),
+        ('key science files', 'O', list),
+        ('supporting files', 'O', dict),
     )
-    non_object_columns = (
-        'start',
-        'program',
-        'usable'
-    )
-    object_columns = set(standard_columns) - set(non_object_columns)
-    object_columns = list(object_columns)
 
     @classmethod
     def initialize_blank(cls, science_files=()):
@@ -191,12 +184,6 @@ class ObsTable(table.Table):
         mask = np.isin(file_ids, good_obs_ids)
         filtered_paths = np.array(paths)[mask]
         return list(filtered_paths)
-
-    def write(self, path='default', overwrite=False):
-        if path == 'default':
-            target = self.meta['target']
-            path = self.get_path(target)
-        super().write(path, serialize_method='data_mask', overwrite=overwrite)
 
 
 # for backwards compatability
