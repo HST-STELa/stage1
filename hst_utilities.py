@@ -14,7 +14,7 @@ from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
 import utilities as utils
-from stage1_processing.observation_table import reasons_menu
+from stage1_processing.observation_table import notes_menu, reasons_menu
 
 hst_database = MastMissions(mission='hst')
 
@@ -256,7 +256,7 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
 
     counts = h[1].data['counts']
     if counts == 0:
-        msgs.append('COS PEAKXD counts were zero.')
+        msgs.append(notes_menu['peakxd zeros'])
 
     centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd # arcsec
     slew = h[0].header['ACQSLEWY'] # arcsec
@@ -268,8 +268,9 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
         print(f'centroid offset {centroid_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
     if not slew_diff > atol:
-        msgs.append(f'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
-                    f'which is greater than the {atol} threshold for this warning.')
+        msgs.append(
+            notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
+        )
 
     _acq_msg_print(msgs, verbosity)
 
@@ -285,10 +286,13 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
     offsets = h[1].data['DISP_OFFSET']  # arcsec
     counts = h[1].data['counts']
 
+    lo_cts_threshold = 100
     if np.all(counts == 0):
-        msgs.append('COS PEAKD counts zero at all dwell points.')
-    elif np.all(counts <= 100):
-        msgs.append('COS PEAKD counts < 100 at all dwell points. Values > 100 are typical.')
+        msgs.append(notes_menu['peakd zeros'])
+    elif np.all(counts <= lo_cts_threshold):
+        msgs.append(
+            notes_menu['peakd lo cts'].format(lo_cts_threshold, lo_cts_threshold)
+        )
 
     if not np.all(counts == 0):
         slew = h[0].header['ACQSLEWX']  # arcsec
@@ -300,8 +304,9 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
             print(f'count-weighted offset {wgtd_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
         if not slew_diff > atol:
-            msgs.append(f'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points, '
-                        f'which is greater than the {atol} threshold for this warning.')
+            msgs.append(
+                notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
+            )
 
     _acq_msg_print(msgs, verbosity)
 
