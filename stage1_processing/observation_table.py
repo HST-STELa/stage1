@@ -432,6 +432,22 @@ class ObsTable(table.Table):
             cleared_tbl[name].mask |= mask
         return cleared_tbl
 
+    @classmethod
+    def _iter_nonnull_cell_items(cls, val):
+        """Yield atomic, non-null items from a cell (scalar or iterable)."""
+        if cls._is_null_like(val):
+            return
+        if isinstance(val, str) or not hasattr(val, '__iter__') or isinstance(val, (bytes, bytearray)):
+            items = (val,)
+        elif isinstance(val, np.ndarray):
+            items = val.tolist()
+        else:
+            items = tuple(val)
+        for item in items:
+            if item is None or cls._is_null_like(item):
+                continue
+            yield item
+
     def substring_match_mask(self, colname, substr):
         """
         Return a 1-D boolean array: True where any string in ``colname`` contains ``substr``.
@@ -448,19 +464,7 @@ class ObsTable(table.Table):
             if row_mask[i]:
                 continue
             val = col[i]
-            if self._is_null_like(val):
-                continue
-
-            if isinstance(val, str) or not hasattr(val, '__iter__') or isinstance(val, (bytes, bytearray)):
-                items = (val,)
-            elif isinstance(val, np.ndarray):
-                items = val.tolist()
-            else:
-                items = tuple(val)
-
-            for item in items:
-                if item is None or self._is_null_like(item):
-                    continue
+            for item in self._iter_nonnull_cell_items(val):
                 text = item if isinstance(item, str) else str(item)
                 if substr in text:
                     out[i] = True
@@ -473,3 +477,29 @@ class ObsTable(table.Table):
 initialize = ObsTable.initialize_blank
 get_path = ObsTable.get_path
 load_obs_tbl = ObsTable.load_from_targname
+
+
+def inspect_values_of_all_tables(colname='notes'):
+    """
+    Load every ``*observation-table.ecsv`` under ``paths.data_targets``, collect every
+    distinct atomic value appearing in ``colname`` (string cells and list elements),
+    and return that set. Tables that cannot be read or lack ``colname`` are skipped.
+    """
+    unique = set()
+    obstbl_paths = sorted(paths.data_targets.rglob('*observation-table.ecsv'))
+    for path in obstbl_paths:
+        try:
+            tbl = ObsTable.read(path)
+        except Exception:
+            continue
+        if colname not in tbl.colnames:
+            continue
+        col = tbl[colname]
+        row_mask = np.array(getattr(col, 'mask', np.zeros(len(col), dtype=bool)), dtype=bool)
+        for i in range(len(col)):
+            if row_mask[i]:
+                continue
+            val = col[i]
+            for item in ObsTable._iter_nonnull_cell_items(val):
+                unique.add(item if isinstance(item, str) else str(item))
+    return unique
