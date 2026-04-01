@@ -432,6 +432,42 @@ class ObsTable(table.Table):
             cleared_tbl[name].mask |= mask
         return cleared_tbl
 
+    def substring_match_mask(self, colname, substr):
+        """
+        Return a 1-D boolean array: True where any string in ``colname`` contains ``substr``.
+
+        Each cell may be a string, or an iterable of strings (e.g. list). Non-string
+        elements are converted with ``str()`` for the test. Masked and null-like cells
+        are False in the result. Matching is case-sensitive (``substr in text``).
+        """
+        col = self[colname]
+        row_mask = np.array(getattr(col, 'mask', np.zeros(len(col), dtype=bool)), dtype=bool)
+        out = np.zeros(len(col), dtype=bool)
+
+        for i in range(len(col)):
+            if row_mask[i]:
+                continue
+            val = col[i]
+            if self._is_null_like(val):
+                continue
+
+            if isinstance(val, str) or not hasattr(val, '__iter__') or isinstance(val, (bytes, bytearray)):
+                items = (val,)
+            elif isinstance(val, np.ndarray):
+                items = val.tolist()
+            else:
+                items = tuple(val)
+
+            for item in items:
+                if item is None or self._is_null_like(item):
+                    continue
+                text = item if isinstance(item, str) else str(item)
+                if substr in text:
+                    out[i] = True
+                    break
+
+        return out
+
 
 # for backwards compatability
 initialize = ObsTable.initialize_blank
