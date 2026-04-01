@@ -254,7 +254,9 @@ class ObsTable(table.Table):
             repaired_mask = []
 
             for i, val in enumerate(old):
-                if old_mask[i] or cls._is_null_like(val):
+                masked = np.any(old_mask[i])
+
+                if masked or cls._is_null_like(val):
                     repaired.append(None)
                     repaired_mask.append(True)
                     continue
@@ -289,6 +291,8 @@ class ObsTable(table.Table):
         """
         Write a temporary cleaned copy so object columns round-trip robustly.
         """
+        catutils.scrub_indices(self)
+
         tbl = self.copy(copy_data=True)
         subtype_meta = {}
 
@@ -343,7 +347,7 @@ class ObsTable(table.Table):
     def add_comma_sep_str_to_list_col(self, colname, row_idx, comma_sep_str):
         items = re.split(', *', comma_sep_str)
         for item in items:
-            if not item.isspace():
+            if not item.strip() == '':
                 catutils.append_to_column_of_lists(self, colname, row_idx, item, raise_nonlist_error=False)
 
     def add_flag(self, row_idx, flag):

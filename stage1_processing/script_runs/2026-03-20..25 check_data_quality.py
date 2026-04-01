@@ -152,7 +152,7 @@ while True:
         reason_col = backup_obs_tbl['reason unusable'].filled('').astype(str)
         keep_rows_mask = (reason_col == 'No data taken.') | (reason_col == 'Shutter closed.')
         keep_rows_idx, = np.nonzero(keep_rows_mask)
-        obs_tbl = obs_tbl.clear_usability_values(obs_tbl,other_columns_to_clear=['flags', 'usability status'])
+        obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=['flags', 'usability status'])
         obs_tbl['usable'][keep_rows_idx] = False # gotta use idx instead of mask for bool column, weird astropy bug?
         obs_tbl['reason unusable'][keep_rows_idx] = reason_col[keep_rows_idx]
         obs_tbl['usability status'][keep_rows_idx] = 'unusable' # maybe gotta use idx here too
@@ -174,6 +174,21 @@ while True:
         obstime=Time(2015.5, format='jyear')
     )
 
+
+#%% verify that acq files are present for every observation
+
+    for row in obs_tbl:
+        sfs = obs_tbl['supporting files']
+        config = obs_tbl['science config']
+        if obs_tbl._is_null_like(sfs):
+            raise ValueError
+        sfkeys = list(sfs.keys())
+        if 'cos' in config:
+            if not ('acq/image' in sfkeys or 'acq/peakxd' in sfkeys):
+                raise ValueError
+        elif 'stis' in config:
+            if not 'acq' in sfkeys:
+                raise ValueError
 
 
 #%% acquisition checking
@@ -218,8 +233,6 @@ while True:
             h = fits.open(acq_file)
             print(f'STIS {h[0].header['obsmode']}')
             warning_msgs = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
-            if warning_msgs: # simplify
-                warning_msgs = ['stistools.tastis logged acquisition warnings']
 
             # now plot the acq images
             stages = ['coarse', 'fine']
@@ -263,11 +276,6 @@ while True:
 
                 image_shown = True
 
-        if warning_msgs:
-            acq_issues = True
-            for msg in warning_msgs:
-                obs_tbl.add_flag(assoc_obs_mask, msg)
-
         if image_shown:
             fig.suptitle(acq_file.name)
             fig.tight_layout()
@@ -276,8 +284,13 @@ while True:
             answer = input('Did the target appear in the acquisition image (enter/n)')
             if answer != '':
                 acq_issues = True
-                obs_tbl.add_flag(assoc_obs_mask, f'Human reviewer ({human_reviewer}) could not identify target in acquisition image.')
+                warning_msgs.append(f'Human reviewer ({human_reviewer}) could not identify target in acquisition image.')
             plt.close('all')
+
+        if warning_msgs:
+            acq_issues = True
+            for msg in warning_msgs:
+                obs_tbl.add_notes(assoc_obs_mask, msg)
 
         if acq_issues:
             obs_tbl.add_flag(assoc_obs_mask, 'Acquisition untrustworthy.')

@@ -27,7 +27,12 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = (
+    set(target_lists.data_modified_after('2026-03-05')) |
+    set(target_lists.bespoke['lya archival 2026-03-11'])
+)
+targets = set(target_lists.everything_in_database()) - set(targets) # decided to do it all in the end
+targets = sorted(list(targets))
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -40,7 +45,7 @@ dnld_availability = 'PUBLIC,PROPRIETARY'
 
 hst_database = MastMissions(mission='hst')
 # note that you need to have created and stored a token for this, see
-# https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
+# https://astroquery.readthedocs.isto/en/latest/api/astroquery.mast.MastClass.html
 # you can specify the exact toke you want to use with token=...
 hst_database.login()
 
@@ -129,66 +134,6 @@ while True:
     os.makedirs(dnld_dir, exist_ok=True)
 
 
-#%% find new science data
-
-    print(f'\nSearching for new science files in the archive for {target}.')
-
-    results = hst_database.query_object(f'TIC {tic_id}',
-                                        radius=3,
-                                        sci_instrume=dnld_from_insts,
-                                        sci_spec_1234=dnld_from_specs,
-                                        sci_status=dnld_availability,
-                                        sci_aec='S', # science not calibration
-                                        select_cols="sci_operating_mode sci_instrume".split())
-    if results:
-        mode = results['sci_operating_mode'].filled('').tolist()
-        inst = results['sci_instrume'].filled('').tolist()
-        mask_accum = np.char.count(mode, 'ACCUM') > 0
-        mask_stis = np.char.count(inst, 'STIS') > 0
-        mask_cos = np.char.count(inst, 'COS') > 0
-        mask_suffix_sets = ((mask_stis & mask_accum, 'RAW'),
-                            (mask_stis & ~mask_accum, 'TAG'),
-                            (mask_cos, 'X1D'))
-        file_tbls = []
-        for mask, sfxs in mask_suffix_sets:
-            slctd_results = results[mask]
-            if len(slctd_results):
-                datasets = hst_database.get_unique_product_list(slctd_results)
-                filtered = hst_database.filter_products(datasets, file_suffix=sfxs, extension='fits')
-                file_tbls.append(filtered)
-        files_in_archive = table.vstack(file_tbls)
-
-        new_files_mask = []
-        for file_info in files_in_archive:
-            files = list(data_dir.glob(f'*{file_info['filename']}'))
-            new_files_mask.append(len(files) == 0)
-        new_files = files_in_archive[new_files_mask]
-
-        if new_files:
-            print()
-            print('Attempting download of:')
-            new_files['instrument_name filters filename access'.split()].pprint(-1)
-            print()
-        else:
-            print('\nNo new science files found in the archive.\n')
-    else:
-        print('\nNo new science files found in the archive.\n')
-        new_files = []
-
-    care_level = utils.query_next_step(batch_mode, care_level, 2)
-
-
-#%% download and rename new files
-
-    if new_files:
-        manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-        # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True,
-        #                                       into_target_folders=False, confirm=confirm_file_moves)
-        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False, confirm=confirm_file_moves)
-
-        utils.query_next_step(batch_mode, care_level, 2)
-
-
 #%% make sure info on all files are in the obs tbl
 
     fits_files = list(data_dir.glob('*.fits'))
@@ -224,6 +169,13 @@ while True:
     obs_tbl['key science files'] = cleaned_sci_files
 
 
+#%% clear supporting file column
+
+    for i in range(len(obs_tbl)):
+        obs_tbl['supporting files'][i] = None
+        obs_tbl['supporting files'].mask[i] = True
+
+
 #%% download supporting acquisitions and wavecals
 
     print(f'Searching for supporting files for {target} observations.')
@@ -232,10 +184,7 @@ while True:
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
         i = row.index
-        if obs_tbl['supporting files'].mask[i]:
-            supporting_files = {}
-        else:
-            supporting_files = obs_tbl['supporting files'][i]
+        supporting_files = {}
 
         # look for acquisitions
         acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, additional_files=('SPT',))
@@ -302,77 +251,6 @@ while True:
         care_level = utils.query_next_step(batch_mode, care_level, 2)
 
 
-#%% identify files missing data
-
-    print(f'\nChecking for empty science files for {target}.')
-    reasons = dict(no_data='No data taken.',
-                   shutter_closed='Shutter closed.',
-                   no_gs_lock='Guide star tracking not locked.')
-    for i, row in enumerate(obs_tbl):
-        reject = False
-        shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
-        scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
-        pieces = dbutils.parse_filename(scifiles[0])
-        if 'tag' in pieces['type']:
-            counts = 0
-            for file_info in scifiles:
-                if 'x1d' in file_info.name:
-                    continue
-                h = fits.open(file_info)
-                counts += len(h[1].data['time'])
-                if counts <= 100:
-                    reject = True
-                    reason = reasons['no_data']
-        elif 'raw' in pieces['type']:
-            exptimes = [fits.getval(f, 'exptime', 1) for f in scifiles]
-            if np.all(np.array(exptimes) == 0):
-                reject = True
-                reason = reasons['no_data']
-
-        # alert if there are odd header flags
-        h = fits.open(scifiles[0])
-        hdr = h[0].header + h[1].header
-        if hdr['FGSLOCK'] != 'FINE':
-            reject = True
-            reason = reasons['no_gs_lock']
-        if hdr['expflag'] == 'NO DATA':
-            reject = True
-            reason = reasons['no_data']
-        elif hdr['expflag'] == 'SHUTTER CLOSED':
-            reject = True
-            reason = reasons['shutter_closed']
-        elif hdr['expflag'] != 'NORMAL':
-            print(f'!! Odd exposure flag value of {hdr['expflag']} for {shortnames[0]}.')
-        if hdr['exptime'] == 0 and not reject:
-            print(f'!! Exposure time of zero for {shortnames[0]} despite apparently having data.')
-            note = ''
-            for shortname, file_info in zip(shortnames, scifiles):
-                with fits.open(file_info, mode='update') as h:
-                    if len(h[2].data['start']):
-                        raise NotImplementedError
-                    if h[1].header['exptime'] == 0:
-                        start, stop = h[1].data['time'][[0, -1]]
-                        data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
-                        data['START'] = start
-                        data['STOP'] = stop
-                        h[2].data = data
-                        h[1].header['EXPTIME'] = stop - start
-                        h[0].header['TEXPTIME'] = stop - start
-                        h.flush()
-                        note += f'{shortname} had data but header set to zero exposure time. Manually replaced GTIs based on first and last photon count.'
-                    else:
-                        raise ValueError('Weird. Look into this.')
-            if len(note):
-                obs_tbl['notes'][i] = note
-
-        if reject:
-            obs_tbl['usable'][i] = False
-            obs_tbl['usability status'][i] = 'unusable'
-            obs_tbl['reason unusable'][i] = reason
-
-    care_level = utils.query_next_step(batch_mode, care_level, 2)
-
-
 #%% check obs_tbl
 
     print(
@@ -388,8 +266,6 @@ while True:
 #%% save obs_tbl
 
     print(f'\nSaving obs_tbl for {target}.\n')
-    obs_tbl.sort('start')
-    obs_tbl.meta['last archive query'] = datetime.now().isoformat()
     obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
 
     care_level = utils.query_next_step(batch_mode, care_level, 1)

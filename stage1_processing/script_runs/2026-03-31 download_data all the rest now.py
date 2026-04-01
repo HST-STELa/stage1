@@ -27,7 +27,12 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = (
+    set(target_lists.data_modified_after('2026-03-05')) |
+    set(target_lists.bespoke['lya archival 2026-03-11'])
+)
+targets = set(target_lists.everything_in_database()) - set(targets) # decided to do it all in the end
+targets = sorted(list(targets))
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -224,6 +229,14 @@ while True:
     obs_tbl['key science files'] = cleaned_sci_files
 
 
+#%% clear supporting file column
+
+    for i in range(len(obs_tbl)):
+        obs_tbl['supporting files'][i] = None
+        obs_tbl['supporting files'].mask[i] = True
+
+
+
 #%% download supporting acquisitions and wavecals
 
     print(f'Searching for supporting files for {target} observations.')
@@ -232,10 +245,7 @@ while True:
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
         i = row.index
-        if obs_tbl['supporting files'].mask[i]:
-            supporting_files = {}
-        else:
-            supporting_files = obs_tbl['supporting files'][i]
+        supporting_files = {}
 
         # look for acquisitions
         acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, additional_files=('SPT',))

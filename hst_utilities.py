@@ -259,9 +259,15 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
     centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd # arcsec
     slew = h[0].header['ACQSLEWY'] # arcsec
 
-    atol = 0.1 # arcsec
-    if not np.isclose(centroid_offset, slew, atol=atol):
-        msgs.append(f'COS PEAKXD slew > {atol} arcsec difference from image centroid.')
+    atol = 0.2 # arcsec
+    slew_diff = np.abs(centroid_offset- slew)
+
+    if verbosity == 2:
+        print(f'centroid offset {centroid_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
+
+    if not slew_diff > atol:
+        msgs.append(f'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
+                    f'which is greater than the {atol} threshold for this warning.')
 
     _acq_msg_print(msgs, verbosity)
 
@@ -286,8 +292,14 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
         slew = h[0].header['ACQSLEWX']  # arcsec
         wgtd_offset = np.sum(offsets*counts)/np.sum(counts) # arcsec
         atol = 0.1 # arcsec
-        if not np.isclose(wgtd_offset, slew, atol):
-            msgs.append(f'COS PEAKD slewed more than {atol} arcsec away from the count-weighed mean of dwell points.')
+        slew_diff = np.abs(wgtd_offset - slew)
+
+        if verbosity == 2:
+            print(f'count-weighted offset {wgtd_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
+
+        if not slew_diff > atol:
+            msgs.append(f'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points, '
+                        f'which is greater than the {atol} threshold for this warning.')
 
     _acq_msg_print(msgs, verbosity)
 
