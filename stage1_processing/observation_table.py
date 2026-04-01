@@ -503,3 +503,49 @@ def inspect_values_of_all_tables(colname='notes'):
             for item in ObsTable._iter_nonnull_cell_items(val):
                 unique.add(item if isinstance(item, str) else str(item))
     return unique
+
+
+flag_menu = {
+    # observation
+    'wave target': 'header targname = wave',
+
+    # acquisition
+    'bad acq' : 'acquisition untrustworthy',
+
+    # data quality
+    'zeros': 'fluxes all zero',
+    'nans': 'fluxes all nan or non-finite',
+
+    # flux
+    'lo flux': 'flux anomalously low',
+    'hi flux': 'flux anomalously high',
+    'no flux': 'flux negligible',
+
+    # wavelength
+    'bad waves': 'wavelengths inaccurate'
+}
+
+notes_menu = {
+    # gti issue
+    'clock rollover' : 'exposure time falsely reported as zero '
+                       'so GTIs were manually replaced based on first and last photon count',
+
+    # acq
+    'peakd zeros': 'COS PEAKD counts zero at all dwell points',
+    'peakd lo cts': 'COS PEAKD counts < {} at all dwell points whereas values > {} are typical',
+    'peakd big slew': 'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points '
+                      'versus the {atol} threshold for this warning',
+    'peakxd zeros': 'COS PEAKXD counts were zero',
+    'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
+                       'versus the {atol} threshold for this warning',
+    'acq no target flux': '',
+    'cannot see target': '{} could not identify target in acquisition image',
+
+    # acq issues not issues
+    'acq bad but plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
+
+    # flux
+    'line flux': '{line} flux {sigma:.1f} sigma from median '
+                 '((flux - median)/(median abs. dev.) over {wa:.2f}–{wb:.2f} AA band)'
+}
+# note that output from the stistools.tastis function is also used to populate notes
