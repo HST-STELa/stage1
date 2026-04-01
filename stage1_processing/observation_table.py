@@ -12,7 +12,60 @@ import database_utilities as dbutils
 import utilities as utils
 
 
+class ObsRow(table.Row):
+    """Row view for `ObsTable` with mask-aware ``get`` and ``usable``."""
+
+    @staticmethod
+    def _cell_masked_for_index(col, idx):
+        mask = getattr(col, "mask", None)
+        if mask is None:
+            return False
+        if mask is True:
+            return True
+        try:
+            return bool(np.asarray(mask, dtype=bool).reshape(-1)[idx])
+        except Exception:
+            return False
+
+    @staticmethod
+    def _structure_entirely_absent(val):
+        if isinstance(val, str):
+            return utils.is_null_item(val)
+        if ObsTable._is_null_like(val):
+            return True
+        if isinstance(val, np.ndarray):
+            if val.size == 0:
+                return True
+            if np.ma.isMaskedArray(val):
+                return ObsRow._structure_entirely_absent(val.tolist())
+            return ObsRow._structure_entirely_absent(val.tolist())
+        if isinstance(val, dict):
+            if len(val) == 0:
+                return True
+            return all(ObsRow._structure_entirely_absent(v) for v in val.values())
+        if isinstance(val, (list, tuple)):
+            if len(val) == 0:
+                return True
+            return all(ObsRow._structure_entirely_absent(v) for v in val)
+        return False
+
+    def get(self, key, default=None, /):
+        if key not in self._table.columns:
+            return default
+        col = self._table.columns[key]
+        if self._cell_masked_for_index(col, self._index):
+            return default
+        val = table.Row.__getitem__(self, key)
+        if self._structure_entirely_absent(val):
+            return default
+        return val
+
+    def usable(self, fill=True):
+        return self.get("usable", fill)
+
+
 class ObsTable(table.Table):
+    Row = ObsRow
     standard_column_specs = (
         # name, dtype, semantic subtype for object columns
         ('observatory', 'O', str),
@@ -507,6 +560,7 @@ def inspect_values_of_all_tables(colname='notes'):
 reasons_menu = {
     'no data': 'no data taken',
     'shutter closed': 'shutter closed',
+    'no gs lock': 'guide star tracking not locked',
     'acq issue + no flux': 'acquisition issues and negligible target flux',
     'acq issue + lo flux': 'acquisition issues and anomalously low target flux',
     'wave target': 'wave exposure'
