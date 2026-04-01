@@ -16,7 +16,7 @@ import utilities as utils
 
 hst_database = MastMissions(mission='hst')
 
-def locate_nearby_acquisitions(path, additional_files=()):
+def locate_nearby_acquisitions(path, radius, additional_files=()):
     max_visit_length = 10*u.h
     h = fits.open(path)
     hdr = h[0].header + h[1].header
@@ -37,7 +37,7 @@ def locate_nearby_acquisitions(path, additional_files=()):
     id_searchstr = id[:4] + '*' # all files with this root will be from the same observation set
     results = hst_database.query_region(
         coords,
-        radius=0.1,
+        radius=radius,
         sci_instrume=h[0].header['instrume'],
         sci_data_set_name=id_searchstr,
         sci_start_time=date_search_str,
