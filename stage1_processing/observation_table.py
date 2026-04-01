@@ -504,6 +504,13 @@ def inspect_values_of_all_tables(colname='notes'):
                 unique.add(item if isinstance(item, str) else str(item))
     return unique
 
+reasons_menu = {
+    'no data': 'no data taken',
+    'shutter closed': 'shutter closed',
+    'acq issue + no flux': 'acquisition issues and negligible target flux',
+    'acq issue + lo flux': 'acquisition issues and anomalously low target flux',
+    'wave target': 'wave exposure'
+}
 
 flag_menu = {
     # observation
