@@ -1,9 +1,11 @@
 import re
 import os
 from datetime import datetime
+import warnings
 
 from astropy.io import fits
 from astropy import table
+from astropy.units import u
 import numpy as np
 from astroquery.mast import MastMissions
 
@@ -232,15 +234,33 @@ while True:
         path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
         i = row.index
+
+        file_target = fits.getval(path, 'targname')
+        if file_target.lower() == 'wave':
+            obs_tbl['usable'][i] = False
+            obs_tbl['reason unusable'][i] = 'wave exposure'
+            obs_tbl.add_flags(i, 'header targname=wave')
+            obs_tbl.add_notes(i, 'Unclear why exposure with "wave" as the target shows up.')
+            data = fits.getdata(path, 1)
+            if np.all(data['flux'] == 0):
+                obs_tbl.add_flags(i, 'Spectrum is all zeros.')
+            continue
+
         if obs_tbl['supporting files'].mask[i]:
             supporting_files = {}
         else:
             supporting_files = obs_tbl['supporting files'][i]
 
         # look for acquisitions
-        acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, additional_files=('SPT',))
+        search_radius = 0.1*u.arcmin
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            acq_tbl_w_spts = []
+            while len(acq_tbl_w_spts) == 0 and search_radius < 10*u.arcmin:
+                acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, search_radius, additional_files=('SPT',))
+                search_radius *= 2
         if len(acq_tbl_w_spts) == 0:
-            continue
+            raise ValueError(f'No acquisition found for {path.name} within a {search_radius} search radius.')
         acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
 
         # if stis and there are two peaks, number them to differentiate
@@ -309,6 +329,8 @@ while True:
                    shutter_closed='Shutter closed.',
                    no_gs_lock='Guide star tracking not locked.')
     for i, row in enumerate(obs_tbl):
+        if not np.ma.filled(row['usable'], True):
+            continue
         reject = False
         shortnames = row['key science files'][:] # [:] to copy, otherwise may be modified in the table
         scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
