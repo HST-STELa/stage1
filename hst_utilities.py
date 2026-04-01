@@ -1,6 +1,7 @@
 import re
 import warnings
 from pathlib import Path
+from typing import NamedTuple, Optional
 import io
 import contextlib
 
@@ -13,6 +14,7 @@ from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
 import utilities as utils
+from stage1_processing.observation_table import reasons_menu
 
 hst_database = MastMissions(mission='hst')
 
@@ -140,6 +142,111 @@ def is_key_science_file(file):
                 return False
     else:
         return False
+
+
+class KeyScienceDataQualityAssessment(NamedTuple):
+    """Result of header/data checks on key science files for one observation row."""
+
+    reject: bool
+    reason: str
+    odd_expflag: Optional[str]
+    check_zero_exptime_repair: bool
+
+
+def assess_key_science_files_data_quality(scifiles, shortnames):
+    """
+    Evaluate TAG/RAW science data and primary-header flags for unusable conditions.
+
+    Parameters
+    ----------
+    scifiles : sequence of path-like
+        Resolved paths to science FITS (same order as shortnames).
+    shortnames : sequence of str
+        Basenames used in log messages (must align with scifiles).
+
+    Returns
+    -------
+    KeyScienceDataQualityAssessment
+    """
+    if len(scifiles) == 0:
+        return KeyScienceDataQualityAssessment(
+            reject=True,
+            reason=reasons_menu['no data'],
+            odd_expflag=None,
+            check_zero_exptime_repair=False,
+        )
+
+    pieces = dbutils.parse_filename(scifiles[0])
+    reject = False
+    reason = ''
+
+    if 'tag' in pieces['type']:
+        counts = 0
+        for file_info in scifiles:
+            if 'x1d' in Path(file_info).name:
+                continue
+            with fits.open(file_info) as h:
+                counts += len(h[1].data['time'])
+            if counts <= 100:
+                reject = True
+                reason = reasons_menu['no data']
+    elif 'raw' in pieces['type']:
+        exptimes = [fits.getval(f, 'exptime', 1) for f in scifiles]
+        if np.all(np.array(exptimes) == 0):
+            reject = True
+            reason = reasons_menu['no data']
+
+    odd_expflag = None
+    with fits.open(scifiles[0]) as h:
+        hdr = h[0].header + h[1].header
+        if hdr['FGSLOCK'] != 'FINE':
+            reject = True
+            reason = reasons_menu['no gs lock']
+        if hdr['expflag'] == 'NO DATA':
+            reject = True
+            reason = reasons_menu['no data']
+        elif hdr['expflag'] == 'SHUTTER CLOSED':
+            reject = True
+            reason = reasons_menu['shutter closed']
+        elif hdr['expflag'] != 'NORMAL':
+            odd_expflag = hdr['expflag']
+
+        check_zero_exptime_repair = hdr['exptime'] == 0 and not reject
+
+    return KeyScienceDataQualityAssessment(
+        reject=reject,
+        reason=reason,
+        odd_expflag=odd_expflag,
+        check_zero_exptime_repair=check_zero_exptime_repair,
+    )
+
+
+def repair_zero_exptime_from_photon_times(scifiles, shortnames):
+    """
+    When primary EXPTIME is zero but extension 1 has photon times, update EXPTIME/TEXPTIME
+    and GTI extension 2 from first/last times. Returns a note string for the observation table.
+    """
+    note = ''
+    for shortname, file_info in zip(shortnames, scifiles):
+        with fits.open(file_info, mode='update') as h:
+            if len(h[2].data['start']):
+                raise NotImplementedError
+            if h[1].header['exptime'] == 0:
+                start, stop = h[1].data['time'][[0, -1]]
+                data = np.recarray((1,), dtype=[('START', 'f8'), ('STOP', 'f8')])
+                data['START'] = start
+                data['STOP'] = stop
+                h[2].data = data
+                h[1].header['EXPTIME'] = stop - start
+                h[0].header['TEXPTIME'] = stop - start
+                h.flush()
+                note += (
+                    f'{shortname} had data but header set to zero exposure time. '
+                    'Manually replaced GTIs based on first and last photon count.'
+                )
+            else:
+                raise ValueError('Weird. Look into this.')
+    return note
 
 
 def read_etc_output(etc_output_file):
