@@ -1,31 +1,26 @@
 """
 Rewrite legacy strings in observation-table ECSV files to match *_menu canonical
 wording in observation_table.py. Drops flags/notes/reason lines that concern
-acquisition or lo/hi/no target flux (to be rebuilt later).
+acquisition or lo/hi/no target flux (to be rebuilt later). When a row's
+``reason unusable`` is cleared for that reason, ``usable`` and
+``usability status`` are masked on the same row.
 
 Set DRY_RUN = False to write files (overwrite=True).
-
-(File dated 2024-04-01 per request; authored 2026-04-01.)
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 from astropy import table
-
-# repo root (parent of single_use_scripts)
-_ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 import paths
 from stage1_processing import observation_table as obt
 
-DRY_RUN = True
+#%%
+DRY_RUN = False
 
+
+#%%
 fm, nm, rm = obt.flag_menu, obt.notes_menu, obt.reasons_menu
 
 # Legacy full strings from tables -> canonical menu *values*
@@ -58,6 +53,7 @@ _REASON_PROTECTED = frozenset(
 )
 
 
+#%%
 def _norm_key(s: str) -> str:
     return s.strip()
 
@@ -196,14 +192,21 @@ def _replace_list_column(tbl: obt.ObsTable, colname: str, map_legacy: dict, shou
     return changed
 
 
-def _replace_reason_column(tbl: obt.ObsTable) -> bool:
+def _replace_reason_column(tbl: obt.ObsTable) -> tuple[bool, np.ndarray]:
+    """
+    Rewrite ``reason unusable``. Returns (changed, reason_cleared_rows) where
+    ``reason_cleared_rows`` is True for rows that had an unmasked reason and
+    are now masked because the reason was dropped (acquisition/flux cleanup).
+    """
     col = tbl['reason unusable']
-    old_mask = np.array(getattr(col, 'mask', np.zeros(len(col), dtype=bool)), dtype=bool)
+    n = len(col)
+    old_mask = np.array(getattr(col, 'mask', np.zeros(n, dtype=bool)), dtype=bool)
     new_data: list = []
     new_mask: list[bool] = []
     changed = False
+    reason_cleared = np.zeros(n, dtype=bool)
 
-    for i in range(len(col)):
+    for i in range(n):
         if old_mask[i]:
             new_data.append(None)
             new_mask.append(True)
@@ -220,8 +223,8 @@ def _replace_reason_column(tbl: obt.ObsTable) -> bool:
         if _reason_should_mask(out):
             new_data.append(None)
             new_mask.append(True)
-            if s.strip():
-                changed = True
+            reason_cleared[i] = True
+            changed = True
         else:
             new_data.append(out)
             new_mask.append(False)
@@ -237,14 +240,17 @@ def _replace_reason_column(tbl: obt.ObsTable) -> bool:
             dtype=object,
         ),
     )
-    return changed
+    return changed, reason_cleared
 
 
 def homogenize_table(tbl: obt.ObsTable) -> bool:
     """Apply mappings and drops. Returns True if anything changed."""
     c1 = _replace_list_column(tbl, 'flags', FLAG_LEGACY_TO_CANON, _flag_item_should_drop)
     c2 = _replace_list_column(tbl, 'notes', NOTES_LEGACY_TO_CANON, _note_item_should_drop)
-    c3 = _replace_reason_column(tbl)
+    c3, reason_cleared = _replace_reason_column(tbl)
+    if np.any(reason_cleared):
+        tbl['usable'].mask |= reason_cleared
+        tbl['usability status'].mask |= reason_cleared
     any_changed = c1 or c2 or c3
     if any_changed:
         tbl.clean_duplicates_col_of_lists('flags')
@@ -270,6 +276,6 @@ def main():
                 tbl.write(path, overwrite=True)
     print(f'done: {n_files} tables read, {n_changed} with changes, dry_run={DRY_RUN}')
 
+#%%
 
-if __name__ == '__main__':
-    main()
+main()
