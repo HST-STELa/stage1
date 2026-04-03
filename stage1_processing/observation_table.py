@@ -451,6 +451,72 @@ class ObsTable(table.Table):
             if not np.ma.is_masked(val):
                 col[i] = np.unique(val).tolist()
 
+    @staticmethod
+    def _pretty_diagnostic_format_value(val):
+        if val is None or ObsTable._is_null_like(val):
+            return '—'
+        if isinstance(val, dict):
+            if not val:
+                return '{}'
+            return '{' + ', '.join(f'{k}: {v}' for k, v in val.items()) + '}'
+        if isinstance(val, (list, tuple)):
+            if len(val) == 0:
+                return '[]'
+            return ', '.join(str(x) for x in val)
+        return str(val)
+
+    def _pretty_diagnostic_list_lines(self, colname, row_index, bullet_indent):
+        col = self[colname]
+        if ObsRow._cell_masked_for_index(col, row_index):
+            return []
+        val = col[row_index]
+        if val is None or ObsTable._is_null_like(val):
+            return []
+        if isinstance(val, str):
+            if utils.is_null_item(val):
+                return []
+            return [f'{bullet_indent}- {val}']
+        if isinstance(val, (list, tuple)):
+            lines = []
+            for item in val:
+                if utils.is_null_item(item):
+                    continue
+                lines.append(f'{bullet_indent}- {item}')
+            return lines
+        return [f'{bullet_indent}- {val}']
+
+    def pretty_string_with_flags_notes(self, indent='  ', sub_indent='    '):
+        """
+        Plain-text layout: each row shows all columns except ``flags`` and ``notes`` as
+        ``name: value`` lines, then ``flags`` and ``notes`` as indented bullet lists.
+        """
+        lines = []
+        skip_main = {'flags', 'notes'}
+        n = len(self)
+        for i in range(n):
+            elmts = []
+            for name in self.colnames:
+                if name in skip_main:
+                    continue
+                masked = ObsRow._cell_masked_for_index(self[name], i)
+                if masked:
+                    text = '—'
+                else:
+                    text = self._pretty_diagnostic_format_value(self[name][i])
+                elmts.append(f'text')
+                lines.append(' | '.join(elmts))
+            for label, colname in (('flags', 'flags'), ('notes', 'notes')):
+                if colname not in self.colnames:
+                    continue
+                lines.append(f'{indent}{label}:')
+                blines = self._pretty_diagnostic_list_lines(colname, i, sub_indent)
+                if not blines:
+                    lines.append(f'{sub_indent}(none)')
+                else:
+                    lines.extend(blines)
+            lines.append('')
+        return '\n'.join(lines).rstrip() + '\n'
+
     def filter_files_by_usability_status(self, paths, allow=('has issues', 'all clear', 'unchecked', 'masked')):
         file_ids = [dbutils.parse_filename(p)['id'] for p in paths]
         mask = np.zeros(len(self), bool)
@@ -531,7 +597,7 @@ class ObsTable(table.Table):
             self['usability status'].mask[idx] = False
             self['usable'][idx] = False
             self['usable'].mask[idx] = False
-            self['reason unusable'][idx] = reason
+            self['reason unusable'][idx] = reason_unusable
             self['reason unusable'].mask[idx] = False
             return
 
@@ -679,7 +745,7 @@ notes_menu = {
     'cannot see target': '{user} could not identify target in acquisition image',
 
     # acq issues not issues
-    'acq bad but plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
+    'acq + plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
 
     # flux
     'line flux': '{line} flux {sigma:.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
