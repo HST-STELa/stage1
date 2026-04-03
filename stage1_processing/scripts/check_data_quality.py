@@ -45,6 +45,10 @@ matplotlib.use('Qt5Agg')
 acq_target_flux_n_chunks = 7
 acq_target_flux_sigma_threshold = 3.0
 
+min_spectra_for_band_comparison = 3
+anomalous_flux_sigma_threshold = 3.0
+zero_flux_sigma_threshold = 3.0
+
 
 #%% rechecking flagged aquisitions
 """if you want to check aquisitions of a target that has already been flagged unusable, use the
@@ -353,6 +357,7 @@ while True:
     viewcols = ['archive id', 'usable', 'usability status', 'reason unusable', 'flags', 'notes']
 
     catutils.set_index(obs_tbl, 'archive id')
+    acq_issues_mask = obs_tbl.substring_match_mask('flags', 'acquisition untrustworthy')
     usbl_mask = obs_tbl['usable'].filled(True)
     usbl_tbl = obs_tbl[usbl_mask]
     configs = np.unique(usbl_tbl['science config'])
@@ -400,6 +405,8 @@ while True:
                 row=row,
                 wavelength=wave,
                 flux=flux,
+                wave_by_order=data['wavelength'],
+                flux_by_order=data['flux'],
             ))
 
         # interpolate the remaining data onto the same wavelength grid and find median and median abs dev
@@ -434,27 +441,43 @@ while True:
         median_flux = np.nanmedian(interp_fluxes, axis=0)
         mad_flux = np.nanmedian(np.abs(interp_fluxes - median_flux), axis=0)
 
-        band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
-        if band_pick is None:
-            print(
-                f'\nSpectral χ² vs median/zero: no priority band had enough pixels '
-                f'for {target} | {config}.'
-            )
-        else:
-            comp_band_name, band_mask = band_pick
-            print(
-                f'\nSpectral χ² vs median/zero ({comp_band_name} band) for {target} | {config}:'
-            )
-            for spec in spectra:
-                sig_med, sig_z = hstutils.band_chi2_sigma_vs_median_and_zero(
-                    spec['interp_flux'][band_mask],
-                    median_flux[band_mask],
-                    mad_flux[band_mask],
+        if len(spectra) >= min_spectra_for_band_comparison:
+            band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
+            if band_pick is None:
+                warnings.warn(
+                    f'\nSpectral χ² vs median/zero: no priority band had enough pixels '
+                    f'for {target} | {config}.'
                 )
-                sid = str(spec['id'])[-6:]
-                print(
-                    f'  {sid}  vs_median={sig_med:.3f}σ  vs_zero={sig_z:.3f}σ'
-                )
+            else:
+                comp_band_name, band_mask = band_pick
+                for spec in spectra:
+                    id_mask = obs_tbl['archive id'] == spec['id']
+                    sig_med, sig_z = hstutils.band_chi2_sigma_vs_median_and_zero(
+                        spec['interp_flux'][band_mask],
+                        median_flux[band_mask],
+                        mad_flux[band_mask],
+                    )
+                    note = obt.notes_menu['line flux'].format(
+                        line=comp_band_name,
+                        sigma=sig_med,
+                        wa=wave_grid[band_mask][0],
+                        wb=wave_grid[band_mask][-1],
+                    )
+                    obs_tbl.add_note(config_mask, note)
+
+                    if sig_z < zero_flux_sigma_threshold:
+                        obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'])
+                        z_w_bad_acq = acq_issues_mask & id_mask
+                        obs_tbl.update_usability(z_w_bad_acq, 'unusable', 'acq issue + no flux')
+                    else:
+                        if sig_med < anomalous_flux_sigma_threshold:
+                            obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'])
+                            lo_w_bad_acq = acq_issues_mask & id_mask
+                            obs_tbl.update_usability(lo_w_bad_acq, 'unusable', 'acq issue + lo flux')
+                        if sig_med >= 0:
+                            obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med))
+                        if sig_med > anomalous_flux_sigma_threshold:
+                            obs_tbl.add_flag(id_mask, obt.flag_menu['hi flux'])
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line
         # showing median and a light shaded region showing median abs dev
@@ -634,6 +657,12 @@ while True:
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last data review'] = datetime.now().isoformat()
+
+    diagnostics_dir = data_dir / 'diagnostics'
+    diagnostics_dir.mkdir(exist_ok=True)
+    diag_path = diagnostics_dir / f'{target}_observation_table.txt'
+    diag_path.write_text(obs_tbl.pretty_string_with_flags_notes(), encoding='utf-8')
+    print(f'Wrote diagnostic pretty-print to {diag_path}\n')
     obs_tbl.meta['last review by'] = human_reviewer
     obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
 
