@@ -485,6 +485,82 @@ class ObsTable(table.Table):
             cleared_tbl[name].mask |= mask
         return cleared_tbl
 
+    def update_usability(self, row_idx, usability_status, reason_unusable=None):
+        """
+        Set ``usability status`` (and derived fields) for the selected rows. The status
+        string drives everything (case-insensitive except for ``reason_unusable`` text).
+
+        * ``'unusable'`` — ``usable`` is ``False`` (unmasked). ``reason_unusable`` is
+          required and must be a :data:`reasons_menu` key or its canonical value.
+        * ``'has issues'`` — ``usable`` and ``reason unusable`` are masked;
+          ``reason_unusable`` must not be passed.
+        * ``'all clear'`` (alias ``'usable'``) — ``usable`` is ``True``, ``reason unusable``
+          masked; ``reason_unusable`` must not be passed.
+        * ``'mask'`` — all three columns are masked; ``reason_unusable`` must not be passed.
+        reason_unusable may also be a :data:`reasons_menu` key or its canonical value.
+        """
+        idx = row_idx
+        st = usability_status
+        if not isinstance(st, str):
+            raise TypeError('usability_status must be a string')
+        key = st.strip().lower()
+        if key in ('usable', 'clear'):
+            key = 'all clear'
+
+        if key == 'mask':
+            if reason_unusable is not None:
+                raise ValueError('reason_unusable must not be given when usability_status is "mask"')
+            self['usability status'][idx] = None
+            self['usability status'].mask[idx] = True
+            self['reason unusable'][idx] = None
+            self['reason unusable'].mask[idx] = True
+            self['usable'][idx] = None
+            self['usable'].mask[idx] = True
+            return
+
+        if key == 'unusable':
+            if reason_unusable is None:
+                raise ValueError('reason_unusable is required when usability_status is "unusable"')
+            if reason_unusable not in reasons_menu.values():
+                try:
+                    reason_unusable = reasons_menu[reason_unusable]
+                except KeyError:
+                    raise ValueError(f'Invalid reason unusable {reason_unusable!r}; pass a reasons_menu key or one of: {list(reasons_menu.values())}')
+            assert reason_unusable in reasons_menu.values(), f'Invalid reason unusable {reason_unusable!r}; pass a reasons_menu key or one of: {list(reasons_menu.values())}'
+            self['usability status'][idx] = 'unusable'
+            self['usability status'].mask[idx] = False
+            self['usable'][idx] = False
+            self['usable'].mask[idx] = False
+            self['reason unusable'][idx] = reason
+            self['reason unusable'].mask[idx] = False
+            return
+
+        if key == 'has issues':
+            if reason_unusable is not None:
+                raise ValueError('reason_unusable must not be given when usability_status is "has issues"')
+            self['usability status'][idx] = 'has issues'
+            self['usability status'].mask[idx] = False
+            self['usable'].mask[idx] = True
+            self['reason unusable'][idx] = None
+            self['reason unusable'].mask[idx] = True
+            return
+
+        if key == 'all clear':
+            if reason_unusable is not None:
+                raise ValueError('reason_unusable must not be given when usability_status is "all clear"')
+            self['usability status'][idx] = 'all clear'
+            self['usability status'].mask[idx] = False
+            self['usable'][idx] = True
+            self['usable'].mask[idx] = False
+            self['reason unusable'][idx] = None
+            self['reason unusable'].mask[idx] = True
+            return
+
+        raise ValueError(
+            f'Unknown usability_status {usability_status!r}; use one of: '
+            f'"unusable", "has issues", "all clear", "mask" (aliases: usable, clear)'
+        )
+
     @classmethod
     def _iter_nonnull_cell_items(cls, val):
         """Yield atomic, non-null items from a cell (scalar or iterable)."""
@@ -599,21 +675,16 @@ notes_menu = {
     'peakxd zeros': 'COS PEAKXD counts were zero',
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
                        'versus the {atol} threshold for this warning',
-    'acq target flux': (
-        'flux within central {fraction}x{fraction} of the acquisition image '
-        'is {sigma} sigma estimated from the MAD'
-    ),
+    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {sigma:.2f} sigma from median',
     'cannot see target': '{user} could not identify target in acquisition image',
 
     # acq issues not issues
     'acq bad but plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
 
     # flux
-    'line flux': '{line} flux {sigma:.1f} sigma from median '
-                 '((flux - median)/(median abs dev) over {wa:.2f}–{wb:.2f} AA band)',
+    'line flux': '{line} flux {sigma:.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
 
     # wavelength discrepancy
-    'wave discrepancy': 'cross-correlation alignment with median spectrum yielded a shift of {shift:.2f} AA'
-                         'versus the {atol} threshold for this warning',
+    'bad waves': '{user} reported substantial wavelength discrepancy',
 }
 # note that output from the stistools.tastis function is also used to populate notes

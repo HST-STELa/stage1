@@ -434,6 +434,28 @@ while True:
         median_flux = np.nanmedian(interp_fluxes, axis=0)
         mad_flux = np.nanmedian(np.abs(interp_fluxes - median_flux), axis=0)
 
+        band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
+        if band_pick is None:
+            print(
+                f'\nSpectral χ² vs median/zero: no priority band had enough pixels '
+                f'for {target} | {config}.'
+            )
+        else:
+            comp_band_name, band_mask = band_pick
+            print(
+                f'\nSpectral χ² vs median/zero ({comp_band_name} band) for {target} | {config}:'
+            )
+            for spec in spectra:
+                sig_med, sig_z = hstutils.band_chi2_sigma_vs_median_and_zero(
+                    spec['interp_flux'][band_mask],
+                    median_flux[band_mask],
+                    mad_flux[band_mask],
+                )
+                sid = str(spec['id'])[-6:]
+                print(
+                    f'  {sid}  vs_median={sig_med:.3f}σ  vs_zero={sig_z:.3f}σ'
+                )
+
         # plot the spectra together in batches of no more than 5 on top of a thick background line
         # showing median and a light shaded region showing median abs dev
         figs = []

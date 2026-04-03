@@ -148,6 +148,149 @@ def is_key_science_file(file):
 _MAD_SCALE_NORMAL = 1.482602218505602
 
 
+def spectral_comparison_band_definitions(science_config):
+    """
+    Bandpasses for chi²-style spectral comparison, in priority order.
+
+    Lyα is only included for STIS G140M / E140M. STIS G140L uses wider windows for
+    the UV lines (no Lyα step).
+    """
+    cfg = science_config.lower()
+    g140l = 'g140l' in cfg
+    out = []
+    if not g140l and ('stis-g140m' in cfg or 'stis-e140m' in cfg):
+        out.append(('Lyα', 1210.0, 1220.0))
+    if g140l:
+        out.extend(
+            [
+                ('C II', 1330.0, 1340.0),
+                ('C IV', 1545.0, 1555.0),
+                ('C III', 1170.0, 1182.0),
+                ('He II', 1635.0, 1645.0),
+            ]
+        )
+    else:
+        out.extend(
+            [
+                ('C II', 1333.0, 1337.0),
+                ('C IV', 1547.0, 1553.0),
+                ('C III', 1173.0, 1178.0),
+                ('He II', 1638.0, 1643.0),
+            ]
+        )
+    return out
+
+
+def select_spectral_comparison_band(wavelength, science_config, min_pixels=3):
+    """
+    Choose the first priority band that has enough samples on ``wavelength``.
+
+    Parameters
+    ----------
+    wavelength : ndarray
+        1-D wavelength grid (Å), same length as flux/median/mad arrays.
+    science_config : str
+        Row ``science config`` string (e.g. ``hst-stis-g140m``).
+    min_pixels : int
+        Minimum number of grid points inside the band.
+
+    Returns
+    -------
+    tuple (str, ndarray) or None
+        ``(band_name, mask)`` where ``mask`` is a boolean array on the grid, or
+        ``None`` if no band qualifies.
+    """
+    wave = np.asarray(wavelength, dtype=float)
+    for name, wlo, whi in spectral_comparison_band_definitions(science_config):
+        mask = (wave >= wlo) & (wave <= whi) & np.isfinite(wave)
+        if np.count_nonzero(mask) >= min_pixels:
+            return name, mask
+    return None
+
+
+def band_chi2_sigma_vs_median_and_zero(
+    flux,
+    median,
+    mad,
+    *,
+    mad_scale=_MAD_SCALE_NORMAL,
+    zero_mad_percentile=5.0,
+):
+    """
+    Chi²-style deviation of one spectrum from the ensemble median vs. from zero.
+
+    Uses scaled MAD (``mad * mad_scale``) per pixel as σ for comparison to the median.
+    For comparison to zero, σ is constant: the given percentile of positive scaled
+    MAD values in the band (robust floor so near-zero MAD pixels do not dominate).
+
+    Each χ² is divided by ``sqrt(2 * dof)`` with ``dof`` the number of pixels used
+    (finite flux, median, mad, and strictly positive scaled MAD).
+
+    Parameters
+    ----------
+    flux, median, mad : ndarray
+        Aligned 1-D arrays for a single wavelength band.
+
+    Returns
+    -------
+    sigma_vs_median, sigma_vs_zero : float
+        ``nan`` if the band cannot be evaluated (no usable pixels or invalid σ₀).
+    """
+    flux = np.asarray(flux, dtype=float)
+    median = np.asarray(median, dtype=float)
+    mad = np.asarray(mad, dtype=float)
+    sigma_robust = mad * mad_scale
+    base = np.isfinite(flux) & np.isfinite(median) & np.isfinite(mad)
+    use = base & (sigma_robust > 0)
+    dof = int(np.count_nonzero(use))
+    if dof == 0:
+        return np.nan, np.nan
+
+    resid = (flux - median)[use]
+    sig = sigma_robust[use]
+    chi2_median = float(np.sum((resid / sig) ** 2))
+    sigma_vs_median = chi2_median / np.sqrt(2.0 * dof)
+
+    sigma0 = float(np.percentile(sig, zero_mad_percentile))
+    if not np.isfinite(sigma0) or sigma0 <= 0:
+        return sigma_vs_median, np.nan
+
+    chi2_zero = float(np.sum((flux[use] / sigma0) ** 2))
+    sigma_vs_zero = chi2_zero / np.sqrt(2.0 * dof)
+    return sigma_vs_median, sigma_vs_zero
+
+
+def spectral_band_chi2_sigmas(
+    wavelength,
+    flux,
+    median,
+    mad,
+    science_config,
+    *,
+    min_pixels=3,
+    zero_mad_percentile=5.0,
+):
+    """
+    Select a priority band and return normalized χ² sigmas vs. median and vs. zero.
+
+    Returns
+    -------
+    band_name : str or None
+    sigma_vs_median, sigma_vs_zero : float
+    """
+    picked = select_spectral_comparison_band(wavelength, science_config, min_pixels=min_pixels)
+    if picked is None:
+        return None, np.nan, np.nan
+    name, mask = picked
+    sm, sz = band_chi2_sigma_vs_median_and_zero(
+        flux[mask],
+        median[mask],
+        mad[mask],
+        zero_mad_percentile=zero_mad_percentile,
+    )
+    return name, sm, sz
+
+
 def central_chunk_prominence_sigma(image, n, *, tile_reduce=np.sum):
     """
     Split a 2D image into an ``n×n`` grid of equal tiles (``n`` odd), sum each tile,
@@ -430,9 +573,7 @@ def auto_validate_stis_acq(acq_path, verbosity=1):
 
 def acq_image_eval(acq_hdu, n_chunks, sigma_threshold):
     prom = central_chunk_prominence_sigma(acq_hdu['sci', 2].data, n_chunks)
-    note = notes_menu['acq target flux'].format(
-        fraction=n_chunks, sigma=f'{prom:.2f}'
-    )
+    note = notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
     passes = prom >= sigma_threshold
     return note, passes
 
