@@ -599,14 +599,19 @@ notes_menu = {
     'peakxd zeros': 'COS PEAKXD counts were zero',
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
                        'versus the {atol} threshold for this warning',
-    'acq no target flux': '',
-    'cannot see target': '{} could not identify target in acquisition image',
+    'acq target flux': 'flux within central {fraction}x{fraction} of the acquisition image'
+                        'is {sigma}x the median abs dev',
+    'cannot see target': '{user} could not identify target in acquisition image',
 
     # acq issues not issues
     'acq bad but plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
 
     # flux
     'line flux': '{line} flux {sigma:.1f} sigma from median '
-                 '((flux - median)/(median abs. dev.) over {wa:.2f}–{wb:.2f} AA band)'
+                 '((flux - median)/(median abs dev) over {wa:.2f}–{wb:.2f} AA band)',
+
+    # wavelength discrepancy
+    'wave discrepancy': 'cross-correlation alignment with median spectrum yielded a shift of {shift:.2f} AA'
+                         'versus the {atol} threshold for this warning',
 }
 # note that output from the stistools.tastis function is also used to populate notes
