@@ -5,7 +5,6 @@ from math import nan
 
 import numpy as np
 from astropy.io import fits
-from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
@@ -20,6 +19,7 @@ import paths
 import utilities as utils
 import catalog_utilities as catutils
 import hst_utilities as hstutils
+from hst_utilities import plot_acq_image
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
@@ -283,7 +283,7 @@ while True:
                 axs = []
                 for j in range(2):
                     hh = h['sci', j+1]
-                    ax, coords_at_obs = plot_acq_image(hh, coords, fig, (1, 2, j+1))
+                    ax, coords_at_obs = plot_acq_image(hh, coords, fig, (1, 2, j + 1))
                     ax.set_title(stages[j])
                     if j == 0:
                         ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
@@ -313,8 +313,8 @@ while True:
                 fig = plt.figure(figsize=[5,3])
                 for j in range(2):
                     hh = h['sci', j+1]
-                    ax, _ = plot_acq_image(hh, coords, fig, (1, 2, j+1),
-                                        zoom_region=3*u.arcsec)
+                    ax, _ = plot_acq_image(hh, coords, fig, (1, 2, j + 1),
+                                           zoom_region=3*u.arcsec)
                     if j == 1:
                         ax.scatter(0.5, 0.5, transform=ax.transAxes,
                                    marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)

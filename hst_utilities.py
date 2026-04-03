@@ -6,6 +6,8 @@ import io
 import contextlib
 
 import numpy as np
+from astropy.time import Time
+from astropy.wcs import WCS
 from astroquery.mast import MastMissions
 from astropy.io import fits
 from astropy import time, table
@@ -681,3 +683,50 @@ def repair_zero_exptime_from_photon_times(scifiles, shortnames):
             else:
                 raise ValueError('Weird. Look into this.')
     return note
+
+
+def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region=None):
+    h = fits_handle
+
+    newobstime = Time(h.header['expstart'], format='mjd')
+    coords_at_obs = object_coords.apply_space_motion(newobstime)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message="'datfix'")
+        wcs = WCS(h.header)
+    ax = figure.add_subplot(*subplot_spec, projection=wcs)
+
+    ax.imshow(h.data, origin='lower')
+    ax.coords.grid(True, color='white', ls=':', lw=0.5)
+
+    if zoom_region is not None:
+        ra, dec = coords_at_obs.ra, coords_at_obs.dec
+        coord1 = SkyCoord(ra - zoom_region, dec - zoom_region)
+        coord2 = SkyCoord(ra + zoom_region, dec + zoom_region)
+
+        # Convert to pixel coordinates
+        (x1, y1) = wcs.world_to_pixel(coord1)
+        (x2, y2) = wcs.world_to_pixel(coord2)
+
+        # avoid reversed pixel coords
+        xlo = min(x1, x2)
+        xhi = max(x1, x2)
+        ylo = min(y1, y2)
+        yhi = max(y1, y2)
+
+        # avoid skinny images
+        dx = xhi - xlo
+        dy = yhi - ylo
+        dmx = max(dx, dy)
+        if dx < dmx/2:
+            xlo -= dmx/2
+            xhi += dmx/2
+        if dy < dmx/2:
+            ylo -= dmx/2
+            yhi += dmx/2
+
+        # Set the limits using pixel coordinates
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
+
+    return ax, coords_at_obs
