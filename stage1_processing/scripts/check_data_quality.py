@@ -152,6 +152,8 @@ while True:
 
     tic_id = preloads.stela_names.loc['hostname_file', target]['tic_id']
     data_dir = paths.target_hst_data(target)
+    diagnostics_dir = data_dir / 'diagnostics'
+    diagnostics_dir.mkdir(exist_ok=True)
 
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
@@ -658,11 +660,9 @@ while True:
     obs_tbl.sort('start')
     obs_tbl.meta['last data review'] = datetime.now().isoformat()
 
-    diagnostics_dir = data_dir / 'diagnostics'
-    diagnostics_dir.mkdir(exist_ok=True)
-    diag_path = diagnostics_dir / f'{target}_observation_table.txt'
-    diag_path.write_text(obs_tbl.pretty_string_with_flags_notes(), encoding='utf-8')
-    print(f'Wrote diagnostic pretty-print to {diag_path}\n')
+    diag_tbl_path = diagnostics_dir / f'{target}_observation_table.txt'
+    diag_tbl_path.write_text(obs_tbl.pretty_string_with_flags_notes(), encoding='utf-8')
+    print(f'Wrote diagnostic pretty-print to {diag_tbl_path}\n')
     obs_tbl.meta['last review by'] = human_reviewer
     obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
 
