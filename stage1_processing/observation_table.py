@@ -599,8 +599,10 @@ notes_menu = {
     'peakxd zeros': 'COS PEAKXD counts were zero',
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
                        'versus the {atol} threshold for this warning',
-    'acq target flux': 'flux within central {fraction}x{fraction} of the acquisition image'
-                        'is {sigma}x the median abs dev',
+    'acq target flux': (
+        'flux within central {fraction}x{fraction} of the acquisition image '
+        'is {sigma} sigma estimated from the MAD'
+    ),
     'cannot see target': '{user} could not identify target in acquisition image',
 
     # acq issues not issues

@@ -42,6 +42,9 @@ batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 matplotlib.use('Qt5Agg')
 
+acq_target_flux_n_chunks = 7
+acq_target_flux_sigma_threshold = 3.0
+
 
 #%% rechecking flagged aquisitions
 """if you want to check aquisitions of a target that has already been flagged unusable, use the
@@ -107,6 +110,7 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         ax.set_ylim(ylo, yhi)
 
     return ax, coords_at_obs
+
 
 
 #%% target iterator
@@ -231,8 +235,9 @@ while True:
 
     for acq_name in acq_filenames:
         acq_issues = False
+        is_image = False
         image_shown = False
-        warning_msgs = []
+        msgs = []
 
         # find associated science files, print info
         def associated(sfs):
@@ -254,15 +259,20 @@ while True:
                    f"\n\tacquisition target: {targname_acq}")
             warnings.warn(msg)
 
+
         if 'hst-stis' in acq_file.name:
             # run builtin STIS tool for acq diagnosis
             h = fits.open(acq_file)
-            print(f'STIS {h[0].header['obsmode']}')
-            warning_msgs = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
+            print(f"STIS {h[0].header['obsmode']}")
+            stis_warn = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
+            msgs.extend(stis_warn)
+            if stis_warn:
+                acq_issues = True
 
-            # now plot the acq images
+            # now assess the acq images
             stages = ['coarse', 'fine']
             if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
+                is_image = True
                 fig = plt.figure(figsize=[7,3])
                 axs = []
                 for j in range(2):
@@ -284,10 +294,15 @@ while True:
             if exptype == 'ACQ/SEARCH':
                 print('no checks performed') # these should always be followed by a more precise acq according to STScI policy
             if exptype == 'ACQ/PEAKXD':
-                warning_msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
+                msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
+                if msgs:
+                    acq_issues = True
             if exptype == 'ACQ/PEAKD':
-                warning_msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
+                msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
+                if msgs:
+                    acq_issues = True
             if exptype == 'ACQ/IMAGE':
+                is_image = True
                 stages = ['initial', 'confirmation']
                 fig = plt.figure(figsize=[5,3])
                 for j in range(2):
@@ -302,6 +317,12 @@ while True:
 
                 image_shown = True
 
+        if is_image:
+            note, passes = hstutils.acq_image_eval(h, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
+            msgs.append(note)
+            if not passes:
+                acq_issues = True
+
         if image_shown:
             fig.suptitle(acq_file.name)
             fig.tight_layout()
@@ -310,12 +331,11 @@ while True:
             answer = input('Did the target appear in the acquisition image (enter/n)')
             if answer != '':
                 acq_issues = True
-                warning_msgs.append(f'Human reviewer ({human_reviewer}) could not identify target in acquisition image.')
+                msgs.append(f'Human reviewer ({human_reviewer}) could not identify target in acquisition image.')
             plt.close('all')
 
-        if warning_msgs:
-            acq_issues = True
-            for msg in warning_msgs:
+        if msgs:
+            for msg in msgs:
                 obs_tbl.add_notes(assoc_obs_mask, msg)
 
         if acq_issues:

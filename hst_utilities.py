@@ -144,6 +144,93 @@ def is_key_science_file(file):
         return False
 
 
+# Gaussian σ equivalent for MAD (median absolute deviation about the median)
+_MAD_SCALE_NORMAL = 1.482602218505602
+
+
+def central_chunk_prominence_sigma(image, n, *, tile_reduce=np.sum):
+    """
+    Split a 2D image into an ``n×n`` grid of equal tiles (``n`` odd), sum each tile,
+    and measure how many Gaussian-equivalent σ the **central** tile’s sum lies from the
+    median of the **other** tiles, using the MAD of those other tiles as a robust scale.
+
+    The grid stays centered on the image: if height or width is not a multiple of ``n``,
+    the crop uses the largest size divisible by ``n``, dropping the same number of
+    pixels from the top and bottom (and from left and right). If one extra pixel must
+    be removed, it is taken from the bottom and/or right so the grid stays centered.
+
+    Parameters
+    ----------
+    image : array_like
+        Two-dimensional array.
+    n : int
+        Odd number of tiles along each axis; must be ≥ 3.
+    tile_reduce : callable, optional
+        Ufunc-like ``f(array, axis=...)`` over tile pixels; default ``numpy.sum``.
+
+    Returns
+    -------
+    float
+        (central chunk sum − reference median) / (MAD × normal Gaussian scale). Signed.
+        If MAD is 0, returns ``±inf`` when the central sum differs from the reference
+        median, else ``0.0``.
+
+    Notes
+    -----
+    Median and MAD are computed from the ``n² − 1`` non-central tile sums so the
+    central tile does not inflate the scatter estimate. Robust scale is
+    ``MAD × 1.4826…`` (normal consistency).
+    """
+    if n % 2 == 0 or n < 3:
+        raise ValueError('n must be an odd integer >= 3.')
+
+    arr = np.asarray(image)
+    if arr.ndim != 2:
+        raise ValueError('image must be a 2D array.')
+
+    h, w = arr.shape
+    h_trim = (h // n) * n
+    w_trim = (w // n) * n
+    if h_trim < n or w_trim < n:
+        raise ValueError(
+            f'After centering, image must span at least {n} pixels per axis; got trim shape {(h_trim, w_trim)}.'
+        )
+
+    dh, dw = h - h_trim, w - w_trim
+    row_start = dh // 2
+    row_end = row_start + h_trim
+    col_start = dw // 2
+    col_end = col_start + w_trim
+
+    sub = arr[row_start:row_end, col_start:col_end]
+    chunk_h, chunk_w = h_trim // n, w_trim // n
+
+    # (n, chunk_h, n, chunk_w) → sum over tile pixels → (n, n)
+    tiles = sub.reshape(n, chunk_h, n, chunk_w)
+    chunk_sums = tile_reduce(tiles, axis=(1, 3))
+    if chunk_sums.shape != (n, n):
+        raise RuntimeError('internal shape error in chunk_sums')
+
+    ci = cj = n // 2
+    central_sum = float(chunk_sums[ci, cj])
+
+    mask = np.ones((n, n), dtype=bool)
+    mask[ci, cj] = False
+    peripheral = chunk_sums[mask]
+    median_reference = float(np.median(peripheral))
+    mad = float(np.median(np.abs(peripheral - median_reference)))
+    robust_sigma = mad * _MAD_SCALE_NORMAL
+
+    if robust_sigma > 0:
+        sigma_prominence = (central_sum - median_reference) / robust_sigma
+    elif central_sum == median_reference:
+        sigma_prominence = 0.0
+    else:
+        sigma_prominence = np.inf if central_sum > median_reference else -np.inf
+
+    return float(sigma_prominence)
+
+
 def read_etc_output(etc_output_file):
     try:
         pattern = r'etc.hst-\w+-(.*?)\.(.*?)\..*exptime(.*?)_flux(.*?)_aperture(.*?)\.csv'
@@ -339,6 +426,15 @@ def auto_validate_stis_acq(acq_path, verbosity=1):
     _acq_msg_print(msgs, verbosity, output)
 
     return msgs
+
+
+def acq_image_eval(acq_hdu, n_chunks, sigma_threshold):
+    prom = central_chunk_prominence_sigma(acq_hdu['sci', 2].data, n_chunks)
+    note = notes_menu['acq target flux'].format(
+        fraction=n_chunks, sigma=f'{prom:.2f}'
+    )
+    passes = prom >= sigma_threshold
+    return note, passes
 
 
 class KeyScienceDataQualityAssessment(NamedTuple):
