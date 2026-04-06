@@ -183,7 +183,7 @@ def spectral_comparison_band_definitions(science_config):
     return out
 
 
-def select_spectral_comparison_band(wavelength, science_config, min_pixels=3):
+def select_spectral_comparison_band(wavelength, science_config, min_pixels=10):
     """
     Choose the first priority band that has enough samples on ``wavelength``.
 
@@ -545,7 +545,7 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
     return msgs
 
 
-def auto_validate_stis_acq(acq_path, verbosity=1):
+def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
     """Run the tastis acquistion checking tool and return any warnings that result. Optionally print
     the final tastis synopsis (verbosity=1), the full output (2), or nothing (0)."""
 
@@ -570,13 +570,15 @@ def auto_validate_stis_acq(acq_path, verbosity=1):
 
     _acq_msg_print(msgs, verbosity, output)
 
+    if return_full_output:
+        return msgs, output
     return msgs
 
 
-def acq_image_eval(acq_hdu, n_chunks, sigma_threshold):
-    prom = central_chunk_prominence_sigma(acq_hdu['sci', 2].data, n_chunks)
+def acq_image_eval(test_image, n_chunks, sigma_threshold):
+    prom = central_chunk_prominence_sigma(test_image, n_chunks)
     note = notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
-    passes = prom >= sigma_threshold
+    passes = np.isfinite(prom) and prom >= sigma_threshold
     return note, passes
 
 
@@ -729,4 +731,9 @@ def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region
         ax.set_xlim(xlo, xhi)
         ax.set_ylim(ylo, yhi)
 
-    return ax, coords_at_obs
+    # get just the displayed array to return
+    j0, j1 = [int(round(x)) for x in ax.get_xlim()]
+    i0, i1 = [int(round(x)) for x in ax.get_ylim()]
+    ary = h.data[int(i0):i1, j0:j1]
+
+    return ax, coords_at_obs, ary

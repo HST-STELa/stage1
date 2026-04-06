@@ -2,6 +2,8 @@ import warnings
 import re
 from datetime import datetime
 from math import nan
+import sys
+import io
 
 import numpy as np
 from astropy.io import fits
@@ -35,12 +37,13 @@ from stage1_processing import observation_table as obt
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-human_reviewer = 'Parke'
-targets = target_lists.new_data()
+request_human_input = True
+human_reviewer = 'parke'
+
+targets = target_lists.last_data_review_before('2026-04-01')
 clear_flags = True
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
-matplotlib.use('Qt5Agg')
 
 acq_target_flux_n_chunks = 7
 acq_target_flux_sigma_threshold = 3.0
@@ -48,6 +51,14 @@ acq_target_flux_sigma_threshold = 3.0
 min_spectra_for_band_comparison = 3
 anomalous_flux_sigma_threshold = 3.0
 zero_flux_sigma_threshold = 3.0
+
+
+#%% show plots or not
+
+if request_human_input:
+    matplotlib.use('qt5agg') # show
+else:
+    matplotlib.use('agg') # don't show
 
 
 #%% rechecking flagged aquisitions
@@ -62,59 +73,32 @@ with catutils.catch_QTable_unit_warnings():
 targprops.add_index('tic_id')
 
 
-#%% ra, dec plotting
+#%% setup to capture printouts
 
-def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region=None):
-    h = fits_handle
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+        return len(data)
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
-    newobstime = Time(h.header['expstart'], format='mjd')
-    coords_at_obs = object_coords.apply_space_motion(newobstime)
+def start_capturing_printouts():
+    global _old_stdout, _buffer
+    buffer = _buffer =  io.StringIO()
+    _old_stdout = sys.stdout
+    sys.stdout = Tee(_old_stdout, _buffer)
+    return buffer
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message="'datfix'")
-        wcs = WCS(h.header)
-    ax = figure.add_subplot(*subplot_spec, projection=wcs)
-
-    ax.imshow(h.data, origin='lower')
-    ax.coords.grid(True, color='white', ls=':', lw=0.5)
-
-    # ax.coords[0].set_ticklabel_visible(False)  # RA
-    # ax.coords[1].set_ticklabel_visible(False)  # Dec
-    # ax.coords[0].set_axislabel('')  # RA label
-    # ax.coords[1].set_axislabel('')  # Dec label
-
-    if zoom_region is not None:
-        ra, dec = coords_at_obs.ra, coords_at_obs.dec
-        coord1 = SkyCoord(ra - zoom_region, dec - zoom_region)
-        coord2 = SkyCoord(ra + zoom_region, dec + zoom_region)
-
-        # Convert to pixel coordinates
-        (x1, y1) = wcs.world_to_pixel(coord1)
-        (x2, y2) = wcs.world_to_pixel(coord2)
-
-        # avoid reversed pixel coords
-        xlo = min(x1, x2)
-        xhi = max(x1, x2)
-        ylo = min(y1, y2)
-        yhi = max(y1, y2)
-
-        # avoid skinny images
-        dx = xhi - xlo
-        dy = yhi - ylo
-        dmx = max(dx, dy)
-        if dx < dmx/2:
-            xlo -= dmx/2
-            xhi += dmx/2
-        if dy < dmx/2:
-            ylo -= dmx/2
-            yhi += dmx/2
-
-        # Set the limits using pixel coordinates
-        ax.set_xlim(xlo, xhi)
-        ax.set_ylim(ylo, yhi)
-
-    return ax, coords_at_obs
-
+def stop_and_save_capture(filepath):
+    global _old_stdout, _buffer
+    sys.stdout = _old_stdout
+    txt = _buffer.getvalue()
+    with open(filepath, 'w') as f:
+        f.write(txt)
 
 
 #%% target iterator
@@ -154,6 +138,9 @@ while True:
     data_dir = paths.target_hst_data(target)
     diagnostics_dir = data_dir / 'diagnostics'
     diagnostics_dir.mkdir(exist_ok=True)
+    acq_img_dir = diagnostics_dir / 'acquisition images'
+    acq_img_dir.mkdir(exist_ok=True)
+    spec_plt_dir = diagnostics_dir / 'spectra vs median plots'
 
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
@@ -170,6 +157,7 @@ while True:
 
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
+
 
 #%% target coordinates
 
@@ -229,6 +217,8 @@ while True:
 
 #%% acquisition checking
 
+    buffer = start_capturing_printouts()
+
     acq_filenames = []
     usbl_tbl = dbutils.filter_observations(obs_tbl, usable=True)
     for supfiles in usbl_tbl['supporting files']:
@@ -240,6 +230,7 @@ while True:
     acq_filenames = np.unique(acq_filenames)
 
     for acq_name in acq_filenames:
+
         acq_issues = False
         is_image = False
         image_shown = False
@@ -270,10 +261,11 @@ while True:
             # run builtin STIS tool for acq diagnosis
             h = fits.open(acq_file)
             print(f"STIS {h[0].header['obsmode']}")
-            stis_warn = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
+            stis_warn, full_output = hstutils.auto_validate_stis_acq(acq_file, verbosity=1, return_full_output=True)
             msgs.extend(stis_warn)
             if stis_warn:
                 acq_issues = True
+            print(full_output, file=buffer)
 
             # now assess the acq images
             stages = ['coarse', 'fine']
@@ -332,12 +324,18 @@ while True:
         if image_shown:
             fig.suptitle(acq_file.name)
             fig.tight_layout()
-            print('Click outside the plots to continue.')
-            xy = utils.click_coords(fig)
-            answer = input('Did the target appear in the acquisition image (enter/n)')
-            if answer != '':
-                acq_issues = True
-                msgs.append(f'Human reviewer ({human_reviewer}) could not identify target in acquisition image.')
+
+            acq_fig_path = acq_img_dir / acq_file.name.replace('.fits', '.png')
+            fig.write(acq_fig_path)
+
+            if request_human_input:
+                print('Click outside the plots to continue.')
+                xy = utils.click_coords(fig)
+                answer = input('Did the target appear in the acquisition image (enter/n)')
+                if answer != '':
+                    acq_issues = True
+                    msgs.append(obt.notes_menu['cannot see target in acq'].format(user=human_reviewer))
+
             plt.close('all')
 
         if msgs:
@@ -348,11 +346,16 @@ while True:
             obs_tbl.add_flag(assoc_obs_mask, 'Acquisition untrustworthy.')
             obs_tbl['usability status'][assoc_obs_mask] = 'has issues'
 
+    path_acq_printout = diagnostics_dir / f'{target}.acquistion-review-printout.txt'
+    stop_and_save_capture(path_acq_printout)
+
 
 #%% now look through the spectra to add flags and notes
 
     """Data could be good but look like crap, so spectra should only be flagged unusable
     if they clearly differ from the norm in a serious way, I think."""
+
+    start_capturing_printouts()
 
     plt.close('all')
 
@@ -364,6 +367,8 @@ while True:
     usbl_tbl = obs_tbl[usbl_mask]
     configs = np.unique(usbl_tbl['science config'])
     for config in configs:
+        buffer = start_capturing_printouts()
+
         config_mask = usbl_tbl['science config'] == config
         cnfg_tbl = usbl_tbl[config_mask]
         cnfg_tbl['flags'] = cnfg_tbl['flags'].filled('')
@@ -524,7 +529,7 @@ while True:
                 yhi = 2*np.max(median_flux[lyamask])
                 ax.set_ylim(ylo, yhi)
 
-            title_ids = ', '.join([str(spec['id'])[-6:] for spec in batch])
+            title_ids = '-'.join([str(spec['id'])[-6:] for spec in batch])
             print(f'Fig {fig.number}: {title_ids}')
             ax.set_title(f'{target} | {config} | {title_ids}')
             ax.set_xlabel('Wavelength')
@@ -556,74 +561,85 @@ while True:
 
             fig.tight_layout()
 
-        print('Click outside the plots to continue.')
-        xy = utils.click_coords(figs[-1])
+            spec_fig_filename = f'{target}.{config}.{title_ids}.comparison.html'
+            utils.save_standard_mpld3(fig, spec_plt_dir / spec_fig_filename)
 
-        while True:
-            id_endings = input('Any spectra you want to mark unusable, add flags, or add notes?\n'
-                               'Give last few letters of the ids, separated by commas.\n'
-                               'Hit enter if none. Prompt will loop until an empty answer is given.')
-            if id_endings == '':
-                break
-            id_endings = re.split(', *', id_endings)
-            mask = np.zeros(len(obs_tbl), bool)
-            ids_all_good = True
-            for id_ending in id_endings:
-                matches = np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
-                if sum(matches) == 0:
-                    ids_all_good = False
-                    print(f'No matches for {id_ending}. Retry.')
-                    break
-                elif sum(matches) > 1:
-                    ids_all_good = False
-                    print(f'Multiple matches for {id_ending}. Retry.')
-                    break
-                mask |= np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
-            if not ids_all_good:
-                continue
-
-            i_mask, = np.nonzero(mask)
-
-            obs_tbl[viewcols][i_mask].pprint(-1,-1)
-            while True:
-                usable_ans = input(f'Update usability? enter=no change, u=unusable, i=has issues, a=all clear')
-                if usable_ans == '':
-                    break
-                elif usable_ans.startswith('a'):
-                    obs_tbl['usability status'][i_mask] = 'all clear'
-                    obs_tbl['usable'][i_mask] = True
-                    break
-                elif usable_ans.startswith('u'):
-                    obs_tbl['usable'][i_mask] = False
-                    obs_tbl['usability status'][i_mask] = 'unusable'
-                    reason = input(f'Enter reason unusable.')
-                    obs_tbl['reason unusable'][i_mask] = reason
-                    break
-                elif usable_ans.startswith('i'):
-                    obs_tbl['usable'].mask[i_mask] = True
-                    obs_tbl['usability status'][i_mask] = 'has issues'
-                    break
-                else:
-                    print('Bad input.')
+        if request_human_input:
+            print('Click outside the plots to continue.')
+            xy = utils.click_coords(figs[-1])
 
             while True:
-                flagstring = input(f'Enter flags to be added, separated by commas (enter if none):')
-                if len(flagstring) < 3:
+                id_endings = input('Any spectra you want to mark unusable, add flags, or add notes?\n'
+                                   'Give last few letters of the ids, separated by commas.\n'
+                                   'Hit enter if none. Prompt will loop until an empty answer is given.')
+                if id_endings == '':
                     break
-                else:
-                    obs_tbl.add_flags(i_mask, flagstring)
+                id_endings = re.split(', *', id_endings)
+                mask = np.zeros(len(obs_tbl), bool)
+                ids_all_good = True
+                for id_ending in id_endings:
+                    matches = np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
+                    if sum(matches) == 0:
+                        ids_all_good = False
+                        print(f'No matches for {id_ending}. Retry.')
+                        break
+                    elif sum(matches) > 1:
+                        ids_all_good = False
+                        print(f'Multiple matches for {id_ending}. Retry.')
+                        break
+                    mask |= np.char.endswith(obs_tbl['archive id'].astype(str), id_ending)
+                if not ids_all_good:
+                    continue
 
-            while True:
-                notestring = input(f'Enter notes to be added, separated by commas (enter if none):')
-                if len(notestring) < 3:
-                    break
-                else:
-                    obs_tbl.add_notes(i_mask, notestring)
+                i_mask, = np.nonzero(mask)
 
-            print('Tbl updated to:')
-            obs_tbl[viewcols][i_mask].pprint(-1, -1)
+                obs_tbl[viewcols][i_mask].pprint(-1,-1)
+                while True:
+                    usable_ans = input(f'Update usability? enter=no change, u=unusable, i=has issues, a=all clear')
+                    if usable_ans == '':
+                        break
+                    elif usable_ans.startswith('a'):
+                        obs_tbl['usability status'][i_mask] = 'all clear'
+                        obs_tbl['usable'][i_mask] = True
+                        break
+                    elif usable_ans.startswith('u'):
+                        obs_tbl['usable'][i_mask] = False
+                        obs_tbl['usability status'][i_mask] = 'unusable'
+                        reason = input(f'Enter reason unusable.')
+                        obs_tbl['reason unusable'][i_mask] = reason
+                        break
+                    elif usable_ans.startswith('i'):
+                        obs_tbl['usable'].mask[i_mask] = True
+                        obs_tbl['usability status'][i_mask] = 'has issues'
+                        break
+                    else:
+                        print('Bad input.')
+
+                while True:
+                    flagstring = input(f'Enter flags to be added, separated by commas (enter if none):')
+                    if len(flagstring) < 3:
+                        break
+                    else:
+                        obs_tbl.add_flags(i_mask, flagstring)
+
+                while True:
+                    notestring = input(f'Enter notes to be added, separated by commas (enter if none):')
+                    if len(notestring) < 3:
+                        break
+                    else:
+                        obs_tbl.add_notes(i_mask, notestring)
+
+                print('Tbl updated to:')
+                obs_tbl[viewcols][i_mask].pprint(-1, -1)
 
         plt.close('all')
+
+        path_spec_diagnostics = diagnostics_dir / f'{target}.{config}.data-review-printout.txt'
+        stop_and_save_capture(path_spec_diagnostics)
+
+
+    spec_revew_pth = diagnostics_dir / f'{target}.spectrum-review-printout.txt'
+    stop_and_save_capture(spec_revew_pth)
 
     utils.query_next_step(batch_mode, care_level, 2)
 
@@ -660,6 +676,7 @@ while True:
     obs_tbl.sort('start')
     obs_tbl.meta['last data review'] = datetime.now().isoformat()
 
+    # save a more human readable version of the table
     diag_tbl_path = diagnostics_dir / f'{target}_observation_table.txt'
     diag_tbl_path.write_text(obs_tbl.pretty_string_with_flags_notes(), encoding='utf-8')
     print(f'Wrote diagnostic pretty-print to {diag_tbl_path}\n')

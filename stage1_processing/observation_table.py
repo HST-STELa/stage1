@@ -741,14 +741,14 @@ notes_menu = {
     'peakxd zeros': 'COS PEAKXD counts were zero',
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
                        'versus the {atol} threshold for this warning',
-    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {sigma:.2f} sigma from median',
-    'cannot see target': '{user} could not identify target in acquisition image',
+    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {+sigma:.2f} sigma from median',
+    'cannot see target in acq': '{user} could not identify target in acquisition image',
 
     # acq issues not issues
     'acq + plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
 
     # flux
-    'line flux': '{line} flux {sigma:.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
+    'line flux': '{line} flux {sigma:+.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
 
     # wavelength discrepancy
     'bad waves': '{user} reported substantial wavelength discrepancy',
