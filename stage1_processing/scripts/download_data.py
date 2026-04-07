@@ -230,20 +230,20 @@ while True:
 
     print(f'Searching for supporting files for {target} observations.')
     new_supporting_files = False
-    for row in obs_tbl:
-        path = dbutils.find_stela_files_from_hst_filenames(row['key science files'], data_dir)[0]
+    for obs_row in obs_tbl:
+        path = dbutils.find_stela_files_from_hst_filenames(obs_row['key science files'], data_dir)[0]
         pieces = dbutils.parse_filename(path)
-        i = row.index
+        i = obs_row.index
 
         file_target = fits.getval(path, 'targname')
         if file_target.lower() == 'wave':
             obs_tbl['usable'][i] = False
             obs_tbl['reason unusable'][i] = 'wave exposure'
-            obs_tbl.add_flags(i, 'header targname=wave')
-            obs_tbl.add_notes(i, 'Unclear why exposure with "wave" as the target shows up.')
+            obs_tbl.add_flag(i, 'header targname=wave')
+            obs_tbl.add_note(i, 'Unclear why exposure with "wave" as the target shows up.')
             data = fits.getdata(path, 1)
             if np.all(data['flux'] == 0):
-                obs_tbl.add_flags(i, 'Spectrum is all zeros.')
+                obs_tbl.add_flag(i, 'Spectrum is all zeros.')
             continue
 
         if obs_tbl['supporting files'].mask[i]:
@@ -266,7 +266,7 @@ while True:
         # if stis and there are two peaks, number them to differentiate
         # (one will be a peakd and the other a peakxd,
         # but we won't know for sure until looking at the files after downloading)
-        if 'stis' in row['science config']:
+        if 'stis' in obs_row['science config']:
             acq_tbl['obsmode'] = acq_tbl['obsmode'].astype('object')
             modes = acq_tbl['obsmode']
             peaks = np.char.count(modes.astype('str'), 'PEAK') > 0
@@ -275,9 +275,9 @@ while True:
                 acq_tbl['obsmode'][peaks] = modes[peaks]
 
         # list acquisitions in the obs table
-        for row in acq_tbl:
-            aqt = row['obsmode'].lower()
-            file = row['filename']
+        for acq_row in acq_tbl:
+            aqt = acq_row['obsmode'].lower()
+            file = acq_row['filename']
             supporting_files[aqt] = file
 
         # download missing ones
