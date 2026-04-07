@@ -391,21 +391,30 @@ class ObsTable(table.Table):
 
         return super(ObsTable, tbl).write(*args, **kwargs)
 
-    def add_flags(self, row_idx, comma_sep_flags):
-        self.add_comma_sep_str_to_list_col('flags', row_idx, comma_sep_flags)
+    def add_flag(self, row_idx, flag):
+        catutils.append_to_column_of_lists(self, 'flags', row_idx, flag, raise_nonlist_error=False)
 
-    def add_notes(self, row_idx, commas_sep_notes):
-        self.add_comma_sep_str_to_list_col('notes', row_idx, commas_sep_notes)
+    def add_note(self, row_idx, note):
+        catutils.append_to_column_of_lists(self, 'notes', row_idx, note, raise_nonlist_error=False)
 
-    def add_comma_sep_str_to_list_col(self, colname, row_idx, comma_sep_str):
-        items = re.split(', *', comma_sep_str)
+    def add_flags(self, row_idx, flag_list, separator='list'):
+        self.add_to_list_col('flags', row_idx, flag_list, separator='list')
+
+    def add_notes(self, row_idx, notes_list, separator='list'):
+        self.add_to_list_col('notes', row_idx, notes_list, separator='list')
+
+    def add_separated_string_to_list_col(self, colname, row_idx, sep_str, separator=', *'):
+        self.add_to_list_col(colname, row_idx, sep_str, separator=', *')
+
+    def add_list_to_list_col(self, colname, row_idx, items):
         for item in items:
             if not item.strip() == '':
                 catutils.append_to_column_of_lists(self, colname, row_idx, item, raise_nonlist_error=False)
 
-    def add_flag(self, row_idx, flag):
-        catutils.append_to_column_of_lists(self, 'flags', row_idx, flag, raise_nonlist_error=False)
-        self.clean_duplicates_col_of_lists('flags')
+    def add_to_list_col(self, colname, row_idx, items, separator='list'):
+        if separator != 'list':
+            items = re.split(separator, items)
+        self.add_list_to_list_col(colname, row_idx, items)
 
     def clean_nulls_col_of_lists(self, colname="flags"):
         old = self[colname]
@@ -705,7 +714,9 @@ reasons_menu = {
     'no gs lock': 'guide star tracking not locked',
     'acq issue + no flux': 'acquisition issues and negligible target flux',
     'acq issue + lo flux': 'acquisition issues and anomalously low target flux',
-    'wave target': 'wave exposure'
+    'wave target': 'wave exposure',
+    'zeros': 'fluxes all zero',
+    'nans': 'fluxes all nan or non-finite',
 }
 
 flag_menu = {
@@ -739,7 +750,7 @@ notes_menu = {
     'peakd big slew': 'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points '
                       'versus the {atol} threshold for this warning',
     'peakxd zeros': 'COS PEAKXD counts were zero',
-    'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid, '
+    'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid '
                        'versus the {atol} threshold for this warning',
     'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {+sigma:.2f} sigma from median',
     'cannot see target in acq': '{user} could not identify target in acquisition image',

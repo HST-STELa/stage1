@@ -21,7 +21,6 @@ import paths
 import utilities as utils
 import catalog_utilities as catutils
 import hst_utilities as hstutils
-from hst_utilities import plot_acq_image
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
@@ -41,7 +40,8 @@ request_human_input = True
 human_reviewer = 'parke'
 
 targets = target_lists.last_data_review_before('2026-04-01')
-clear_flags = True
+clear_usability = True
+clear_other = ['flags', 'usability status', 'notes']
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
@@ -144,16 +144,8 @@ while True:
 
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
-    # clear any flags other than no data or shutter closed
-    if clear_flags:
-        backup_obs_tbl = obs_tbl.copy()
-        reason_col = backup_obs_tbl['reason unusable'].filled('').astype(str)
-        keep_rows_mask = (reason_col == 'No data taken.') | (reason_col == 'Shutter closed.')
-        keep_rows_idx, = np.nonzero(keep_rows_mask)
-        obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=['flags', 'usability status'])
-        obs_tbl['usable'][keep_rows_idx] = False # gotta use idx instead of mask for bool column, weird astropy bug?
-        obs_tbl['reason unusable'][keep_rows_idx] = reason_col[keep_rows_idx]
-        obs_tbl['usability status'][keep_rows_idx] = 'unusable' # maybe gotta use idx here too
+    if clear_usability:
+        obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=clear_other)
 
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
@@ -184,26 +176,25 @@ while True:
         scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
         assessment = hstutils.assess_key_science_files_data_quality(scifiles, shortnames)
         if assessment.odd_expflag is not None:
-            print(f'!! Odd exposure flag value of {assessment.odd_expflag} for {shortnames[0]}.')
+            raise NotImplementedError(f'Odd exposure flag value of {assessment.odd_expflag} for {shortnames[0]}.')
         if assessment.check_zero_exptime_repair:
-            print(f'!! Exposure time of zero for {shortnames[0]} despite apparently having data.')
-            note = hstutils.repair_zero_exptime_from_photon_times(scifiles, shortnames)
-            if len(note):
-                obs_tbl.add_notes(i, note)
+            repaired = hstutils.repair_zero_exptime_from_photon_times(scifiles, shortnames)
+            if repaired:
+                obs_tbl.add_note(i, obt.notes_menu['clock rollover'])
         if assessment.reject:
-            obs_tbl['usable'][i] = False
-            obs_tbl['usability status'][i] = 'unusable'
-            obs_tbl['reason unusable'][i] = assessment.reason
+            obs_tbl.update_usability(i, 'unusable', assessment.reason)
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)
+
+
 #%% verify that acq files are present for every observation
 
     for row in obs_tbl:
         if not row.usable(True):
             if 'wave' in row.get('reason unusable', ''):
                 continue
-        sfs = obs_tbl['supporting files']
-        config = obs_tbl['science config']
+        sfs = row['supporting files']
+        config = row['science config']
         if obs_tbl._is_null_like(sfs):
             raise ValueError
         sfkeys = list(sfs.keys())
@@ -232,7 +223,7 @@ while True:
     for acq_name in acq_filenames:
 
         acq_issues = False
-        is_image = False
+        test_image = None
         image_shown = False
         msgs = []
 
@@ -270,18 +261,18 @@ while True:
             # now assess the acq images
             stages = ['coarse', 'fine']
             if 'mirvis' in acq_file.name and 'PEAK' not in h[0].header['obsmode']:
-                is_image = True
                 fig = plt.figure(figsize=[7,3])
                 axs = []
                 for j in range(2):
                     hh = h['sci', j+1]
-                    ax, coords_at_obs = plot_acq_image(hh, coords, fig, (1, 2, j + 1))
+                    ax, coords_at_obs, ary = hstutils.plot_acq_image(hh, coords, fig, (1, 2, j + 1))
                     ax.set_title(stages[j])
                     if j == 0:
                         ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
                                    transform=ax.get_transform('icrs'),
                                    marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
                     else:
+                        test_image = ary
                         ax.scatter(0.5, 0.5, transform=ax.transAxes,
                                    marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
                 image_shown = True
@@ -300,14 +291,14 @@ while True:
                 if msgs:
                     acq_issues = True
             if exptype == 'ACQ/IMAGE':
-                is_image = True
                 stages = ['initial', 'confirmation']
                 fig = plt.figure(figsize=[5,3])
                 for j in range(2):
                     hh = h['sci', j+1]
-                    ax, _ = plot_acq_image(hh, coords, fig, (1, 2, j + 1),
-                                           zoom_region=3*u.arcsec)
+                    ax, _, ary = hstutils.plot_acq_image(
+                        hh, coords, fig, (1, 2, j + 1), zoom_region=3*u.arcsec)
                     if j == 1:
+                        test_image = ary
                         ax.scatter(0.5, 0.5, transform=ax.transAxes,
                                    marker='+', linewidth=0.5, s=500, color='r', alpha=0.5)
                     ax.set_title(stages[j])
@@ -315,8 +306,10 @@ while True:
 
                 image_shown = True
 
-        if is_image:
-            note, passes = hstutils.acq_image_eval(h, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
+        if test_image is not None:
+            note, passes = hstutils.acq_image_eval(test_image, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
+            print(note)
+            print(f'Flux test {'passed' if passes else 'failed'}')
             msgs.append(note)
             if not passes:
                 acq_issues = True
@@ -326,7 +319,7 @@ while True:
             fig.tight_layout()
 
             acq_fig_path = acq_img_dir / acq_file.name.replace('.fits', '.png')
-            fig.write(acq_fig_path)
+            fig.savefig(acq_fig_path, dpi=300)
 
             if request_human_input:
                 print('Click outside the plots to continue.')
@@ -339,12 +332,14 @@ while True:
             plt.close('all')
 
         if msgs:
-            for msg in msgs:
-                obs_tbl.add_notes(assoc_obs_mask, msg)
+            obs_tbl.add_notes(assoc_obs_mask, msgs, separator='list')
 
         if acq_issues:
-            obs_tbl.add_flag(assoc_obs_mask, 'Acquisition untrustworthy.')
-            obs_tbl['usability status'][assoc_obs_mask] = 'has issues'
+            obs_tbl.update_usability(assoc_obs_mask, 'has issues')
+            obs_tbl.add_flag(assoc_obs_mask, obt.flag_menu['bad acq'])
+
+        print()
+        print()
 
     path_acq_printout = diagnostics_dir / f'{target}.acquistion-review-printout.txt'
     stop_and_save_capture(path_acq_printout)
@@ -354,8 +349,6 @@ while True:
 
     """Data could be good but look like crap, so spectra should only be flagged unusable
     if they clearly differ from the norm in a serious way, I think."""
-
-    start_capturing_printouts()
 
     plt.close('all')
 
@@ -387,10 +380,8 @@ while True:
 
             finite = np.isfinite(wave) & np.isfinite(flux)
             if not np.any(finite):
-                obs_tbl['usable'][i_main] = False
-                obs_tbl['usability status'][i_main] = 'unusable'
-                obs_tbl['reason unusable'][i_main] = 'Spectrum is entirely NaN or non-finite.'
-                obs_tbl.add_flag(i_main, 'All spectral values are NaN/non-finite.')
+                obs_tbl.update_usability(i_main, 'unusable', obt.reasons_menu['nans'])
+                obs_tbl.add_flag(i_main, obt.flag_menu['nans'])
                 continue
 
             wave = wave[finite]
@@ -401,9 +392,8 @@ while True:
             flux = flux[order]
 
             if np.all(flux == 0):
-                obs_tbl['usable'][i_main] = False
-                obs_tbl['usability status'][i_main] = 'unusable'
-                obs_tbl['reason unusable'][i_main] = 'Spectrum is all zeros.'
+                obs_tbl.update_usability(i_main, 'unusable', obt.reasons_menu['zeros'])
+                obs_tbl.add_flag(i_main, obt.flag_menu['zeros'])
                 continue
 
             spectra.append(dict(
@@ -451,9 +441,9 @@ while True:
         if len(spectra) >= min_spectra_for_band_comparison:
             band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
             if band_pick is None:
-                warnings.warn(
+                raise NotImplementedError(
                     f'\nSpectral χ² vs median/zero: no priority band had enough pixels '
-                    f'for {target} | {config}.'
+                    f'for {target} | {config}. Automatic comparison cannot be conducted.'
                 )
             else:
                 comp_band_name, band_mask = band_pick
@@ -470,7 +460,7 @@ while True:
                         wa=wave_grid[band_mask][0],
                         wb=wave_grid[band_mask][-1],
                     )
-                    obs_tbl.add_note(config_mask, note)
+                    obs_tbl.add_note(id_mask, note)
 
                     if sig_z < zero_flux_sigma_threshold:
                         obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'])
@@ -599,47 +589,41 @@ while True:
                     if usable_ans == '':
                         break
                     elif usable_ans.startswith('a'):
-                        obs_tbl['usability status'][i_mask] = 'all clear'
-                        obs_tbl['usable'][i_mask] = True
+                        obs_tbl.update_usability(i_mask, 'all clear')
                         break
                     elif usable_ans.startswith('u'):
-                        obs_tbl['usable'][i_mask] = False
-                        obs_tbl['usability status'][i_mask] = 'unusable'
-                        reason = input(f'Enter reason unusable.')
-                        obs_tbl['reason unusable'][i_mask] = reason
+                        reason = input(f'Enter reason unusable. Please use reasons listed in observation_table.reasons_menu:')
+                        obs_tbl.update_usability(i_mask, 'unusable', reason)
                         break
                     elif usable_ans.startswith('i'):
-                        obs_tbl['usable'].mask[i_mask] = True
-                        obs_tbl['usability status'][i_mask] = 'has issues'
+                        obs_tbl.update_usability(i_mask, 'has issues')
                         break
                     else:
                         print('Bad input.')
 
                 while True:
-                    flagstring = input(f'Enter flags to be added, separated by commas (enter if none):')
+                    flagstring = input(f'Enter flags to be added, separated by commas (enter if none). '
+                                       f'Please copy flags from observation_table.flag_menu:')
                     if len(flagstring) < 3:
                         break
                     else:
-                        obs_tbl.add_flags(i_mask, flagstring)
+                        obs_tbl.add_flags(i_mask, flagstring, separator=', *')
 
                 while True:
-                    notestring = input(f'Enter notes to be added, separated by commas (enter if none):')
+                    notestring = input(f'Enter notes to be added, separated by commas (enter if none). '
+                                       f'Please copy notes from observation_table.notes_menu:')
                     if len(notestring) < 3:
                         break
                     else:
-                        obs_tbl.add_notes(i_mask, notestring)
+                        obs_tbl.add_notes(i_mask, notestring, separator=', *')
 
                 print('Tbl updated to:')
                 obs_tbl[viewcols][i_mask].pprint(-1, -1)
 
         plt.close('all')
 
-        path_spec_diagnostics = diagnostics_dir / f'{target}.{config}.data-review-printout.txt'
+        path_spec_diagnostics = diagnostics_dir / f'{target}.data-review-printout.{config}.txt'
         stop_and_save_capture(path_spec_diagnostics)
-
-
-    spec_revew_pth = diagnostics_dir / f'{target}.spectrum-review-printout.txt'
-    stop_and_save_capture(spec_revew_pth)
 
     utils.query_next_step(batch_mode, care_level, 2)
 
@@ -650,8 +634,7 @@ while True:
     status = obs_tbl['usability status'].filled('')
     no_issues = (status == 'all clear') | (status == 'unchecked') | (status == '')
     mark_usable = no_flags & no_issues & obs_tbl['usable'].filled(True)
-    obs_tbl['usable'][mark_usable] = True
-    obs_tbl['usability status'][mark_usable] = 'all clear'
+    obs_tbl.update_usability(mark_usable, 'all clear')
 
 
 #%% clean nulls and duplicates
@@ -675,13 +658,13 @@ while True:
     print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last data review'] = datetime.now().isoformat()
+    obs_tbl.meta['last review by'] = human_reviewer
+    obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
 
     # save a more human readable version of the table
     diag_tbl_path = diagnostics_dir / f'{target}_observation_table.txt'
     diag_tbl_path.write_text(obs_tbl.pretty_string_with_flags_notes(), encoding='utf-8')
     print(f'Wrote diagnostic pretty-print to {diag_tbl_path}\n')
-    obs_tbl.meta['last review by'] = human_reviewer
-    obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
 
     utils.query_next_step(batch_mode, care_level, 1)
 

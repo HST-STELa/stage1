@@ -245,20 +245,21 @@ def band_chi2_sigma_vs_median_and_zero(
     base = np.isfinite(flux) & np.isfinite(median) & np.isfinite(mad)
     use = base & (sigma_robust > 0)
     dof = int(np.count_nonzero(use))
+    chi2_expctd = dof
     if dof == 0:
         return np.nan, np.nan
 
     resid = (flux - median)[use]
     sig = sigma_robust[use]
     chi2_median = float(np.sum((resid / sig) ** 2))
-    sigma_vs_median = chi2_median / np.sqrt(2.0 * dof)
+    sigma_vs_median = (chi2_median - chi2_expctd) / np.sqrt(2.0 * dof)
 
     sigma0 = float(np.percentile(sig, zero_mad_percentile))
     if not np.isfinite(sigma0) or sigma0 <= 0:
         return sigma_vs_median, np.nan
 
     chi2_zero = float(np.sum((flux[use] / sigma0) ** 2))
-    sigma_vs_zero = chi2_zero / np.sqrt(2.0 * dof)
+    sigma_vs_zero = (chi2_zero - chi2_expctd) / np.sqrt(2.0 * dof)
     return sigma_vs_median, sigma_vs_zero
 
 
@@ -664,7 +665,7 @@ def repair_zero_exptime_from_photon_times(scifiles, shortnames):
     When primary EXPTIME is zero but extension 1 has photon times, update EXPTIME/TEXPTIME
     and GTI extension 2 from first/last times. Returns a note string for the observation table.
     """
-    note = ''
+    repaired = False
     for shortname, file_info in zip(shortnames, scifiles):
         with fits.open(file_info, mode='update') as h:
             if len(h[2].data['start']):
@@ -678,13 +679,10 @@ def repair_zero_exptime_from_photon_times(scifiles, shortnames):
                 h[1].header['EXPTIME'] = stop - start
                 h[0].header['TEXPTIME'] = stop - start
                 h.flush()
-                note += (
-                    f'{shortname} had data but header set to zero exposure time. '
-                    'Manually replaced GTIs based on first and last photon count.'
-                )
+                repaired = True
             else:
                 raise ValueError('Weird. Look into this.')
-    return note
+    return repaired
 
 
 def plot_acq_image(fits_handle, object_coords, figure, subplot_spec, zoom_region=None):
