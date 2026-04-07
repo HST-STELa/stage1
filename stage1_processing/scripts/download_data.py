@@ -17,7 +17,7 @@ import paths
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
-from stage1_processing import observation_table as obs_tbl_tools
+from stage1_processing import observation_table as obt
 
 
 #%% settings
@@ -30,6 +30,7 @@ from stage1_processing import observation_table as obs_tbl_tools
 # then commited and pushed so we all benefit from them
 
 targets = target_lists.observed_since('2025-09-04')
+missing_acq_action = 'raise' # warn or raise
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -114,10 +115,10 @@ while True:
 #%% create or load table of observation information
 
     try:
-        obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+        obs_tbl = obt.load_obs_tbl(target)
         print(f'\nExisting observation table loaded for {target}:\n')
     except FileNotFoundError:
-        obs_tbl = obs_tbl_tools.initialize(files_science)
+        obs_tbl = obt.initialize(files_science)
         print(f'\nObservation table initialized for {target}:\n')
     obs_tbl.pprint(-1,-1)
 
@@ -228,7 +229,7 @@ while True:
             }
             obs_tbl.add_row(row)
             ni = len(obs_tbl) - 1
-            obs_tbl_tools.update_usability(ni, 'mask')
+            obs_tbl.update_usability(ni, 'mask')
             for colname in ('supporting files', 'flags', 'notes'):
                 obs_tbl[colname].mask[ni] = True
 
@@ -257,7 +258,7 @@ while True:
             supporting_files = obs_tbl['supporting files'][i]
 
         # look for acquisitions
-        search_radius = 0.1*u.arcmin
+        search_radius = 10*u.arcmin / 2**7
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             acq_tbl_w_spts = []
@@ -265,31 +266,40 @@ while True:
                 acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, search_radius, additional_files=('SPT',))
                 search_radius *= 2
         if len(acq_tbl_w_spts) == 0:
-            raise ValueError(f'No acquisition found for {path.name} within a {search_radius} search radius.')
-        acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
+            obs_tbl.update_usability(i, 'has issues')
+            obs_tbl.add_flag(i, obt.flag_menu['bad acq'])
+            note = obt.notes_menu['acq not found'].format(search_radius=search_radius)
+            obs_tbl.add_note(i, note)
+            missing_acq_msg = f'No acquisition found for {path.name} within a {search_radius} search radius.'
+            if missing_acq_action == 'warn':
+                warnings.warn(missing_acq_msg)
+            else:
+                raise ValueError(missing_acq_msg)
+        else:
+            acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
 
-        # if stis and there are two peaks, number them to differentiate
-        # (one will be a peakd and the other a peakxd,
-        # but we won't know for sure until looking at the files after downloading)
-        if 'stis' in obs_row['science config']:
-            acq_tbl['obsmode'] = acq_tbl['obsmode'].astype('object')
-            modes = acq_tbl['obsmode']
-            peaks = np.char.count(modes.astype('str'), 'PEAK') > 0
-            if sum(peaks) == 2:
-                modes[peaks] = np.char.add(modes[peaks].astype('str'), ['1', '2'])
-                acq_tbl['obsmode'][peaks] = modes[peaks]
+            # if stis and there are two peaks, number them to differentiate
+            # (one will be a peakd and the other a peakxd,
+            # but we won't know for sure until looking at the files after downloading)
+            if 'stis' in obs_row['science config']:
+                acq_tbl['obsmode'] = acq_tbl['obsmode'].astype('object')
+                modes = acq_tbl['obsmode']
+                peaks = np.char.count(modes.astype('str'), 'PEAK') > 0
+                if sum(peaks) == 2:
+                    modes[peaks] = np.char.add(modes[peaks].astype('str'), ['1', '2'])
+                    acq_tbl['obsmode'][peaks] = modes[peaks]
 
-        # list acquisitions in the obs table
-        for acq_row in acq_tbl:
-            aqt = acq_row['obsmode'].lower()
-            file = acq_row['filename']
-            supporting_files[aqt] = file
+            # list acquisitions in the obs table
+            for acq_row in acq_tbl:
+                aqt = acq_row['obsmode'].lower()
+                file = acq_row['filename']
+                supporting_files[aqt] = file
 
-        # download missing ones
-        not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
-        if any(not_present):
-            new_supporting_files = True
-            manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
+            # download missing ones
+            not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
+            if any(not_present):
+                new_supporting_files = True
+                manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
 
         # record wavecal
         if 'hst-stis' in pieces['config']:
@@ -308,9 +318,14 @@ while True:
                     raise ValueError('Uh oh.')
                 manifest = hst_database.download_products(filtered, download_dir=dnld_dir, flat=True)
 
-        obs_tbl['supporting files'][i] = supporting_files
+        if supporting_files:
+            obs_tbl['supporting files'][i] = supporting_files
 
-        assert not obs_tbl['supporting files'].mask[i] and supporting_files != {}
+        if obs_tbl['supporting files'].mask[i] or supporting_files == {}:
+            notes = obs_tbl[i].get('notes', [''])
+            if not notes[-1].startswith(obt.notes_menu['acq not found'][:20]):
+                raise ValueError('ACQ found but somethow not added to supporting files for this row.')
+
 
     if not new_supporting_files:
         print('All supporting files present, nothing downloaded.')

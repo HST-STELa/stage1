@@ -45,7 +45,7 @@ dnld_availability = 'PUBLIC,PROPRIETARY'
 
 hst_database = MastMissions(mission='hst')
 # note that you need to have created and stored a token for this, see
-# https://astroquery.readthedocs.isto/en/latest/api/astroquery.mast.MastClass.html
+# https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
 # you can specify the exact toke you want to use with token=...
 hst_database.login()
 
@@ -123,7 +123,6 @@ while True:
         obs_tbl = obt.initialize(files_science)
         print(f'\nObservation table initialized for {target}:\n')
     obs_tbl.pprint(-1,-1)
-    obs_tbl['usable'] = table.MaskedColumn(obs_tbl['usable'])
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)
 
