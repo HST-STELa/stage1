@@ -106,6 +106,20 @@ class ObsTable(table.Table):
             return True
         return False
 
+    @staticmethod
+    def _object_array_1d(cells):
+        """
+        Build shape (n,) dtype=object without numpy merging same-length list rows into 2D.
+
+        ``np.array([[a,b],[c,d]], dtype=object)`` becomes 2×2; MaskedColumn expects one
+        Python object per table row (each cell may be a list).
+        """
+        n = len(cells)
+        out = np.empty(n, dtype=object)
+        for i in range(n):
+            out[i] = cells[i]
+        return out
+
     @classmethod
     def _coerce_object_value_for_write(cls, val, expected_subtype, colname):
         """
@@ -212,7 +226,7 @@ class ObsTable(table.Table):
         mask = [v is None for v in values]
         data = [None if m else v for v, m in zip(values, mask)]
         return table.MaskedColumn(
-            data=np.array(data, dtype=object),
+            data=cls._object_array_1d(data),
             mask=np.array(mask, dtype=bool),
             name=name,
             dtype=object,
@@ -325,7 +339,7 @@ class ObsTable(table.Table):
             obs_tbl.replace_column(
                 colname,
                 table.MaskedColumn(
-                    data=np.array(repaired, dtype=object),
+                    data=cls._object_array_1d(repaired),
                     mask=np.array(repaired_mask, dtype=bool),
                     name=colname,
                     dtype=object,
@@ -376,7 +390,7 @@ class ObsTable(table.Table):
             tbl.replace_column(
                 colname,
                 table.MaskedColumn(
-                    data=np.array(cleaned, dtype=object),
+                    data=self._object_array_1d(cleaned),
                     mask=np.array(cleaned_mask, dtype=bool),
                     name=colname,
                     dtype=object,
@@ -391,30 +405,42 @@ class ObsTable(table.Table):
 
         return super(ObsTable, tbl).write(*args, **kwargs)
 
-    def add_flag(self, row_idx, flag):
+    def comma_joined_id_list(self, row_idx):
+        ids = [id[-6:] for id in self['archive id'][row_idx].tolist()]
+        return ', '.join(ids)
+
+    def add_flag(self, row_idx, flag, verbose=False):
+        if verbose:
+            print(f'Adding this flag to selected rows: {flag}')
         catutils.append_to_column_of_lists(self, 'flags', row_idx, flag, raise_nonlist_error=False)
 
-    def add_note(self, row_idx, note):
+    def add_note(self, row_idx, note, verbose=False):
+        if verbose:
+            print(f'Adding this note to selected rows: {note}')
         catutils.append_to_column_of_lists(self, 'notes', row_idx, note, raise_nonlist_error=False)
 
-    def add_flags(self, row_idx, flag_list, separator='list'):
-        self.add_to_list_col('flags', row_idx, flag_list, separator='list')
+    def add_flags(self, row_idx, flag_list, separator='list', verbose=False):
+        self.add_to_list_col('flags', row_idx, flag_list, separator=separator, verbose=verbose)
 
-    def add_notes(self, row_idx, notes_list, separator='list'):
-        self.add_to_list_col('notes', row_idx, notes_list, separator='list')
+    def add_notes(self, row_idx, notes_list, separator='list', verbose=False):
+        self.add_to_list_col('notes', row_idx, notes_list, separator=separator, verbose=verbose)
 
-    def add_separated_string_to_list_col(self, colname, row_idx, sep_str, separator=', *'):
-        self.add_to_list_col(colname, row_idx, sep_str, separator=', *')
+    def add_separated_string_to_list_col(self, colname, row_idx, sep_str, separator=', *', verbose=False):
+        self.add_to_list_col(colname, row_idx, sep_str, separator=separator, verbose=verbose)
 
-    def add_list_to_list_col(self, colname, row_idx, items):
+    def add_list_to_list_col(self, colname, row_idx, items, verbose=False):
+        if verbose:
+            print(f'Adding the following to {colname} for selected rows:')
         for item in items:
             if not item.strip() == '':
+                if verbose:
+                    print(f'\t{item}')
                 catutils.append_to_column_of_lists(self, colname, row_idx, item, raise_nonlist_error=False)
 
-    def add_to_list_col(self, colname, row_idx, items, separator='list'):
+    def add_to_list_col(self, colname, row_idx, items, separator='list', verbose=False):
         if separator != 'list':
             items = re.split(separator, items)
-        self.add_list_to_list_col(colname, row_idx, items)
+        self.add_list_to_list_col(colname, row_idx, items, verbose=verbose)
 
     def clean_nulls_col_of_lists(self, colname="flags"):
         old = self[colname]
@@ -445,7 +471,7 @@ class ObsTable(table.Table):
                 new_mask.append(False)
 
         new_col = table.MaskedColumn(
-            data=np.array(new_data, dtype=object),
+            data=self._object_array_1d(new_data),
             mask=np.array(new_mask, dtype=bool),
             name=colname,
             dtype=object,
@@ -752,7 +778,7 @@ notes_menu = {
     'peakxd zeros': 'COS PEAKXD counts were zero',
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid '
                        'versus the {atol} threshold for this warning',
-    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {+sigma:.2f} sigma from median',
+    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {sigma:+.2f} sigma from median',
     'cannot see target in acq': '{user} could not identify target in acquisition image',
 
     # acq issues not issues
