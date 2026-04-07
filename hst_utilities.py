@@ -580,7 +580,7 @@ class KeyScienceDataQualityAssessment(NamedTuple):
     check_zero_exptime_repair: bool
 
 
-def assess_key_science_files_data_quality(scifiles, shortnames):
+def assess_key_science_files_data_quality(scifiles):
     """
     Evaluate TAG/RAW science data and primary-header flags for unusable conditions.
 
@@ -588,8 +588,6 @@ def assess_key_science_files_data_quality(scifiles, shortnames):
     ----------
     scifiles : sequence of path-like
         Resolved paths to science FITS (same order as shortnames).
-    shortnames : sequence of str
-        Basenames used in log messages (must align with scifiles).
 
     Returns
     -------

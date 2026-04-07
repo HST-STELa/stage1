@@ -38,35 +38,31 @@ from stage1_processing import observation_table as obt
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-request_human_input = True
 human_reviewer = 'parke'
+human_review_acq = 'issues' # use one of yes, no, issues
+human_review_spec = 'no' # use one of yes, no, issues
 
 targets = target_lists.everything_in_database()
-targets = targets[:2] + choices(targets[2:], k=10)
+targets = targets[1:2] + choices(targets[2:], k=10)
 clear_usability = True
 clear_other = ['flags', 'usability status', 'notes']
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 acq_target_flux_n_chunks = 7
-acq_target_flux_sigma_threshold = 3.0
+acq_target_flux_sigma_threshold = 10.0
 
 min_spectra_for_band_comparison = 3
 anomalous_flux_sigma_threshold = 3.0
-zero_flux_sigma_threshold = 3.0
+zero_flux_sigma_threshold = 1.0
 
 
 #%% show plots or not
 
-if request_human_input:
+if human_review_acq in ['yes', 'issues'] or human_review_spec in ['yes', 'issues']:
     matplotlib.use('qt5agg') # show
 else:
     matplotlib.use('agg') # don't show
-
-
-#%% rechecking flagged aquisitions
-"""if you want to check aquisitions of a target that has already been flagged unusable, use the
-database_utilities.clear_usability_values function to reset some of the table rows"""
 
 
 #%% properties table
@@ -111,15 +107,15 @@ itertargets = iter(targets)
 
 #%% SKIP? set up batch processing (skip if not in batch mode)
 
-if batch_mode:
-    print("When 'Continue?' prompts appear, hit enter to continue, anything else to break out of the loop.")
-
-while True:
-  # I'm being sneaky with 2-space indents here because I want to avoid 8 space indents on the cells
-  if not batch_mode:
-    break
-
-  try:
+# if batch_mode:
+#     print("When 'Continue?' prompts appear, hit enter to continue, anything else to break out of the loop.")
+#
+# while True:
+#   # I'm being sneaky with 2-space indents here because I want to avoid 8 space indents on the cells
+#   if not batch_mode:
+#     break
+#
+#   try:
 
 
 #%% move to next target
@@ -144,6 +140,7 @@ while True:
     acq_img_dir = diagnostics_dir / 'acquisition images'
     acq_img_dir.mkdir(exist_ok=True)
     spec_plt_dir = diagnostics_dir / 'spectra vs median plots'
+    spec_plt_dir.mkdir(exist_ok=True)
 
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
@@ -171,21 +168,28 @@ while True:
 
 #%% identify files missing data
 
+    buffer = start_capturing_printouts()
+
     print(f'\nChecking for empty science files for {target}.')
     for i, row in enumerate(obs_tbl):
         if not row.usable(True):
             continue
         shortnames = row['key science files'][:]  # copy so the table row is not aliased
         scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
-        assessment = hstutils.assess_key_science_files_data_quality(scifiles, shortnames)
+        assessment = hstutils.assess_key_science_files_data_quality(scifiles)
         if assessment.odd_expflag is not None:
             raise NotImplementedError(f'Odd exposure flag value of {assessment.odd_expflag} for {shortnames[0]}.')
         if assessment.check_zero_exptime_repair:
             repaired = hstutils.repair_zero_exptime_from_photon_times(scifiles, shortnames)
             if repaired:
-                obs_tbl.add_note(i, obt.notes_menu['clock rollover'])
+                print(f'Clock rollover found for {row['archive id']}.')
+                obs_tbl.add_note(i, obt.notes_menu['clock rollover'], verbose=True)
         if assessment.reject:
+            print(f'Marking {row['archive id']} unusable for reason: {assessment.reason}')
             obs_tbl.update_usability(i, 'unusable', assessment.reason)
+
+    path_basic_printout = diagnostics_dir / f'{target}.basic-data-review-printout.txt'
+    stop_and_save_capture(path_basic_printout)
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)
 
@@ -324,7 +328,7 @@ while True:
             acq_fig_path = acq_img_dir / acq_file.name.replace('.fits', '.png')
             fig.savefig(acq_fig_path, dpi=300)
 
-            if request_human_input:
+            if human_review_acq == 'yes' or (human_review_acq == 'issues' and acq_issues):
                 print('Click outside the plots to continue.')
                 xy = utils.click_coords(fig)
                 answer = input('Did the target appear in the acquisition image (enter/n)')
@@ -335,11 +339,11 @@ while True:
             plt.close('all')
 
         if msgs:
-            obs_tbl.add_notes(assoc_obs_mask, msgs, separator='list')
+            obs_tbl.add_notes(assoc_obs_mask, msgs, separator='list', verbose=True)
 
         if acq_issues:
             obs_tbl.update_usability(assoc_obs_mask, 'has issues')
-            obs_tbl.add_flag(assoc_obs_mask, obt.flag_menu['bad acq'])
+            obs_tbl.add_flag(assoc_obs_mask, obt.flag_menu['bad acq'], verbose=True)
 
         print()
         print()
@@ -372,6 +376,7 @@ while True:
         spectra = []
 
         # mark any with all zeros or nans as unusable and don't bother plotting
+        print('Checking for all zero or all non finite data.')
         for row in cnfg_tbl:
             id = row['archive id']
             i_main = obs_tbl.loc_indices[id]
@@ -383,8 +388,9 @@ while True:
 
             finite = np.isfinite(wave) & np.isfinite(flux)
             if not np.any(finite):
+                print(f'{id}')
                 obs_tbl.update_usability(i_main, 'unusable', obt.reasons_menu['nans'])
-                obs_tbl.add_flag(i_main, obt.flag_menu['nans'])
+                obs_tbl.add_flag(i_main, obt.flag_menu['nans'], verbose=True)
                 continue
 
             wave = wave[finite]
@@ -395,8 +401,9 @@ while True:
             flux = flux[order]
 
             if np.all(flux == 0):
+                print(f'{id}')
                 obs_tbl.update_usability(i_main, 'unusable', obt.reasons_menu['zeros'])
-                obs_tbl.add_flag(i_main, obt.flag_menu['zeros'])
+                obs_tbl.add_flag(i_main, obt.flag_menu['zeros'], verbose=True)
                 continue
 
             spectra.append(dict(
@@ -441,6 +448,7 @@ while True:
         median_flux = np.nanmedian(interp_fluxes, axis=0)
         mad_flux = np.nanmedian(np.abs(interp_fluxes - median_flux), axis=0)
 
+        spec_issues = False
         if len(spectra) >= min_spectra_for_band_comparison:
             band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
             if band_pick is None:
@@ -457,6 +465,7 @@ while True:
                 wa = float(np.nanmin(w_band))
                 wb = float(np.nanmax(w_band))
                 for j, spec in enumerate(spectra):
+                    print(f'Assessing flux of {spec['id']}.')
                     id_mask = obs_tbl['archive id'] == spec['id']
                     sig_med = float(sig_med_arr[j])
                     sig_z = float(sig_z_arr[j])
@@ -468,21 +477,25 @@ while True:
                         wa=wa,
                         wb=wb,
                     )
-                    obs_tbl.add_note(id_mask, note)
+                    obs_tbl.add_note(id_mask, note, verbose=True)
 
+                    acq_issue = np.any(acq_issues_mask & id_mask)
                     if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
-                        obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'])
-                        z_w_bad_acq = acq_issues_mask & id_mask
-                        obs_tbl.update_usability(z_w_bad_acq, 'unusable', 'acq issue + no flux')
+                        obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'], verbose=True)
+                        if acq_issue:
+                            obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + no flux')
+                        spec_issues = True
                     else:
                         if sig_med < -anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'])
-                            lo_w_bad_acq = acq_issues_mask & id_mask
-                            obs_tbl.update_usability(lo_w_bad_acq, 'unusable', 'acq issue + lo flux')
-                        if sig_med >= 0:
-                            obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med))
+                            obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'], verbose=True)
+                            if acq_issue:
+                                obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + lo flux')
+                            spec_issues = True
+                        if sig_med >= 0 and acq_issue:
+                            obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med), verbose=True)
                         if sig_med > anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['hi flux'])
+                            obs_tbl.add_flag(id_mask, obt.flag_menu['hi flux'], verbose=True)
+                            spec_issues = True
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line
         # showing median and a light shaded region showing median abs dev
@@ -498,11 +511,12 @@ while True:
                 median_flux - mad_flux,
                 median_flux + mad_flux,
                 color='k',
-                alpha=0.2,
+                alpha=0.4,
                 zorder=1,
-                label = '_'
+                label = '_',
+                step='mid',
             )
-            ax.plot(
+            ax.step(
                 wave_grid,
                 median_flux,
                 lw=2,
@@ -510,6 +524,7 @@ while True:
                 alpha=0.7,
                 zorder=2,
                 label='median',
+                where='mid',
             )
 
             for spec in batch:
@@ -560,9 +575,10 @@ while True:
             fig.tight_layout()
 
             spec_fig_filename = f'{target}.{config}.{title_ids}.comparison.html'
+            ax.set_aspect('auto')
             utils.save_standard_mpld3(fig, spec_plt_dir / spec_fig_filename)
 
-        if request_human_input:
+        if human_review_spec == 'yes' or (human_review_spec == 'issues' and spec_issues):
             print('Click outside the plots to continue.')
             xy = utils.click_coords(figs[-1])
 
@@ -615,7 +631,7 @@ while True:
                     if len(flagstring) < 3:
                         break
                     else:
-                        obs_tbl.add_flags(i_mask, flagstring, separator=', *')
+                        obs_tbl.add_flags(i_mask, flagstring, separator=', *', verbose=False)
 
                 while True:
                     notestring = input(f'Enter notes to be added, separated by commas (enter if none). '
@@ -623,7 +639,7 @@ while True:
                     if len(notestring) < 3:
                         break
                     else:
-                        obs_tbl.add_notes(i_mask, notestring, separator=', *')
+                        obs_tbl.add_notes(i_mask, notestring, separator=', *', verbose=False)
 
                 print('Tbl updated to:')
                 obs_tbl[viewcols][i_mask].pprint(-1, -1)

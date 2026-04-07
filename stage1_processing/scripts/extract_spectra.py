@@ -160,7 +160,7 @@ while True:
         ks = row.get('key science files')
         shortnames = list(ks) if isinstance(ks, (list, tuple, np.ndarray)) else [ks]
         scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
-        assessment = hstutils.assess_key_science_files_data_quality(scifiles, shortnames)
+        assessment = hstutils.assess_key_science_files_data_quality(scifiles)
         if assessment.reject:
             aid = row.get('archive id', '?')
             print(f"  skip {aid}: {assessment.reason}")
