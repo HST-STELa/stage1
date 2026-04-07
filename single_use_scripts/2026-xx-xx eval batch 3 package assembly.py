@@ -302,3 +302,84 @@ for f in lya_files:
         shutil.copy(f, stgpath)
 
 
+#%% distribute and stage fuv line flux files
+
+fd_in = paths.inbox / '2026-04-05 fuv line fluxes/targets'
+fd_stg = staging_area / 'fuv_line_fluxes'
+dry_run = False
+
+# targets with substantial changes, pulled from line flux dbl check script
+sbst_fuv_chng_tgts = ['ds-tuc-a', 'hd22946', 'hd23472', 'hd42813', 'toi-2079', 'toi-712']
+
+tgt_fds = sorted(f for f in fd_in.glob('*') if f.is_dir())
+missed = []
+
+for tgt_fd in tgt_fds:
+    tgt = tgt_fd.name
+    fd_data = paths.target_data(tgt)
+
+    # Walk all files in the target directory, including hst subdir if present
+    all_files = []
+    for root, dirs, files in os.walk(tgt_fd):
+        for file in files:
+            # Ignore hidden/system files
+            if file.startswith('.'):
+                continue
+            path = Path(root) / file
+            all_files.append(path)
+
+    # Track if we found a line-flux-table to put in the staging area
+    found_line_flux = False
+
+    for f in all_files:
+        if 'line-flux-table.ecsv' in f.name:
+            found_line_flux = True
+            # Only stage if in eval_targets or in sbst_fuv_chng_tgts
+            if tgt in eval_targets or tgt in sbst_fuv_chng_tgts:
+                stgpath = fd_stg / f.name
+                if dry_run:
+                    print(f"{dbutils.path_string_last_n(f, 2)} --> {dbutils.path_string_last_n(stgpath, 3)} [staging]")
+                else:
+                    os.makedirs(fd_stg, exist_ok=True)
+                    shutil.copy(f, stgpath)
+
+        # Everything is still distributed to the main reconstructions directory, preserving subdirectory structure
+        relpath = f.relative_to(tgt_fd)
+        target_path = fd_data / relpath
+        if dry_run:
+            print(f"{dbutils.path_string_last_n(f, 3)} --> {dbutils.path_string_last_n(target_path, 5)} [main db]")
+        else:
+            os.makedirs(target_path.parent, exist_ok=True)
+            shutil.copy(f, target_path)
+
+    if not found_line_flux:
+        missed.append(tgt)
+
+if missed:
+    print("Targets with no line flux file found:", missed)
+
+
+
+#%% save new hosts cat including targets with updated fuv line fluxes
+
+# Save a new host catalog .ecsv file that includes all eval_targets AND all "substantial FUV change" targets
+
+# The current list `eval_targets` is already available.
+# We'll try to get the updated FUV flux targets ("substantial changes") as in "sbst_fuv_chng_tgts"
+# (Assume variable 'sbst_fuv_chng_tgts' has already been defined earlier and is available.)
+
+# Pool base info for all targets of interest
+all_included_hosts = sorted(set(eval_targets) | set(sbst_fuv_chng_tgts))
+# Subset planetcat on TICs for those hosts
+inc_ticids = dbutils.stela_name_tbl.loc['hostname_file', all_included_hosts]['tic_id']
+planetcat.add_index('tic_id')
+new_hosts_cat = planetcat.loc[inc_ticids]
+new_hosts_cat = catutils.planets2hosts(new_hosts_cat)
+
+# Save to package directory with descriptive name
+outcat_path = staging_area / 'host_catalog_with_fuv_updates.ecsv'
+if new_hosts_cat is not None and len(new_hosts_cat) > 0:
+    new_hosts_cat.write(outcat_path, overwrite=True)
+    print(f"Saved updated host catalog for eval3 package: {outcat_path}")
+else:
+    print("No hosts to write: updated host catalog is empty or not defined.")
