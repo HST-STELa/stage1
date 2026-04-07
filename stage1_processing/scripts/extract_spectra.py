@@ -14,6 +14,7 @@ import stistools as stis
 import database_utilities as dbutils
 import utilities as utils
 import paths
+import hst_utilities as hstutils
 
 from stage1_processing import target_lists
 from stage1_processing import observation_table as obs_tbl_tools
@@ -148,33 +149,68 @@ while True:
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1, -1)
 
-    obs_tbl_usbl = obs_tbl[obs_tbl['usable'].filled(True)]
+    # STIS rows that pass on-disk + header checks (do not use obs_tbl usability; that may be unset
+    # until after check_data_quality).
+    extract_mask = np.zeros(len(obs_tbl), dtype=bool)
+    print('\nSTIS extraction eligibility (assess_key_science_files_data_quality):')
+    for i, row in enumerate(obs_tbl):
+        cfg = row.get('science config', '')
+        if not cfg or 'hst-stis' not in str(cfg):
+            continue
+        ks = row.get('key science files')
+        if ks is None:
+            continue
+        shortnames = list(ks) if isinstance(ks, (list, tuple, np.ndarray)) else [ks]
+        try:
+            scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
+        except AssertionError:
+            aid = row.get('archive id', '?')
+            print(f"  skip {aid}: not all key science files found under {data_dir}")
+            continue
+        assessment = hstutils.assess_key_science_files_data_quality(scifiles, shortnames)
+        if assessment.reject:
+            aid = row.get('archive id', '?')
+            print(f"  skip {aid}: {assessment.reason}")
+            continue
+        if assessment.odd_expflag is not None:
+            aid = row.get('archive id', '?')
+            warnings.warn(
+                f"Odd exposure flag {assessment.odd_expflag!r} for {aid}; proceeding with extraction."
+            )
+        extract_mask[i] = True
+
+    obs_tbl_extract = obs_tbl[extract_mask]
     stis_tag_files_in_tbl = []
-    for row in obs_tbl_usbl:
-        if 'hst-stis' in row['science config']:
-            stis_tag_files_in_tbl.extend(row['key science files'])
+    for row in obs_tbl_extract:
+        stis_tag_files_in_tbl.extend(row['key science files'])
+    ids_for_dir = obs_tbl_extract['archive id'].tolist()
     stis_tag_files_in_dir = dbutils.find_data_files(
         'tag',
         instruments=instruments,
-        ids=obs_tbl_usbl['archive id'].tolist())
+        ids=ids_for_dir if ids_for_dir else 'any',
+        directory='.',
+    )
     stis_tag_files_in_dir = list(map(str, stis_tag_files_in_dir))
 
     n_tbl = len(stis_tag_files_in_tbl)
     n_obs = len(stis_tag_files_in_dir)
     if n_tbl != n_obs:
-        warnings.warn(f"There are {n_tbl} usable observations in the observation manifest table but {n_obs} in the directory for {target}."
-                      f"\nOnly the files in the table will be extracted.")
+        warnings.warn(
+            f"There are {n_tbl} STIS observations marked for extraction in the manifest but {n_obs} "
+            f"matching TAG files in the directory for {target}."
+            f"\nOnly the files listed in the manifest will be extracted."
+        )
 
 
 #%% identify existing STIS extractions
 
-    obs_tbl_usbl['skip_extraction'] = False
-    obs_tbl_usbl['skip_extraction'].description = (
+    obs_tbl_extract['skip_extraction'] = False
+    obs_tbl_extract['skip_extraction'].description = (
         "Temporary column telling the extraction script whether to extract the data or not. Can likely be deleted if"
         "still present later."
     )
 
-    for row in obs_tbl_usbl:
+    for row in obs_tbl_extract:
         if 'hst-cos' in row['science config']:
             continue
         sci_names = row['key science files']
@@ -193,11 +229,15 @@ while True:
                             os.remove(del_file)
                 else:
                     row['skip_extraction'] = True
-    obs_tbl_usbl.add_index('archive id')
+    obs_tbl_extract.add_index('archive id')
 
     def skip(file_name):
         id = dbutils.parse_filename(file_name)['id']
-        return obs_tbl_usbl.loc['archive id', id]['skip_extraction']
+        try:
+            return obs_tbl_extract.loc['archive id', id]['skip_extraction']
+        except KeyError:
+            # e.g. FLT on disk for an observation not passing assess_key_science_files_data_quality
+            return True
 
 
 
@@ -366,7 +406,7 @@ while True:
 
 #%% delete skip column
 
-    obs_tbl_usbl.remove_column('skip_extraction')
+    obs_tbl_extract.remove_column('skip_extraction')
 
 #%% check obs_tbl
 
