@@ -522,14 +522,13 @@ class ObsTable(table.Table):
 
     def pretty_string_with_flags_notes(self, indent='  ', sub_indent='    '):
         """
-        Plain-text layout: each row shows all columns except ``flags`` and ``notes`` as
-        ``name: value`` lines, then ``flags`` and ``notes`` as indented bullet lists.
+        Plain-text layout: for each table row, every column except ``flags`` and ``notes``
+        is one ``name: value`` line, then ``flags`` and ``notes`` as indented bullet lists.
         """
         lines = []
         skip_main = {'flags', 'notes'}
         n = len(self)
         for i in range(n):
-            elmts = []
             for name in self.colnames:
                 if name in skip_main:
                     continue
@@ -538,8 +537,7 @@ class ObsTable(table.Table):
                     text = '—'
                 else:
                     text = self._pretty_diagnostic_format_value(self[name][i])
-                elmts.append(f'text')
-                lines.append(' | '.join(elmts))
+                lines.append(f'{name}: {text}')
             for label, colname in (('flags', 'flags'), ('notes', 'notes')):
                 if colname not in self.colnames:
                     continue
@@ -757,9 +755,9 @@ flag_menu = {
     'nans': 'fluxes all nan or non-finite',
 
     # flux
-    'lo flux': 'flux anomalously low',
-    'hi flux': 'flux anomalously high',
-    'no flux': 'flux negligible',
+    'lo flux': 'flux anomalously low (< -{threshold:.0f} sigma from median)',
+    'hi flux': 'flux anomalously high (> +{threshold:.0f} sigma from median)',
+    'no flux': 'flux negligible (< {threshold:.0f} sigma from zero)',
 
     # wavelength
     'bad waves': 'wavelengths inaccurate'
@@ -785,7 +783,8 @@ notes_menu = {
     'acq + plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
 
     # flux
-    'line flux': '{line} flux {sigma:+.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
+    'line flux vs med': '{line} flux {sigma:+.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
+    'line flux vs zero': '{line} flux {sigma:+.1f} sigma from zero over {wa:.2f}–{wb:.2f} AA band',
 
     # wavelength discrepancy
     'bad waves': '{user} reported substantial wavelength discrepancy',
