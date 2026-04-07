@@ -15,6 +15,8 @@ from astropy.time import Time
 
 import matplotlib
 from matplotlib import pyplot as plt
+import plotly.graph_objects as go
+from plotly.colors import qualitative
 
 import stistools as stis # we'll need these so import just to be sure present
 
@@ -499,55 +501,93 @@ itertargets = iter(targets)
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line
         # showing median and a light shaded region showing median abs dev
-        figs = []
+        spec_html_paths = []
         m = 5
+        line_colors = qualitative.D3
         for start in range(0, len(spectra), m):
-            batch = spectra[start:start+m]
-            fig, ax = plt.subplots(figsize=(10, 5))
-            figs.append(fig)
+            batch = spectra[start:start + m]
+            title_ids = '-'.join([str(spec['id'])[-6:] for spec in batch])
 
-            ax.fill_between(
-                wave_grid,
-                median_flux - mad_flux,
-                median_flux + mad_flux,
-                color='k',
-                alpha=0.4,
-                zorder=1,
-                label = '_',
-                step='mid',
+            fig = go.Figure()
+            upper = median_flux + mad_flux
+            lower = median_flux - mad_flux
+            ok_band = (
+                np.isfinite(wave_grid)
+                & np.isfinite(upper)
+                & np.isfinite(lower)
             )
-            ax.step(
-                wave_grid,
-                median_flux,
-                lw=2,
-                color='k',
-                alpha=0.7,
-                zorder=2,
-                label='median',
-                where='mid',
+            wg = wave_grid[ok_band]
+            up = upper[ok_band]
+            lo = lower[ok_band]
+            fig.add_trace(
+                go.Scatter(
+                    x=wg,
+                    y=up,
+                    mode='lines',
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo='skip',
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=wg,
+                    y=lo,
+                    mode='lines',
+                    line=dict(width=0),
+                    fill='tonexty',
+                    fillcolor='rgba(0,0,0,0.2)',
+                    showlegend=False,
+                    hoverinfo='skip',
+                    name='±MAD',
+                )
             )
 
-            for spec in batch:
-                ax.step(
-                    spec['wavelength'],
-                    spec['flux'],
-                    where='mid',
-                    zorder=3,
-                    label=str(spec['id'])[-6:],
+            ok_med = np.isfinite(wave_grid) & np.isfinite(median_flux)
+            fig.add_trace(
+                go.Scatter(
+                    x=wave_grid[ok_med],
+                    y=median_flux[ok_med],
+                    mode='lines',
+                    line=dict(color='black', width=2),
+                    name='median',
+                    opacity=0.85,
+                )
+            )
+
+            for k, spec in enumerate(batch):
+                wx = spec['wavelength']
+                fx = spec['flux']
+                okf = np.isfinite(wx) & np.isfinite(fx)
+                fig.add_trace(
+                    go.Scatter(
+                        x=wx[okf],
+                        y=fx[okf],
+                        mode='lines',
+                        line=dict(color=line_colors[k % len(line_colors)], width=1),
+                        line_shape='hv',
+                        name=str(spec['id'])[-6:],
+                        hovertemplate='λ=%{x:.4f} Å<br>flux=%{y:.4g}<extra></extra>',
+                    )
                 )
 
+            layout_kw = dict(
+                title=f'{target} | {config} | {title_ids}',
+                xaxis_title='Wavelength (Å)',
+                yaxis_title='Flux',
+                height=520,
+                width=1000,
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+                template='plotly_white',
+            )
             if 'e140m' in config:
                 lyamask = (wave_grid > 1214) & (wave_grid < 1217)
-                ylo = 2*np.min(median_flux[lyamask])
-                yhi = 2*np.max(median_flux[lyamask])
-                ax.set_ylim(ylo, yhi)
+                if np.any(lyamask):
+                    ylo = float(2 * np.nanmin(median_flux[lyamask]))
+                    yhi = float(2 * np.nanmax(median_flux[lyamask]))
+                    layout_kw['yaxis'] = dict(range=[ylo, yhi])
 
-            title_ids = '-'.join([str(spec['id'])[-6:] for spec in batch])
-            print(f'Fig {fig.number}: {title_ids}')
-            ax.set_title(f'{target} | {config} | {title_ids}')
-            ax.set_xlabel('Wavelength')
-            ax.set_ylabel('Flux')
-            ax.legend(fontsize='small', ncol=2)
+            fig.update_layout(**layout_kw)
 
             notes = []
             for spec in batch:
@@ -564,23 +604,30 @@ itertargets = iter(targets)
                 notes.append(f"{str(spec['id'])[-6:]}: {flag_text}")
 
             if len(notes) > 0:
-                ax.annotate(
-                    '\n'.join(notes),
-                    xy=(0.02, 0.98),
-                    xycoords='axes fraction',
-                    va='top',
-                    fontsize='small',
+                fig.add_annotation(
+                    xref='paper',
+                    yref='paper',
+                    x=0.02,
+                    y=0.98,
+                    xanchor='left',
+                    yanchor='top',
+                    text='<br>'.join(notes),
+                    showarrow=False,
+                    align='left',
+                    font=dict(size=11),
                 )
 
-            fig.tight_layout()
-
             spec_fig_filename = f'{target}.{config}.{title_ids}.comparison.html'
-            ax.set_aspect('auto')
-            utils.save_standard_mpld3(fig, spec_plt_dir / spec_fig_filename)
+            out_path = spec_plt_dir / spec_fig_filename
+            fig.write_html(out_path, include_plotlyjs='cdn', config={'responsive': True})
+            spec_html_paths.append(out_path)
+            print(f'Wrote spectrum comparison: {out_path}')
 
         if human_review_spec == 'yes' or (human_review_spec == 'issues' and spec_issues):
-            print('Click outside the plots to continue.')
-            xy = utils.click_coords(figs[-1])
+            print('Open the spectrum comparison HTML file(s) in a browser, then continue here.')
+            for p in spec_html_paths:
+                print(f'  file://{p.resolve()}')
+            input('Press Enter when ready to continue.')
 
             while True:
                 id_endings = input('Any spectra you want to mark unusable, add flags, or add notes?\n'
