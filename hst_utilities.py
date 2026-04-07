@@ -16,7 +16,9 @@ from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
 import utilities as utils
-from stage1_processing.observation_table import notes_menu, reasons_menu
+from stage1_processing import observation_table as obt
+
+trapz = np.trapz if 'trapz' in dir(np) else np.trapezoid
 
 hst_database = MastMissions(mission='hst')
 
@@ -260,7 +262,7 @@ def band_integrated_flux_sigmas_vs_median_and_zero(
         if np.count_nonzero(ok) < 2:
             integrals[i] = np.nan
         else:
-            integrals[i] = np.trapz(f_band[ok], w_band[ok])
+            integrals[i] = trapz(f_band[ok], w_band[ok])
 
     valid = np.isfinite(integrals)
     nan_vec = np.full(n_spec, np.nan, dtype=float)
@@ -475,7 +477,7 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
 
     counts = h[1].data['counts']
     if counts == 0:
-        msgs.append(notes_menu['peakxd zeros'])
+        msgs.append(obt.notes_menu['peakxd zeros'])
 
     centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd # arcsec
     slew = h[0].header['ACQSLEWY'] # arcsec
@@ -488,7 +490,7 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
 
     if not slew_diff > atol:
         msgs.append(
-            notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
+            obt.notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
         )
 
     _acq_msg_print(msgs, verbosity)
@@ -507,10 +509,10 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
 
     lo_cts_threshold = 100
     if np.all(counts == 0):
-        msgs.append(notes_menu['peakd zeros'])
+        msgs.append(obt.notes_menu['peakd zeros'])
     elif np.all(counts <= lo_cts_threshold):
         msgs.append(
-            notes_menu['peakd lo cts'].format(lo_cts_threshold, lo_cts_threshold)
+            obt.notes_menu['peakd lo cts'].format(lo_cts_threshold, lo_cts_threshold)
         )
 
     if not np.all(counts == 0):
@@ -524,7 +526,7 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
 
         if not slew_diff > atol:
             msgs.append(
-                notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
+                obt.notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
             )
 
     _acq_msg_print(msgs, verbosity)
@@ -564,7 +566,7 @@ def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
 
 def acq_image_eval(test_image, n_chunks, sigma_threshold):
     prom = central_chunk_prominence_sigma(test_image, n_chunks)
-    note = notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
+    note = obt.notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
     passes = np.isfinite(prom) and prom >= sigma_threshold
     return note, passes
 
@@ -596,7 +598,7 @@ def assess_key_science_files_data_quality(scifiles, shortnames):
     if len(scifiles) == 0:
         return KeyScienceDataQualityAssessment(
             reject=True,
-            reason=reasons_menu['no data'],
+            reason=obt.reasons_menu['no data'],
             odd_expflag=None,
             check_zero_exptime_repair=False,
         )
@@ -614,25 +616,25 @@ def assess_key_science_files_data_quality(scifiles, shortnames):
                 counts += len(h[1].data['time'])
             if counts <= 100:
                 reject = True
-                reason = reasons_menu['no data']
+                reason = obt.reasons_menu['no data']
     elif 'raw' in pieces['type']:
         exptimes = [fits.getval(f, 'exptime', 1) for f in scifiles]
         if np.all(np.array(exptimes) == 0):
             reject = True
-            reason = reasons_menu['no data']
+            reason = obt.reasons_menu['no data']
 
     odd_expflag = None
     with fits.open(scifiles[0]) as h:
         hdr = h[0].header + h[1].header
         if hdr['FGSLOCK'] != 'FINE':
             reject = True
-            reason = reasons_menu['no gs lock']
+            reason = obt.reasons_menu['no gs lock']
         if hdr['expflag'] == 'NO DATA':
             reject = True
-            reason = reasons_menu['no data']
+            reason = obt.reasons_menu['no data']
         elif hdr['expflag'] == 'SHUTTER CLOSED':
             reject = True
-            reason = reasons_menu['shutter closed']
+            reason = obt.reasons_menu['shutter closed']
         elif hdr['expflag'] != 'NORMAL':
             odd_expflag = hdr['expflag']
 
