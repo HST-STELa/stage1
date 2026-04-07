@@ -480,20 +480,23 @@ while True:
 
                     acq_issue = np.any(acq_issues_mask & id_mask)
                     if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
-                        obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'], verbose=True)
+                        zflag = obt.flag_menu['no flux'].format(zero_flux_sigma_threshold)
+                        obs_tbl.add_flag(id_mask, zflag, verbose=True)
                         if acq_issue:
                             obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + no flux')
                         spec_issues = True
                     else:
                         if sig_med < -anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'], verbose=True)
+                            loflag = obt.flag_menu['lo flux'].format(anomalous_flux_sigma_threshold)
+                            obs_tbl.add_flag(id_mask, loflag, verbose=True)
                             if acq_issue:
                                 obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + lo flux')
                             spec_issues = True
                         if sig_med >= 0 and acq_issue:
                             obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med), verbose=True)
                         if sig_med > anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['hi flux'], verbose=True)
+                            hiflag = obt.flag_menu['hi flux'].format(anomalous_flux_sigma_threshold)
+                            obs_tbl.add_flag(id_mask, hiflag, verbose=True)
                             spec_issues = True
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line

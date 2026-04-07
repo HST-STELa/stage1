@@ -5,7 +5,7 @@ from math import nan
 import sys
 import io
 
-from random import choices
+from random import choices, seed
 
 import numpy as np
 from astropy.io import fits
@@ -44,8 +44,9 @@ human_reviewer = 'parke'
 human_review_acq = 'issues' # use one of yes, no, issues
 human_review_spec = 'no' # use one of yes, no, issues
 
-targets = target_lists.everything_in_database()
-targets = targets[1:2] + choices(targets[2:], k=10)
+targets = sorted(target_lists.everything_in_database())
+seed(42)
+targets = targets[2:2] + choices(targets[2:], k=10)
 clear_usability = True
 clear_other = ['flags', 'usability status', 'notes']
 batch_mode = True
@@ -147,7 +148,13 @@ itertargets = iter(targets)
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
     if clear_usability:
+        # keep missing acq flags bc they're a pain to search for, though I think only lhs1140 has these
+        missing_acq_mask, missing_acq_notes = obs_tbl.substring_match_mask('notes', 'no acquisition found', return_matches=True)
         obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=clear_other)
+        if np.any(missing_acq_mask):
+            print(f'Adding back missing acquisition notes for {target}.')
+            for note, i in zip(missing_acq_notes, np.nonzero(missing_acq_mask)[0]):
+                obs_tbl.add_note(i, note)
 
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
@@ -200,8 +207,7 @@ itertargets = iter(targets)
 
     for row in obs_tbl:
         if not row.usable(True):
-            if 'wave' in row.get('reason unusable', ''):
-                continue
+            continue
         sfs = row['supporting files']
         config = row['science config']
         if obs_tbl._is_null_like(sfs):
@@ -473,7 +479,7 @@ itertargets = iter(targets)
                     sig_z = float(sig_z_arr[j])
                     if not np.isfinite(sig_med):
                         continue
-                    note = obt.notes_menu['line flux'].format(
+                    note = obt.notes_menu['line flux vs med'].format(
                         line=comp_band_name,
                         sigma=sig_med,
                         wa=wa,
@@ -483,20 +489,31 @@ itertargets = iter(targets)
 
                     acq_issue = np.any(acq_issues_mask & id_mask)
                     if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
-                        obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'], verbose=True)
+                        zflag = obt.flag_menu['no flux'].format(threshold=zero_flux_sigma_threshold)
+                        obs_tbl.add_flag(id_mask, zflag, verbose=True)
+                        znote = obt.notes_menu['line flux vs zero'].format(
+                            line=comp_band_name,
+                            sigma=sig_z,
+                            wa=wa,
+                            wb=wb,
+                        )
+                        obs_tbl.add_note(id_mask, znote, verbose=True)
                         if acq_issue:
                             obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + no flux')
                         spec_issues = True
                     else:
                         if sig_med < -anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'], verbose=True)
+                            loflag = obt.flag_menu['lo flux'].format(threshold=anomalous_flux_sigma_threshold)
+                            obs_tbl.add_flag(id_mask, loflag, verbose=True)
                             if acq_issue:
                                 obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + lo flux')
                             spec_issues = True
                         if sig_med >= 0 and acq_issue:
                             obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med), verbose=True)
                         if sig_med > anomalous_flux_sigma_threshold:
-                            obs_tbl.add_flag(id_mask, obt.flag_menu['hi flux'], verbose=True)
+                            hiflag = obt.flag_menu['hi flux'].format(threshold=anomalous_flux_sigma_threshold)
+                            obs_tbl.add_flag(id_mask, hiflag, verbose=True)
+                            obs_tbl.update_usability(id_mask, 'has issues')
                             spec_issues = True
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line

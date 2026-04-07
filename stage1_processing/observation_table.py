@@ -520,24 +520,57 @@ class ObsTable(table.Table):
             return lines
         return [f'{bullet_indent}- {val}']
 
+    _PRETTY_CONDENSED_SKIP = frozenset(
+        {
+            'flags',
+            'notes',
+            'observatory',
+            'supporting files',
+            'usable',
+            'usability status',
+            'reason unusable',
+        }
+    )
+
+    @classmethod
+    def _pretty_skip_condensed_column(cls, name: str) -> bool:
+        if name in cls._PRETTY_CONDENSED_SKIP:
+            return True
+        return 'phase' in name.lower()
+
     def pretty_string_with_flags_notes(self, indent='  ', sub_indent='    '):
         """
-        Plain-text layout: for each table row, every column except ``flags`` and ``notes``
-        is one ``name: value`` line, then ``flags`` and ``notes`` as indented bullet lists.
+        Each table row: one ``' | '``-separated line of values (no column names) for all
+        columns except ``flags``, ``notes``, ``observatory``, ``supporting files``, the
+        three usability fields, and any column whose name contains ``phase`` (case
+        insensitive); then ``usable``, ``usability status``, and ``reason unusable`` each
+        on its own labeled line; then ``flags`` and ``notes`` as indented bullet lists.
         """
         lines = []
-        skip_main = {'flags', 'notes'}
+        usability_order = ('usable', 'usability status', 'reason unusable')
         n = len(self)
         for i in range(n):
+            parts = []
             for name in self.colnames:
-                if name in skip_main:
+                if self._pretty_skip_condensed_column(name):
                     continue
                 masked = ObsRow._cell_masked_for_index(self[name], i)
                 if masked:
                     text = '—'
                 else:
                     text = self._pretty_diagnostic_format_value(self[name][i])
-                lines.append(f'{name}: {text}')
+                parts.append(text)
+            if parts:
+                lines.append(' | '.join(parts))
+            for ucol in usability_order:
+                if ucol not in self.colnames:
+                    continue
+                masked = ObsRow._cell_masked_for_index(self[ucol], i)
+                if masked:
+                    text = '—'
+                else:
+                    text = self._pretty_diagnostic_format_value(self[ucol][i])
+                lines.append(f'{ucol}: {text}')
             for label, colname in (('flags', 'flags'), ('notes', 'notes')):
                 if colname not in self.colnames:
                     continue
@@ -676,7 +709,7 @@ class ObsTable(table.Table):
                 continue
             yield item
 
-    def substring_match_mask(self, colname, substr):
+    def substring_match_mask(self, colname, substr, return_matches=False):
         """
         Return a 1-D boolean array: True where any string in ``colname`` contains ``substr``.
 
@@ -688,6 +721,9 @@ class ObsTable(table.Table):
         row_mask = np.array(getattr(col, 'mask', np.zeros(len(col), dtype=bool)), dtype=bool)
         out = np.zeros(len(col), dtype=bool)
 
+        if return_matches:
+            matches = []
+
         for i in range(len(col)):
             if row_mask[i]:
                 continue
@@ -696,9 +732,14 @@ class ObsTable(table.Table):
                 text = item if isinstance(item, str) else str(item)
                 if substr in text:
                     out[i] = True
+                    if return_matches:
+                        matches.append(text)
                     break
 
-        return out
+        if return_matches:
+            return out, matches
+        else:
+            return out
 
 
 # for backwards compatability
@@ -769,6 +810,7 @@ notes_menu = {
                        'so GTIs were manually replaced based on first and last photon count',
 
     # acq
+    'acq not found': 'no acquisition found within a {search_radius} search radius',
     'peakd zeros': 'COS PEAKD counts zero at all dwell points',
     'peakd lo cts': 'COS PEAKD counts < {} at all dwell points whereas values > {} are typical',
     'peakd big slew': 'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points '

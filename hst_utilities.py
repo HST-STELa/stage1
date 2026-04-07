@@ -584,6 +584,9 @@ def assess_key_science_files_data_quality(scifiles):
     """
     Evaluate TAG/RAW science data and primary-header flags for unusable conditions.
 
+    Primary-header ``TARGNAME`` of ``wave`` (case-insensitive) rejects with
+    :data:`observation_table.reasons_menu` ``wave target``.
+
     Parameters
     ----------
     scifiles : sequence of path-like
@@ -624,19 +627,27 @@ def assess_key_science_files_data_quality(scifiles):
     odd_expflag = None
     with fits.open(scifiles[0]) as h:
         hdr = h[0].header + h[1].header
-        if hdr['FGSLOCK'] != 'FINE':
+        targ = h[0].header.get('TARGNAME', hdr.get('TARGNAME', ''))
+        if str(targ).strip().lower() == 'wave':
             reject = True
-            reason = obt.reasons_menu['no gs lock']
-        if hdr['expflag'] == 'NO DATA':
-            reject = True
-            reason = obt.reasons_menu['no data']
-        elif hdr['expflag'] == 'SHUTTER CLOSED':
-            reject = True
-            reason = obt.reasons_menu['shutter closed']
-        elif hdr['expflag'] != 'NORMAL':
-            odd_expflag = hdr['expflag']
+            reason = obt.reasons_menu['wave target']
+            if hdr['expflag'] != 'NORMAL':
+                odd_expflag = hdr['expflag']
+            check_zero_exptime_repair = False
+        else:
+            if hdr['FGSLOCK'] != 'FINE':
+                reject = True
+                reason = obt.reasons_menu['no gs lock']
+            if hdr['expflag'] == 'NO DATA':
+                reject = True
+                reason = obt.reasons_menu['no data']
+            elif hdr['expflag'] == 'SHUTTER CLOSED':
+                reject = True
+                reason = obt.reasons_menu['shutter closed']
+            elif hdr['expflag'] != 'NORMAL':
+                odd_expflag = hdr['expflag']
 
-        check_zero_exptime_repair = hdr['exptime'] == 0 and not reject
+            check_zero_exptime_repair = hdr['exptime'] == 0 and not reject
 
     return KeyScienceDataQualityAssessment(
         reject=reject,

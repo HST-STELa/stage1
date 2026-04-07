@@ -5,9 +5,9 @@ import warnings
 
 from astropy.io import fits
 from astropy import table
-from astropy.units import u
 import numpy as np
 from astroquery.mast import MastMissions
+from astropy import units as u
 
 import utilities as utils
 import database_utilities as dbutils
@@ -17,7 +17,7 @@ import paths
 
 from stage1_processing import target_lists
 from stage1_processing import preloads
-from stage1_processing import observation_table as obs_tbl_tools
+from stage1_processing import observation_table as obt
 
 
 #%% settings
@@ -29,7 +29,10 @@ from stage1_processing import observation_table as obs_tbl_tools
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = target_lists.everything_in_database()
+i = targets.index('lhs1140')
+targets = targets[i+1:]
+missing_acq_action = 'raise' # warn or raise
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 confirm_file_moves = False
@@ -42,7 +45,7 @@ dnld_availability = 'PUBLIC,PROPRIETARY'
 
 hst_database = MastMissions(mission='hst')
 # note that you need to have created and stored a token for this, see
-# https://astroquery.readthedocs.io/en/latest/api/astroquery.mast.MastClass.html
+# https://astroquery.readthedocs.isto/en/latest/api/astroquery.mast.MastClass.html
 # you can specify the exact toke you want to use with token=...
 hst_database.login()
 
@@ -114,12 +117,13 @@ while True:
 #%% create or load table of observation information
 
     try:
-        obs_tbl = obs_tbl_tools.load_obs_tbl(target)
+        obs_tbl = obt.load_obs_tbl(target)
         print(f'\nExisting observation table loaded for {target}:\n')
     except FileNotFoundError:
-        obs_tbl = obs_tbl_tools.initialize(files_science)
+        obs_tbl = obt.initialize(files_science)
         print(f'\nObservation table initialized for {target}:\n')
     obs_tbl.pprint(-1,-1)
+    obs_tbl['usable'] = table.MaskedColumn(obs_tbl['usable'])
 
     care_level = utils.query_next_step(batch_mode, care_level, 2)
 
@@ -128,66 +132,6 @@ while True:
 
     dnld_dir = data_dir / 'downloads'
     os.makedirs(dnld_dir, exist_ok=True)
-
-
-#%% find new science data
-
-    print(f'\nSearching for new science files in the archive for {target}.')
-
-    results = hst_database.query_object(f'TIC {tic_id}',
-                                        radius=3,
-                                        sci_instrume=dnld_from_insts,
-                                        sci_spec_1234=dnld_from_specs,
-                                        sci_status=dnld_availability,
-                                        sci_aec='S', # science not calibration
-                                        select_cols="sci_operating_mode sci_instrume".split())
-    if results:
-        mode = results['sci_operating_mode'].filled('').tolist()
-        inst = results['sci_instrume'].filled('').tolist()
-        mask_accum = np.char.count(mode, 'ACCUM') > 0
-        mask_stis = np.char.count(inst, 'STIS') > 0
-        mask_cos = np.char.count(inst, 'COS') > 0
-        mask_suffix_sets = ((mask_stis & mask_accum, 'RAW'),
-                            (mask_stis & ~mask_accum, 'TAG'),
-                            (mask_cos, 'X1D'))
-        file_tbls = []
-        for mask, sfxs in mask_suffix_sets:
-            slctd_results = results[mask]
-            if len(slctd_results):
-                datasets = hst_database.get_unique_product_list(slctd_results)
-                filtered = hst_database.filter_products(datasets, file_suffix=sfxs, extension='fits')
-                file_tbls.append(filtered)
-        files_in_archive = table.vstack(file_tbls)
-
-        new_files_mask = []
-        for file_info in files_in_archive:
-            files = list(data_dir.glob(f'*{file_info['filename']}'))
-            new_files_mask.append(len(files) == 0)
-        new_files = files_in_archive[new_files_mask]
-
-        if new_files:
-            print()
-            print('Attempting download of:')
-            new_files['instrument_name filters filename access'.split()].pprint(-1)
-            print()
-        else:
-            print('\nNo new science files found in the archive.\n')
-    else:
-        print('\nNo new science files found in the archive.\n')
-        new_files = []
-
-    care_level = utils.query_next_step(batch_mode, care_level, 2)
-
-
-#%% download and rename new files
-
-    if new_files:
-        manifest = hst_database.download_products(new_files, download_dir=dnld_dir, flat=True)
-        # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True,
-        #                                       into_target_folders=False, confirm=confirm_file_moves)
-        dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, target_name=target, into_target_folders=False, confirm=confirm_file_moves)
-
-        utils.query_next_step(batch_mode, care_level, 2)
 
 
 #%% make sure info on all files are in the obs tbl
@@ -228,12 +172,19 @@ while True:
             }
             obs_tbl.add_row(row)
             ni = len(obs_tbl) - 1
-            obs_tbl_tools.update_usability(ni, 'mask')
+            obs_tbl.update_usability(ni, 'mask')
             for colname in ('supporting files', 'flags', 'notes'):
                 obs_tbl[colname].mask[ni] = True
 
     cleaned_sci_files = [np.unique(sfs).tolist() for sfs in obs_tbl['key science files']]
     obs_tbl['key science files'] = cleaned_sci_files
+
+
+#%% clear supporting file column
+
+    for i in range(len(obs_tbl)):
+        obs_tbl['supporting files'][i] = None
+        obs_tbl['supporting files'].mask[i] = True
 
 
 #%% download supporting acquisitions and wavecals
@@ -257,7 +208,7 @@ while True:
             supporting_files = obs_tbl['supporting files'][i]
 
         # look for acquisitions
-        search_radius = 0.1*u.arcmin
+        search_radius = 10*u.arcmin / 2**7
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             acq_tbl_w_spts = []
@@ -265,31 +216,40 @@ while True:
                 acq_tbl_w_spts = hstutils.locate_nearby_acquisitions(path, search_radius, additional_files=('SPT',))
                 search_radius *= 2
         if len(acq_tbl_w_spts) == 0:
-            raise ValueError(f'No acquisition found for {path.name} within a {search_radius} search radius.')
-        acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
+            obs_tbl.update_usability(i, 'has issues')
+            obs_tbl.add_flag(i, obt.flag_menu['bad acq'])
+            note = obt.notes_menu['acq not found'].format(search_radius=search_radius)
+            obs_tbl.add_note(i, note)
+            missing_acq_msg = f'No acquisition found for {path.name} within a {search_radius} search radius.'
+            if missing_acq_action == 'warn':
+                warnings.warn(missing_acq_msg)
+            else:
+                raise ValueError(missing_acq_msg)
+        else:
+            acq_tbl = hstutils.infer_associated_acquisitions(path, acq_tbl_w_spts)
 
-        # if stis and there are two peaks, number them to differentiate
-        # (one will be a peakd and the other a peakxd,
-        # but we won't know for sure until looking at the files after downloading)
-        if 'stis' in obs_row['science config']:
-            acq_tbl['obsmode'] = acq_tbl['obsmode'].astype('object')
-            modes = acq_tbl['obsmode']
-            peaks = np.char.count(modes.astype('str'), 'PEAK') > 0
-            if sum(peaks) == 2:
-                modes[peaks] = np.char.add(modes[peaks].astype('str'), ['1', '2'])
-                acq_tbl['obsmode'][peaks] = modes[peaks]
+            # if stis and there are two peaks, number them to differentiate
+            # (one will be a peakd and the other a peakxd,
+            # but we won't know for sure until looking at the files after downloading)
+            if 'stis' in obs_row['science config']:
+                acq_tbl['obsmode'] = acq_tbl['obsmode'].astype('object')
+                modes = acq_tbl['obsmode']
+                peaks = np.char.count(modes.astype('str'), 'PEAK') > 0
+                if sum(peaks) == 2:
+                    modes[peaks] = np.char.add(modes[peaks].astype('str'), ['1', '2'])
+                    acq_tbl['obsmode'][peaks] = modes[peaks]
 
-        # list acquisitions in the obs table
-        for acq_row in acq_tbl:
-            aqt = acq_row['obsmode'].lower()
-            file = acq_row['filename']
-            supporting_files[aqt] = file
+            # list acquisitions in the obs table
+            for acq_row in acq_tbl:
+                aqt = acq_row['obsmode'].lower()
+                file = acq_row['filename']
+                supporting_files[aqt] = file
 
-        # download missing ones
-        not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
-        if any(not_present):
-            new_supporting_files = True
-            manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
+            # download missing ones
+            not_present = [len(list(data_dir.glob(f'*{name}'))) == 0 for name in acq_tbl_w_spts['filename']]
+            if any(not_present):
+                new_supporting_files = True
+                manifest = hst_database.download_products(acq_tbl_w_spts[not_present], download_dir=dnld_dir, flat=True)
 
         # record wavecal
         if 'hst-stis' in pieces['config']:
@@ -308,9 +268,10 @@ while True:
                     raise ValueError('Uh oh.')
                 manifest = hst_database.download_products(filtered, download_dir=dnld_dir, flat=True)
 
-        obs_tbl['supporting files'][i] = supporting_files
+        if supporting_files:
+            obs_tbl['supporting files'][i] = supporting_files
 
-        assert not obs_tbl['supporting files'].mask[i] and supporting_files != {}
+        # assert not obs_tbl['supporting files'].mask[i] and supporting_files != {}
 
     if not new_supporting_files:
         print('All supporting files present, nothing downloaded.')
@@ -325,6 +286,24 @@ while True:
         # dbutils.rename_and_organize_hst_files(dnld_dir, data_dir, resolve_stela_name=True, into_target_folders=False, confirm=confirm_file_moves)
 
         care_level = utils.query_next_step(batch_mode, care_level, 2)
+
+
+#%% verify that acq files are present for every observation
+
+    for row in obs_tbl:
+        if not row.usable(True) or any('no acquisition found' in n for n in row.get('notes', [])):
+                continue
+        sfs = row['supporting files']
+        config = row['science config']
+        if obs_tbl._is_null_like(sfs):
+            raise ValueError
+        sfkeys = list(sfs.keys())
+        if 'cos' in config:
+            if not ('acq/image' in sfkeys or 'acq/peakxd' in sfkeys):
+                raise ValueError
+        elif 'stis' in config:
+            if not 'acq' in sfkeys:
+                raise ValueError
 
 
 #%% check obs_tbl
@@ -342,9 +321,7 @@ while True:
 #%% save obs_tbl
 
     print(f'\nSaving obs_tbl for {target}.\n')
-    obs_tbl.sort('start')
-    obs_tbl.meta['last archive query'] = datetime.now().isoformat()
-    obs_tbl.write(obs_tbl_tools.get_path(target), overwrite=True)
+    obs_tbl.write(obt.get_path(target), overwrite=True)
 
     care_level = utils.query_next_step(batch_mode, care_level, 1)
 
