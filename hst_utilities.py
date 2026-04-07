@@ -152,9 +152,9 @@ _MAD_SCALE_NORMAL = 1.482602218505602
 
 def spectral_comparison_band_definitions(science_config):
     """
-    Bandpasses for chi²-style spectral comparison, in priority order.
+    Bandpasses for integrated-flux spectral comparison, in priority order.
 
-    Lyα is only included for STIS G140M / E140M. STIS G140L uses wider windows for
+    Lyα is only included for STIS G140M / E140M. G140L modes use wider windows for
     the UV lines (no Lyα step).
     """
     cfg = science_config.lower()
@@ -210,88 +210,74 @@ def select_spectral_comparison_band(wavelength, science_config, min_pixels=10):
     return None
 
 
-def band_chi2_sigma_vs_median_and_zero(
-    flux,
-    median,
-    mad,
+def band_integrated_flux_sigmas_vs_median_and_zero(
+    wavelength,
+    interp_fluxes,
+    band_mask,
     *,
     mad_scale=_MAD_SCALE_NORMAL,
-    zero_mad_percentile=5.0,
 ):
     """
-    Chi²-style deviation of one spectrum from the ensemble median vs. from zero.
-
-    Uses scaled MAD (``mad * mad_scale``) per pixel as σ for comparison to the median.
-    For comparison to zero, σ is constant: the given percentile of positive scaled
-    MAD values in the band (robust floor so near-zero MAD pixels do not dominate).
-
-    Each χ² is divided by ``sqrt(2 * dof)`` with ``dof`` the number of pixels used
-    (finite flux, median, mad, and strictly positive scaled MAD).
+    For each spectrum, integrate flux over the band (trapezoidal rule), then compare
+    integrals to the cross-spectrum median and to zero using a single robust scale:
+    ``mad_scale * MAD(integrals)`` (MAD about the median of the integrals).
 
     Parameters
     ----------
-    flux, median, mad : ndarray
-        Aligned 1-D arrays for a single wavelength band.
+    wavelength : ndarray
+        1-D wavelength grid (Å), length ``n_wavelength``.
+    interp_fluxes : ndarray
+        Shape ``(n_spectra, n_wavelength)``, all spectra on ``wavelength``.
+    band_mask : ndarray of bool
+        Length ``n_wavelength``; True inside the comparison band.
 
     Returns
     -------
-    sigma_vs_median, sigma_vs_zero : float
-        ``nan`` if the band cannot be evaluated (no usable pixels or invalid σ₀).
+    integrals : ndarray
+        Shape ``(n_spectra,)``; ``nan`` where the band has fewer than two finite points.
+    sigma_vs_median : ndarray
+        ``(integral - median(integrals)) / scale``; signed. ``nan`` if scaled MAD is zero
+        and the value is undefined, or integral is ``nan``.
+    sigma_vs_zero : ndarray
+        ``integral / scale``; ``nan`` if scaled MAD is zero and integral is nonzero, 
+        or integral is ``nan``.
     """
-    flux = np.asarray(flux, dtype=float)
-    median = np.asarray(median, dtype=float)
-    mad = np.asarray(mad, dtype=float)
-    sigma_robust = mad * mad_scale
-    base = np.isfinite(flux) & np.isfinite(median) & np.isfinite(mad)
-    use = base & (sigma_robust > 0)
-    dof = int(np.count_nonzero(use))
-    chi2_expctd = dof
-    if dof == 0:
-        return np.nan, np.nan
+    wave = np.asarray(wavelength, dtype=float)
+    F = np.asarray(interp_fluxes, dtype=float)
+    if F.ndim != 2:
+        raise ValueError('interp_fluxes must be 2-D (n_spectra, n_wavelength).')
+    m = np.asarray(band_mask, dtype=bool)
+    if wave.shape[0] != F.shape[1] or m.shape != wave.shape:
+        raise ValueError('wavelength, band_mask, and interp_fluxes axis 1 must align in length.')
 
-    resid = (flux - median)[use]
-    sig = sigma_robust[use]
-    chi2_median = float(np.sum((resid / sig) ** 2))
-    sigma_vs_median = (chi2_median - chi2_expctd) / np.sqrt(2.0 * dof)
+    n_spec = F.shape[0]
+    w_band = wave[m]
 
-    sigma0 = float(np.percentile(sig, zero_mad_percentile))
-    if not np.isfinite(sigma0) or sigma0 <= 0:
-        return sigma_vs_median, np.nan
+    integrals = np.empty(n_spec, dtype=float)
+    for i in range(n_spec):
+        f_band = F[i, m]
+        ok = np.isfinite(f_band) & np.isfinite(w_band)
+        if np.count_nonzero(ok) < 2:
+            integrals[i] = np.nan
+        else:
+            integrals[i] = np.trapz(f_band[ok], w_band[ok])
 
-    chi2_zero = float(np.sum((flux[use] / sigma0) ** 2))
-    sigma_vs_zero = (chi2_zero - chi2_expctd) / np.sqrt(2.0 * dof)
-    return sigma_vs_median, sigma_vs_zero
+    valid = np.isfinite(integrals)
+    nan_vec = np.full(n_spec, np.nan, dtype=float)
+    if np.count_nonzero(valid) < 2:
+        return integrals, nan_vec.copy(), nan_vec.copy()
 
+    med = float(np.nanmedian(integrals))
+    mad = float(np.nanmedian(np.abs(integrals[valid] - med)))
+    scale = mad * mad_scale
 
-def spectral_band_chi2_sigmas(
-    wavelength,
-    flux,
-    median,
-    mad,
-    science_config,
-    *,
-    min_pixels=3,
-    zero_mad_percentile=5.0,
-):
-    """
-    Select a priority band and return normalized χ² sigmas vs. median and vs. zero.
+    sigma_vs_median = np.full(n_spec, np.nan, dtype=float)
+    sigma_vs_zero = np.full(n_spec, np.nan, dtype=float)
+    if scale > 0:
+        sigma_vs_median[valid] = (integrals[valid] - med) / scale
+        sigma_vs_zero[valid] = integrals[valid] / scale
 
-    Returns
-    -------
-    band_name : str or None
-    sigma_vs_median, sigma_vs_zero : float
-    """
-    picked = select_spectral_comparison_band(wavelength, science_config, min_pixels=min_pixels)
-    if picked is None:
-        return None, np.nan, np.nan
-    name, mask = picked
-    sm, sz = band_chi2_sigma_vs_median_and_zero(
-        flux[mask],
-        median[mask],
-        mad[mask],
-        zero_mad_percentile=zero_mad_percentile,
-    )
-    return name, sm, sz
+    return integrals, sigma_vs_median, sigma_vs_zero
 
 
 def central_chunk_prominence_sigma(image, n, *, tile_reduce=np.sum):

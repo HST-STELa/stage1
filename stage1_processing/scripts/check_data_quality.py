@@ -442,32 +442,37 @@ while True:
             band_pick = hstutils.select_spectral_comparison_band(wave_grid, config)
             if band_pick is None:
                 raise NotImplementedError(
-                    f'\nSpectral χ² vs median/zero: no priority band had enough pixels '
+                    f'\nSpectral band integration: no priority band had enough pixels '
                     f'for {target} | {config}. Automatic comparison cannot be conducted.'
                 )
             else:
                 comp_band_name, band_mask = band_pick
-                for spec in spectra:
+                _, sig_med_arr, sig_z_arr = hstutils.band_integrated_flux_sigmas_vs_median_and_zero(
+                    wave_grid, interp_fluxes, band_mask
+                )
+                w_band = wave_grid[band_mask]
+                wa = float(np.nanmin(w_band))
+                wb = float(np.nanmax(w_band))
+                for j, spec in enumerate(spectra):
                     id_mask = obs_tbl['archive id'] == spec['id']
-                    sig_med, sig_z = hstutils.band_chi2_sigma_vs_median_and_zero(
-                        spec['interp_flux'][band_mask],
-                        median_flux[band_mask],
-                        mad_flux[band_mask],
-                    )
+                    sig_med = float(sig_med_arr[j])
+                    sig_z = float(sig_z_arr[j])
+                    if not np.isfinite(sig_med):
+                        continue
                     note = obt.notes_menu['line flux'].format(
                         line=comp_band_name,
                         sigma=sig_med,
-                        wa=wave_grid[band_mask][0],
-                        wb=wave_grid[band_mask][-1],
+                        wa=wa,
+                        wb=wb,
                     )
                     obs_tbl.add_note(id_mask, note)
 
-                    if sig_z < zero_flux_sigma_threshold:
+                    if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
                         obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'])
                         z_w_bad_acq = acq_issues_mask & id_mask
                         obs_tbl.update_usability(z_w_bad_acq, 'unusable', 'acq issue + no flux')
                     else:
-                        if sig_med < anomalous_flux_sigma_threshold:
+                        if sig_med < -anomalous_flux_sigma_threshold:
                             obs_tbl.add_flag(id_mask, obt.flag_menu['lo flux'])
                             lo_w_bad_acq = acq_issues_mask & id_mask
                             obs_tbl.update_usability(lo_w_bad_acq, 'unusable', 'acq issue + lo flux')
