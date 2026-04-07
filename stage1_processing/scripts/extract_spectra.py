@@ -158,25 +158,14 @@ while True:
         if not cfg or 'hst-stis' not in str(cfg):
             continue
         ks = row.get('key science files')
-        if ks is None:
-            continue
         shortnames = list(ks) if isinstance(ks, (list, tuple, np.ndarray)) else [ks]
-        try:
-            scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
-        except AssertionError:
-            aid = row.get('archive id', '?')
-            print(f"  skip {aid}: not all key science files found under {data_dir}")
-            continue
+        scifiles = dbutils.find_stela_files_from_hst_filenames(shortnames, data_dir)
         assessment = hstutils.assess_key_science_files_data_quality(scifiles, shortnames)
         if assessment.reject:
             aid = row.get('archive id', '?')
             print(f"  skip {aid}: {assessment.reason}")
             continue
-        if assessment.odd_expflag is not None:
-            aid = row.get('archive id', '?')
-            warnings.warn(
-                f"Odd exposure flag {assessment.odd_expflag!r} for {aid}; proceeding with extraction."
-            )
+        assert assessment.odd_expflag is None, 'Unrecognized exposure flag {assessment.odd_expflag!r} for {aid}'
         extract_mask[i] = True
 
     obs_tbl_extract = obs_tbl[extract_mask]
