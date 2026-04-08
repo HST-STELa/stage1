@@ -829,10 +829,9 @@ for target in targets:
             obstbl.write(tblpth, overwrite=True)
 
 
-#%% hand-added flags and notes from reviewing spectrum plots
-
-
 #%% browse saved spectrum comparison HTML (one file per Enter)
+
+"""ended up not doing this bc I ran out of time"""
 
 def _parse_spec_comparison_html_path(path, target):
     """Return config string or None if name is not ``{target}.{config}.{title_ids}.comparison.html``."""
