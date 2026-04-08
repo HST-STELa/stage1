@@ -796,9 +796,9 @@ flag_menu = {
     'nans': 'fluxes all nan or non-finite',
 
     # flux
-    'lo flux': 'flux anomalously low (< -{threshold:.0f} sigma from median)',
-    'hi flux': 'flux anomalously high (> +{threshold:.0f} sigma from median)',
-    'no flux': 'flux negligible (< {threshold:.0f} sigma from zero)',
+    'lo flux': 'flux anomalously low',
+    'hi flux': 'flux anomalously high',
+    # zero flux not included here because it is only a concern if the acq is suspect, and all flags indicate issues
 
     # wavelength
     'bad waves': 'wavelengths inaccurate'
@@ -819,6 +819,7 @@ notes_menu = {
     'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid '
                        'versus the {atol} threshold for this warning',
     'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {sigma:+.2f} sigma from median',
+    'can see target in acq': '{user} was able to identify target in acquisition image',
     'cannot see target in acq': '{user} could not identify target in acquisition image',
 
     # acq issues not issues

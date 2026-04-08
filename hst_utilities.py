@@ -644,6 +644,8 @@ def assess_key_science_files_data_quality(scifiles):
             elif hdr['expflag'] == 'SHUTTER CLOSED':
                 reject = True
                 reason = obt.reasons_menu['shutter closed']
+            elif hdr['expflag'] == 'INTERRUPTED':
+                pass
             elif hdr['expflag'] != 'NORMAL':
                 odd_expflag = hdr['expflag']
 

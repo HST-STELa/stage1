@@ -144,7 +144,13 @@ while True:
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
     if clear_usability:
+        # keep missing acq flags bc they're a pain to search for, though I think only lhs1140 has these
+        missing_acq_mask, missing_acq_notes = obs_tbl.substring_match_mask('notes', 'no acquisition found', return_matches=True)
         obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=clear_other)
+        if np.any(missing_acq_mask):
+            print(f'Adding back missing acquisition notes for {target}.')
+            for note, i in zip(missing_acq_notes, np.nonzero(missing_acq_mask)[0]):
+                obs_tbl.add_note(i, note)
 
     print(f'\n{target} observation table:\n')
     obs_tbl.pprint(-1,-1)
@@ -195,10 +201,10 @@ while True:
 
 #%% verify that acq files are present for every observation
 
+    known_missing = obs_tbl.substring_match_mask('notes', obt.notes_menu['acq not found'][:30])
     for row in obs_tbl:
-        if not row.usable(True):
-            if 'wave' in row.get('reason unusable', ''):
-                continue
+        if not row.usable(True) or known_missing[row.index]:
+            continue
         sfs = row['supporting files']
         config = row['science config']
         if obs_tbl._is_null_like(sfs):
