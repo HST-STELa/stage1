@@ -271,10 +271,7 @@ while True:
             # run builtin STIS tool for acq diagnosis
             h = fits.open(acq_file)
             print(f"STIS {h[0].header['obsmode']}")
-            stis_warn, full_output = hstutils.auto_validate_stis_acq(acq_file, verbosity=1, return_full_output=True)
-            msgs.extend(stis_warn)
-            if stis_warn:
-                acq_issues = True
+            acq_issues, msgs, full_output = hstutils.auto_validate_stis_acq(acq_file, verbosity=1, return_full_output=True)
             print(full_output, file=buffer)
 
             # now assess the acq images
@@ -302,13 +299,9 @@ while True:
             if exptype == 'ACQ/SEARCH':
                 print('no checks performed') # these should always be followed by a more precise acq according to STScI policy
             if exptype == 'ACQ/PEAKXD':
-                msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
-                if msgs:
-                    acq_issues = True
+                acq_issues, msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
             if exptype == 'ACQ/PEAKD':
-                msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
-                if msgs:
-                    acq_issues = True
+                acq_issues, msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
             if exptype == 'ACQ/IMAGE':
                 stages = ['initial', 'confirmation']
                 fig = plt.figure(figsize=[5,3])
@@ -326,11 +319,11 @@ while True:
                 image_shown = True
 
         if test_image is not None:
-            note, passes = hstutils.acq_image_eval(test_image, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
+            issueflag, note = hstutils.acq_image_eval(test_image, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
             print(note)
-            print(f'Flux test {'passed' if passes else 'failed'}')
+            print(f'Flux test {'failed' if issueflag else 'passed'}')
             msgs.append(note)
-            if not passes:
+            if issueflag:
                 acq_issues = True
 
         if image_shown:

@@ -469,14 +469,16 @@ def _acq_msg_print(msgs, verbosity, tastis_output=None):
 def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
     """return true/false based on whether slew was roughly equal to centroid offset"""
     h = fits_object
+    issueflag = False
     msgs = []
 
     plate_scale_xd_dic = dict(G130M=100 / 1000, G160M=90 / 1000, G140L=90 / 1000, G230L=24 / 1000,
                               MIRRORA=23.5 / 1000, MIRRORB=23.5 / 1000)
     plate_scale_xd = plate_scale_xd_dic[h[0].header['opt_elem']]
 
-    counts = h[1].data['counts']
+    counts, = h[1].data['counts']
     if counts == 0:
+        issueflag = True
         msgs.append(obt.notes_menu['peakxd zeros'])
 
     centroid_offset = (h[0].header['acqmeasy'] - h[0].header['acqprefy']) * plate_scale_xd # arcsec
@@ -484,24 +486,26 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
 
     atol = 0.2 # arcsec
     slew_diff = np.abs(centroid_offset- slew)
+    msgs.append(
+            obt.notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
+        )
 
     if verbosity == 2:
         print(f'centroid offset {centroid_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
-    if not slew_diff > atol:
-        msgs.append(
-            obt.notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
-        )
+    if slew_diff > atol:
+        issueflag = True
 
     _acq_msg_print(msgs, verbosity)
 
-    return msgs
+    return issueflag, msgs
 
 
 def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
     """return True/False if the ACQ/PEAKD is reasonable/suspect based on whether the slew is between the top two
     dwell points in erms of counts"""
     msgs = []
+    issueflag = False
     h = fits_object
 
     offsets = h[1].data['DISP_OFFSET']  # arcsec
@@ -509,8 +513,10 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
 
     lo_cts_threshold = 100
     if np.all(counts == 0):
+        issueflag = True
         msgs.append(obt.notes_menu['peakd zeros'])
     elif np.all(counts <= lo_cts_threshold):
+        issueflag = True
         msgs.append(
             obt.notes_menu['peakd lo cts'].format(lo_cts_threshold, lo_cts_threshold)
         )
@@ -520,18 +526,19 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
         wgtd_offset = np.sum(offsets*counts)/np.sum(counts) # arcsec
         atol = 0.1 # arcsec
         slew_diff = np.abs(wgtd_offset - slew)
+        msgs.append(
+            obt.notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
+        )
 
         if verbosity == 2:
             print(f'count-weighted offset {wgtd_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
-        if not slew_diff > atol:
-            msgs.append(
-                obt.notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
-            )
+        if slew_diff > atol:
+            issueflag = True
 
     _acq_msg_print(msgs, verbosity)
 
-    return msgs
+    return issueflag, msgs
 
 
 def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
@@ -552,23 +559,24 @@ def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
         msg = msg.replace('\n', ' ')
         if not (
             msg.strip() == ''
-            or 'succe' in msg
             or '===========' in msg
         ):
             msgs.append(msg)
 
+    issueflag = not all('succe' in msg for msg in msgs)
+
     _acq_msg_print(msgs, verbosity, output)
 
     if return_full_output:
-        return msgs, output
-    return msgs
+        return issueflag, msgs, output
+    return issueflag, msgs
 
 
 def acq_image_eval(test_image, n_chunks, sigma_threshold):
     prom = central_chunk_prominence_sigma(test_image, n_chunks)
     note = obt.notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
-    passes = np.isfinite(prom) and prom >= sigma_threshold
-    return note, passes
+    issueflag = not np.isfinite(prom) or prom < sigma_threshold
+    return issueflag, note
 
 
 class KeyScienceDataQualityAssessment(NamedTuple):

@@ -232,7 +232,10 @@ while True:
             # run builtin STIS tool for acq diagnosis
             h = fits.open(acq_file)
             print(f'STIS {h[0].header['obsmode']}')
-            warning_msgs = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
+            stis_val = hstutils.auto_validate_stis_acq(acq_file, verbosity=1)
+            warning_msgs = list(stis_val.msgs)
+            if not stis_val.passed:
+                acq_issues = True
 
             # now plot the acq images
             stages = ['coarse', 'fine']
@@ -258,9 +261,15 @@ while True:
             if exptype == 'ACQ/SEARCH':
                 print('no checks performed') # these should always be followed by a more precise acq according to STScI policy
             if exptype == 'ACQ/PEAKXD':
-                warning_msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
+                xd = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
+                warning_msgs.extend(xd.msgs)
+                if not xd.passed:
+                    acq_issues = True
             if exptype == 'ACQ/PEAKD':
-                warning_msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
+                pd = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
+                warning_msgs.extend(pd.msgs)
+                if not pd.passed:
+                    acq_issues = True
             if exptype == 'ACQ/IMAGE':
                 stages = ['initial', 'confirmation']
                 fig = plt.figure(figsize=[5,3])
@@ -288,7 +297,6 @@ while True:
             plt.close('all')
 
         if warning_msgs:
-            acq_issues = True
             for msg in warning_msgs:
                 obs_tbl.add_notes(assoc_obs_mask, msg)
 

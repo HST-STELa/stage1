@@ -267,9 +267,9 @@ itertargets = iter(targets)
             # run builtin STIS tool for acq diagnosis
             h = fits.open(acq_file)
             print(f"STIS {h[0].header['obsmode']}")
-            stis_warn, full_output = hstutils.auto_validate_stis_acq(acq_file, verbosity=1, return_full_output=True)
-            msgs.extend(stis_warn)
-            if stis_warn:
+            stis_val, full_output = hstutils.auto_validate_stis_acq(acq_file, verbosity=1, return_full_output=True)
+            msgs.extend(stis_val.msgs)
+            if not stis_val.passed:
                 acq_issues = True
             print(full_output, file=buffer)
 
@@ -298,12 +298,14 @@ itertargets = iter(targets)
             if exptype == 'ACQ/SEARCH':
                 print('no checks performed') # these should always be followed by a more precise acq according to STScI policy
             if exptype == 'ACQ/PEAKXD':
-                msgs = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
-                if msgs:
+                xd = hstutils.auto_validate_cos_acq_peakxd(h, verbosity=1)
+                msgs.extend(xd.msgs)
+                if not xd.passed:
                     acq_issues = True
             if exptype == 'ACQ/PEAKD':
-                msgs = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
-                if msgs:
+                pd = hstutils.auto_validate_cos_acq_peakd(h, verbosity=1)
+                msgs.extend(pd.msgs)
+                if not pd.passed:
                     acq_issues = True
             if exptype == 'ACQ/IMAGE':
                 stages = ['initial', 'confirmation']
