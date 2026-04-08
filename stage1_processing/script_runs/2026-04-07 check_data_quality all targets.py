@@ -4,6 +4,7 @@ from datetime import datetime
 from math import nan
 import sys
 import io
+import webbrowser
 
 import numpy as np
 from astropy.io import fits
@@ -54,6 +55,9 @@ acq_target_flux_sigma_threshold = 5.0
 min_spectra_for_band_comparison = 3
 anomalous_flux_sigma_threshold = 3.0
 zero_flux_sigma_threshold = 1.0
+
+# After the main run, open each saved spectrum-vs-median HTML in the browser, Enter for next file.
+browse_saved_spec_comparison_html = True
 
 
 #%% show plots or not
@@ -827,3 +831,49 @@ for target in targets:
 
 #%% hand-added flags and notes from reviewing spectrum plots
 
+
+#%% browse saved spectrum comparison HTML (one file per Enter)
+
+def _parse_spec_comparison_html_path(path, target):
+    """Return config string or None if name is not ``{target}.{config}.{title_ids}.comparison.html``."""
+    name = path.name
+    suf = '.comparison.html'
+    if not name.endswith(suf):
+        return None
+    core = name[: -len(suf)]
+    prefix = f'{target}.'
+    if not core.startswith(prefix):
+        return None
+    rest = core[len(prefix) :]
+    if '.' not in rest:
+        return None
+    cfg, _title_ids = rest.rsplit('.', 1)
+    return cfg
+
+
+if browse_saved_spec_comparison_html:
+    print('\n' + '=' * 60)
+    print('Browsing saved spectrum comparison HTML (Enter advances to next plot)')
+    print('=' * 60 + '\n')
+    for target in sorted(targets):
+        data_dir = paths.target_hst_data(target)
+        spec_dir = data_dir / 'diagnostics' / 'spectra vs median plots'
+        if not spec_dir.is_dir():
+            continue
+        html_paths = sorted(spec_dir.glob(f'{target}.*.comparison.html'))
+        if not html_paths:
+            continue
+        by_config = {}
+        for p in html_paths:
+            cfg = _parse_spec_comparison_html_path(p, target)
+            if cfg is None:
+                continue
+            by_config.setdefault(cfg, []).append(p)
+        for cfg in sorted(by_config.keys()):
+            for p in sorted(by_config[cfg]):
+                uri = p.resolve().as_uri()
+                print(f'{target}  |  {cfg}\n  {p.name}\n  {uri}')
+                webbrowser.open(uri)
+                input('  [Enter] for next plot, or Ctrl-C to stop\n')
+
+    print('\nDone browsing spectrum comparison HTML.\n')
