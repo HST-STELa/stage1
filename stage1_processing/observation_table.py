@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+import warnings
 
 import numpy as np
 from astropy import table
@@ -62,6 +63,36 @@ class ObsRow(table.Row):
 
     def usable(self, fill=True):
         return self.get("usable", fill)
+
+    def substring_match_mask(self, colname, substr):
+        items = self.get(colname, [])
+        return np.array([substr in item for item in items], bool)
+
+    def any_substring_match(self, colname, substr):
+        return any(self.substrng_match_mask(colname, substr))
+
+    def matches_any_substrings(self, colname, substrings):
+        return any(self.substring_match(colname, ss) for ss in substrings)
+
+    def flag_match(self, substr):
+        return self.substring_match('flags', substr)
+
+    def note_match(self, substr):
+        return self.substring_match('notes', substr)
+
+    @property
+    def acq_img_sigma(self):
+        notes = self.get('notes', [])
+        sigma = None
+        for note in notes:
+            result = re.findall(r'(\d+.\d+) sigma', note)
+            if result and len(result) == 1:
+                sigma = float(result[0])
+                break
+        return sigma
+
+    def acq_img_sigma_test(self, threshold):
+        return self.acq_img_sigma < threshold
 
 
 class ObsTable(table.Table):
@@ -693,6 +724,62 @@ class ObsTable(table.Table):
             f'"unusable", "has issues", "all clear", "mask" (aliases: usable, clear)'
         )
 
+    def custom_usbability_mask(
+        self, 
+        serious_flag_substrings=(),
+        benign_flag_substrings=(),
+        serious_note_substrings=(),
+        benign_note_substrings=(),
+        uncategorized_flags_handling='pass', # 'ignore', 'fail', 'warn', 'error'
+        uncategorized_notes_handling='pass', # 'ignore', 'fail', 'warn', 'error'
+        acq_flux_handling='allow human', # 'strict', 'allow human', 'ignore'
+        ):
+        mask = []
+        uncat = {'flags': {}, 'notes': {}}
+        handling = {'flags': uncategorized_flags_handling,
+                    'notes': uncategorized_notes_handling}
+        serious = {'flags': serious_flag_substrings,
+                   'notes': serious_note_substrings}
+        benign = {'flags': benign_flag_substrings,
+                   'notes': benign_note_substrings}
+        for row in self:
+            _mask = True
+            for colname in ('flags', 'notes'):
+                items = row.get(colname, [])
+                for item in items:
+                    _uncat = {}
+                    if any(ss in item for ss in serious[colname]):
+                        _mask = False
+                    elif not any(ss in item for ss in benign[colname]):
+                        _uncat[colname] |= item
+        
+            if acq_flux_handling != 'ignore':
+                passes = row.acq_img_sigma_test()
+                if passes is None or not passes:
+                    if acq_flux_handling == 'strict':
+                        _mask = False
+                    elif acq_flux_handling == 'allow human':
+                        if not row.note_match(self, 'was able to identify target in acquisition image'):
+                            _mask = False
+
+            if _uncat:
+                if handling[colname] == 'ignore':
+                    pass
+                elif handling[colname] == 'fail':
+                    _mask = False
+
+            
+        for colname in ('flags', 'notes'):
+            if uncat[colname]:
+                msg = f'Unhandled {colname} items:'
+                for item in uncat[colname]:
+                    msg += f'\n  {item}'
+                if handling[colname] == 'warn':
+                    warnings.warn(msg)
+                if handling[colname] == 'error':
+                    raise ValueError(msg)
+            
+
     @classmethod
     def _iter_nonnull_cell_items(cls, val):
         """Yield atomic, non-null items from a cell (scalar or iterable)."""
@@ -746,7 +833,6 @@ class ObsTable(table.Table):
 initialize = ObsTable.initialize_blank
 get_path = ObsTable.get_path
 load_obs_tbl = ObsTable.load_from_targname
-
 
 def inspect_values_of_all_tables(colname='notes'):
     """
