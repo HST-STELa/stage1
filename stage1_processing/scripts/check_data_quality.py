@@ -338,8 +338,6 @@ while True:
                 xy = utils.click_coords(fig)
                 answer = input('Did the target appear in the acquisition image (enter/n)')
                 if answer == '':
-                    other_acq_msgs = ['acquisition' in msg and 'image tiles' not in msg for msg in msgs]
-                    acq_issues = True if other_acq_msgs else False
                     msgs.append(obt.notes_menu['can see target in acq'].format(user=human_reviewer))
                 else:
                     acq_issues = True
