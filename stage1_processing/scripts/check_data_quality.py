@@ -49,7 +49,7 @@ batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
 acq_target_flux_n_chunks = 7
-acq_target_flux_sigma_threshold = 10.0
+acq_target_flux_sigma_threshold = 5.0
 
 min_spectra_for_band_comparison = 3
 anomalous_flux_sigma_threshold = 3.0
@@ -253,11 +253,18 @@ while True:
         targname_acq = fits.getval(acq_file, 'targname')
         targname_sci = fits.getval(sci_file, 'targname')
         if targname_sci != targname_acq:
+            hdr = fits.getheader(acq_file)
+            zero_motion = 0*u.deg/u.yr
+            acq_coords = SkyCoord(hdr['ra_targ']*u.deg, hdr['dec_targ']*u.deg,
+                                  pm_ra_cosdec=zero_motion, pm_dec=zero_motion,
+                                  obstime=Time('2000-01-01'))
             msg = ("Target names in the FITS headers for the science file and acq data differ. "
                    "This is likely an offset acquisition."
                    f"\n\tscience target:     {targname_sci}"
                    f"\n\tacquisition target: {targname_acq}")
             warnings.warn(msg)
+        else:
+            acq_coords = coords
 
 
         if 'hst-stis' in acq_file.name:
@@ -277,7 +284,7 @@ while True:
                 axs = []
                 for j in range(2):
                     hh = h['sci', j+1]
-                    ax, coords_at_obs, ary = hstutils.plot_acq_image(hh, coords, fig, (1, 2, j + 1))
+                    ax, coords_at_obs, ary = hstutils.plot_acq_image(hh, acq_coords, fig, (1, 2, j + 1))
                     ax.set_title(stages[j])
                     if j == 0:
                         ax.scatter(coords_at_obs.ra, coords_at_obs.dec,
@@ -308,7 +315,7 @@ while True:
                 for j in range(2):
                     hh = h['sci', j+1]
                     ax, _, ary = hstutils.plot_acq_image(
-                        hh, coords, fig, (1, 2, j + 1), zoom_region=3*u.arcsec)
+                        hh, acq_coords, fig, (1, 2, j + 1), zoom_region=3*u.arcsec)
                     if j == 1:
                         test_image = ary
                         ax.scatter(0.5, 0.5, transform=ax.transAxes,
@@ -337,7 +344,11 @@ while True:
                 print('Click outside the plots to continue.')
                 xy = utils.click_coords(fig)
                 answer = input('Did the target appear in the acquisition image (enter/n)')
-                if answer != '':
+                if answer == '':
+                    other_acq_msgs = ['acquisition' in msg and 'image tiles' not in msg for msg in msgs]
+                    acq_issues = True if other_acq_msgs else False
+                    msgs.append(obt.notes_menu['can see target in acq'].format(user=human_reviewer))
+                else:
                     acq_issues = True
                     msgs.append(obt.notes_menu['cannot see target in acq'].format(user=human_reviewer))
 
@@ -476,7 +487,7 @@ while True:
                     sig_z = float(sig_z_arr[j])
                     if not np.isfinite(sig_med):
                         continue
-                    note = obt.notes_menu['line flux'].format(
+                    note = obt.notes_menu['line flux vs med'].format(
                         line=comp_band_name,
                         sigma=sig_med,
                         wa=wa,
@@ -486,23 +497,31 @@ while True:
 
                     acq_issue = np.any(acq_issues_mask & id_mask)
                     if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
-                        zflag = obt.flag_menu['no flux'].format(zero_flux_sigma_threshold)
-                        obs_tbl.add_flag(id_mask, zflag, verbose=True)
+                        znote = obt.notes_menu['line flux vs zero'].format(
+                            line=comp_band_name,
+                            sigma=sig_z,
+                            wa=wa,
+                            wb=wb,
+                        )
+                        obs_tbl.add_note(id_mask, znote, verbose=True)
                         if acq_issue:
                             obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + no flux')
                         spec_issues = True
                     else:
                         if sig_med < -anomalous_flux_sigma_threshold:
-                            loflag = obt.flag_menu['lo flux'].format(anomalous_flux_sigma_threshold)
+                            loflag = obt.flag_menu['lo flux']
                             obs_tbl.add_flag(id_mask, loflag, verbose=True)
                             if acq_issue:
                                 obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + lo flux')
+                            else:
+                                obs_tbl.update_usability(id_mask, 'has issues')
                             spec_issues = True
                         if sig_med >= 0 and acq_issue:
                             obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med), verbose=True)
                         if sig_med > anomalous_flux_sigma_threshold:
-                            hiflag = obt.flag_menu['hi flux'].format(anomalous_flux_sigma_threshold)
+                            hiflag = obt.flag_menu['hi flux']
                             obs_tbl.add_flag(id_mask, hiflag, verbose=True)
+                            obs_tbl.update_usability(id_mask, 'has issues')
                             spec_issues = True
 
         # plot the spectra together in batches of no more than 5 on top of a thick background line
@@ -732,10 +751,17 @@ while True:
 
 #%% save obs_tbl
 
-    print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.sort('start')
     obs_tbl.meta['last data review'] = datetime.now().isoformat()
     obs_tbl.meta['last review by'] = human_reviewer
+
+    obs_tbl.meta['acq signal check number of tiles'] = 7
+    obs_tbl.meta['acq signal check sigma threshold'] = 5.0
+    obs_tbl.meta['flux median comparison min spectra required'] = 3
+    obs_tbl.meta['flux median comparison sigma threshold'] = 3.0
+    obs_tbl.meta['negligible flux sigma threshold'] = 1.0
+
+    print(f'\nSaving obs_tbl for {target}.\n')
     obs_tbl.write(obs_tbl.get_path(target), overwrite=True)
 
     # save a more human readable version of the table

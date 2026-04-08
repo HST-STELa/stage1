@@ -352,7 +352,6 @@ while True:
                     acq_issues = True
                     msgs.append(obt.notes_menu['cannot see target in acq'].format(user=human_reviewer))
 
-
             plt.close('all')
 
         if msgs:
