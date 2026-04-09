@@ -486,15 +486,14 @@ def auto_validate_cos_acq_peakxd(fits_object, verbosity=1):
 
     atol = 0.2 # arcsec
     slew_diff = np.abs(centroid_offset- slew)
-    msgs.append(
-            obt.notes_menu['peakxd big slew'].format(slew_diff=slew_diff, atol=atol)
-        )
+    msgs.append(obt.notes_menu['peakxd slew note'].format(slew_diff=slew_diff))
 
     if verbosity == 2:
         print(f'centroid offset {centroid_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
     if slew_diff > atol:
         issueflag = True
+        msgs.append(obt.notes_menu['peakxd slew warn'].format(tol=atol))
 
     _acq_msg_print(msgs, verbosity)
 
@@ -512,29 +511,28 @@ def auto_validate_cos_acq_peakd(fits_object, verbosity=1):
     counts = h[1].data['counts']
 
     lo_cts_threshold = 100
+    maxcounts = int(np.max(counts))
+    msgs.append(obt.notes_menu['peakd cts note'].format(maxcounts=maxcounts))
     if np.all(counts == 0):
         issueflag = True
         msgs.append(obt.notes_menu['peakd zeros'])
     elif np.all(counts <= lo_cts_threshold):
         issueflag = True
-        msgs.append(
-            obt.notes_menu['peakd lo cts'].format(lo_cts_threshold, lo_cts_threshold)
-        )
+        msgs.append(obt.notes_menu['peakd cts warn'].format(tol=lo_cts_threshold))
 
     if not np.all(counts == 0):
         slew = h[0].header['ACQSLEWX']  # arcsec
         wgtd_offset = np.sum(offsets*counts)/np.sum(counts) # arcsec
         atol = 0.1 # arcsec
         slew_diff = np.abs(wgtd_offset - slew)
-        msgs.append(
-            obt.notes_menu['peakd big slew'].format(slew_diff=slew_diff, atol=atol)
-        )
+        msgs.append(obt.notes_menu['peakd slew note'].format(slew_diff=slew_diff))
 
         if verbosity == 2:
             print(f'count-weighted offset {wgtd_offset:.2f} | slew {slew:.2f} | difference {slew_diff:.2f}')
 
         if slew_diff > atol:
             issueflag = True
+            msgs.append(obt.notes_menu['peakd slew warn'].format(tol=atol))
 
     _acq_msg_print(msgs, verbosity)
 
@@ -576,9 +574,15 @@ def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
 
 def acq_image_eval(test_image, n_chunks, sigma_threshold):
     prom = central_chunk_prominence_sigma(test_image, n_chunks)
-    note = obt.notes_menu['acq target flux'].format(n=n_chunks, sigma=prom)
+    msgs = [
+        obt.notes_menu['acq target flux note'].format(n=n_chunks, sigma=prom),
+    ]
     issueflag = not np.isfinite(prom) or prom < sigma_threshold
-    return issueflag, note
+    if issueflag:
+        msgs.append(
+            obt.notes_menu['acq target flux warn'].format(sigma=sigma_threshold)
+        )
+    return issueflag, msgs
 
 
 class KeyScienceDataQualityAssessment(NamedTuple):

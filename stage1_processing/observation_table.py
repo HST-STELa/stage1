@@ -107,7 +107,10 @@ class ObsRow(table.Row):
         notes = self.get('notes', [])
         sigma = None
         for note in notes:
-            result = re.findall(r'(\d+.\d+) sigma', note)
+            result = re.findall(
+                r'acquisition image tiles is ([+-]?\d+(?:\.\d+)?)',
+                note,
+            )
             if result and len(result) == 1:
                 sigma = float(result[0])
                 break
@@ -899,31 +902,31 @@ flag_menu = {
 
 notes_menu = {
     # gti issue
-    'clock rollover' : 'note exposure time falsely reported as zero '
+    'clock rollover' : 'bot note exposure time falsely reported as zero '
                        'so GTIs were manually replaced based on first and last photon count',
 
     # acq
-    'acq not found': 'warning no acquisition found within a {search_radius} search radius',
-    'peakd zeros': 'warning COS PEAKD counts zero at all dwell points',
-    'peakd cts note': 'note COS PEAKD max counts are {maxcounts}',
-    'peakd cts warn': 'warning COS PEAKD max counts < {tol}',
-    'peakd slew note': 'note difference between COS PEAKD slew and count-weighed mean of dwell points is {slew_diff:.2f} arcsec',
-    'peakd slew warn': 'warning COS PEAKD slew - mean difference > {tol}',
-    'peakxd zeros': 'warning COS PEAKXD counts were zero',
-    'peakxd slew note': 'note difference between COS PEAKXD slew and image centroid is {slew_diff:.2f} arsec',
-    'peakxd slew warn': 'warning COS PEAKXD slew - centroid difference > {tol}',
-    'acq target flux note': 'note difference in central flux and median in {n}x{n} acquisition image tiles is {sigma:+.2f}',
-    'acq target flux warn': 'warning acq image flux < {sigma} sigma',
-    'can see target in acq': 'note {user} identified target in acquisition image',
-    'cannot see target in acq': 'warning {user} deemed target absent in acquisition image',
+    'acq not found': 'bot warning no acquisition found within a {search_radius} search radius',
+    'peakd zeros': 'bot warning COS PEAKD counts zero at all dwell points',
+    'peakd cts note': 'bot note COS PEAKD max counts are {maxcounts}',
+    'peakd cts warn': 'bot warning COS PEAKD max counts < {tol}',
+    'peakd slew note': 'bot note difference between COS PEAKD slew and count-weighed mean of dwell points is {slew_diff:.2f} arcsec',
+    'peakd slew warn': 'bot warning COS PEAKD slew - mean difference > {tol}',
+    'peakxd zeros': 'bot warning COS PEAKXD counts were zero',
+    'peakxd slew note': 'bot note difference between COS PEAKXD slew and image centroid is {slew_diff:.2f} arsec',
+    'peakxd slew warn': 'bot warning COS PEAKXD slew - centroid difference > {tol}',
+    'acq target flux note': 'bot note difference in central flux and median in {n}x{n} acquisition image tiles is {sigma:+.2f}',
+    'acq target flux warn': 'bot warning acq image flux < {sigma} sigma',
+    'can see target in acq': 'note reviewer {user} identified target in acquisition image',
+    'cannot see target in acq': 'warning reviewer {user} deemed target absent in acquisition image',
 
     # flux
-    'line flux vs med note': 'note {line} flux - median = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
-    'line flux vs med warning': 'warning science flux > {tol} sigma from median',
-    'line flux vs zero note': 'note {line} flux - zero = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
-    'line flux vs zero warning': 'warning science flux < {tol} sigma above zero',
+    'line flux vs med note': 'bot note {line} flux - median = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
+    'line flux vs med warning': 'bot warning science flux > {tol} sigma from median',
+    'line flux vs zero note': 'bot note {line} flux - zero = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
+    'line flux vs zero warning': 'bot warning science flux < {tol} sigma above zero',
 
     # wavelength discrepancy
-    'bad waves': 'warning {user} reported substantial wavelength discrepancy',
+    'bad waves': 'warning reviewer {user} reported substantial wavelength discrepancy',
 }
 # note that output from the stistools.tastis function is also used to populate notes

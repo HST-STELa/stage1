@@ -319,10 +319,12 @@ while True:
                 image_shown = True
 
         if test_image is not None:
-            issueflag, note = hstutils.acq_image_eval(test_image, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold)
-            print(note)
+            issueflag, flux_msgs = hstutils.acq_image_eval(
+                test_image, acq_target_flux_n_chunks, acq_target_flux_sigma_threshold
+            )
+            print('\n'.join(flux_msgs))
             print(f'Flux test {'failed' if issueflag else 'passed'}')
-            msgs.append(note)
+            msgs.extend(flux_msgs)
             if issueflag:
                 acq_issues = True
 
@@ -478,7 +480,7 @@ while True:
                     sig_z = float(sig_z_arr[j])
                     if not np.isfinite(sig_med):
                         continue
-                    note = obt.notes_menu['line flux vs med'].format(
+                    note = obt.notes_menu['line flux vs med note'].format(
                         line=comp_band_name,
                         sigma=sig_med,
                         wa=wa,
@@ -488,27 +490,38 @@ while True:
 
                     acq_issue = np.any(acq_issues_mask & id_mask)
                     if np.isfinite(sig_z) and sig_z < zero_flux_sigma_threshold:
-                        znote = obt.notes_menu['line flux vs zero'].format(
+                        znote = obt.notes_menu['line flux vs zero note'].format(
                             line=comp_band_name,
                             sigma=sig_z,
                             wa=wa,
                             wb=wb,
                         )
                         obs_tbl.add_note(id_mask, znote, verbose=True)
+                        obs_tbl.add_note(
+                            id_mask,
+                            obt.notes_menu['line flux vs zero warning'].format(
+                                tol=zero_flux_sigma_threshold
+                            ),
+                            verbose=True,
+                        )
                         if acq_issue:
-                            obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + no flux')
+                            obs_tbl.add_flag(id_mask, obt.flag_menu['no flux'], verbose=True)
+                            obs_tbl.update_usability(id_mask, 'has issues')
                         spec_issues = True
                     else:
+                        if abs(sig_med) > anomalous_flux_sigma_threshold:
+                            obs_tbl.add_note(
+                                id_mask,
+                                obt.notes_menu['line flux vs med warning'].format(
+                                    tol=anomalous_flux_sigma_threshold
+                                ),
+                                verbose=True,
+                            )
                         if sig_med < -anomalous_flux_sigma_threshold:
                             loflag = obt.flag_menu['lo flux']
                             obs_tbl.add_flag(id_mask, loflag, verbose=True)
-                            if acq_issue:
-                                obs_tbl.update_usability(id_mask, 'unusable', 'acq issue + lo flux')
-                            else:
-                                obs_tbl.update_usability(id_mask, 'has issues')
+                            obs_tbl.update_usability(id_mask, 'has issues')
                             spec_issues = True
-                        if sig_med >= 0 and acq_issue:
-                            obs_tbl.add_note(id_mask, obt.notes_menu['acq + plenty flux'].format(sigma=sig_med), verbose=True)
                         if sig_med > anomalous_flux_sigma_threshold:
                             hiflag = obt.flag_menu['hi flux']
                             obs_tbl.add_flag(id_mask, hiflag, verbose=True)
@@ -679,7 +692,10 @@ while True:
                         obs_tbl.update_usability(i_mask, 'all clear')
                         break
                     elif usable_ans.startswith('u'):
-                        reason = input(f'Enter reason unusable. Please use reasons listed in observation_table.reasons_menu:')
+                        reason = input(
+                            f'Enter reason unusable. Use a reasons_menu key or exact value from '
+                            f'observation_table.reasons_menu:'
+                        )
                         obs_tbl.update_usability(i_mask, 'unusable', reason)
                         break
                     elif usable_ans.startswith('i'):
@@ -689,16 +705,21 @@ while True:
                         print('Bad input.')
 
                 while True:
-                    flagstring = input(f'Enter flags to be added, separated by commas (enter if none). '
-                                       f'Please copy flags from observation_table.flag_menu:')
+                    flagstring = input(
+                        f'Enter flags to be added, separated by commas (enter if none). '
+                        f'Use flag_menu keys or exact flag strings from observation_table.flag_menu:'
+                    )
                     if len(flagstring) < 3:
                         break
                     else:
                         obs_tbl.add_flags(i_mask, flagstring, separator=', *', verbose=False)
 
                 while True:
-                    notestring = input(f'Enter notes to be added, separated by commas (enter if none). '
-                                       f'Please copy notes from observation_table.notes_menu:')
+                    notestring = input(
+                        f'Enter notes/warnings to be added, separated by commas (enter if none). '
+                        f'Use notes_menu keys or full strings (note … / warning …) from '
+                        f'observation_table.notes_menu:'
+                    )
                     if len(notestring) < 3:
                         break
                     else:
