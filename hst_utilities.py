@@ -565,7 +565,7 @@ def auto_validate_stis_acq(acq_path, verbosity=1, return_full_output=False):
 
     _acq_msg_print(msgs, verbosity, output)
 
-    msgs = ['tastis: {msg}' for msg in msgs]
+    msgs = [f'tastis: {msg}' for msg in msgs]
 
     if return_full_output:
         return issueflag, msgs, output

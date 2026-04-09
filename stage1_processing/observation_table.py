@@ -757,15 +757,16 @@ class ObsTable(table.Table):
         ):
         mask = []
         ud = usability_definition.as_dict()
-        uncat = {'flags': {}, 'notes': {}}
+        uncat = {'flags': set(), 'notes': set()}
         for row in self:
             _mask = True
             for colname in ('flags', 'notes'):
                 items = row.get(colname, [])
                 subs = ud[colname]
                 for item in items:
-                    in_fail = any(ss in item for ss in subs['fail'])
-                    in_ignore = any(ss in item for ss in subs['ignore'])
+                    item = item.lower()
+                    in_fail = any(ss.lower() in item for ss in subs['fail'])
+                    in_ignore = any(ss.lower() in item for ss in subs['ignore'])
                     if in_fail:
                         _mask = False
                     elif in_ignore:
