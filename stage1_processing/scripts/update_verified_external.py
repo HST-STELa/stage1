@@ -13,18 +13,29 @@ existing lines in place. Targets that were not in the CSV are appended at the en
 hostname (case-insensitive) then ``tic_id``, so ``git diff`` stays line-aligned for unchanged rows.
 
 - **pass**: at least one qualifying row passes ``ObsTable.custom_usability_mask`` with
-  ``external_data_usability`` (see settings cell), and the target does not meet the line-flux-table
-  **lowsnr** downgrade (see below).
-- **lowsnr**: would be **pass**, but ``{hostname}.line-flux-table.ecsv`` exists and both (a) and (b) hold:
+  ``external_data_usability`` (see settings cell), and the target does not meet the per-config
+  ``*.line_fluxes.ecsv`` **lowsnr** downgrade (see below).
+- **lowsnr**: would be **pass**, but there is at least one ``*.line_fluxes.ecsv`` under the target
+  HST data tree (see below) that is relevant to the band, and **every** such table (after picking one
+  file per instrument config; see priority) satisfies **both** (a) and (b):
 
   (a) Fewer than three non-Lyα lines have finite SNR > 3, *or* among those lines every SNR>3 line
       shares the same spectroscopic ionization (Roman numeral after the element name, e.g. C **II**,
       Si **III**; Lyα rows are ignored).
 
   (b) Total exposure time (seconds) summed over HST rows that pass ``custom_usability_mask`` and whose
-      ``science config`` matches
-      at least one instrument mode listed in the line-flux table meta ``source files`` *and* that
-      mode belongs to the band (Lyα vs FUV) under consideration, is **< 1000 s**.
+      ``science config`` matches at least one instrument mode associated with that line-flux table
+      (from meta ``source files`` when present, otherwise from the filename) *and* that mode belongs
+      to the band (Lyα vs FUV) under consideration, is **< 1000 s**.
+
+  If **any** relevant config's chosen table does **not** satisfy (a) (good SNR) **or** does **not**
+  satisfy (b) (exptime ≥ 1000 s), the band stays **pass** instead of **lowsnr**.
+
+  Line-flux files are discovered under ``<target>/hst/ecsv/*.line_fluxes.ecsv`` when that directory
+  exists, and under ``<target>/hst/*.line_fluxes.ecsv`` (deduplicated). For multiple files sharing the
+  same instrument config (second ``.``-separated field of the basename, e.g. ``hst-cos-g140l``), the
+  file kept is the one with the highest ``{n}exposure_coadd`` *n*; if none match, prefer ``x1dsum.``
+  over ``x1d.`` in the basename.
 
 - **fail**: qualifying external rows exist but none pass the custom usability mask.
 - **none**: no qualifying rows in the obs table for that band.
@@ -42,6 +53,7 @@ from __future__ import annotations
 import csv
 import re
 import warnings
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -287,6 +299,58 @@ def _configs_from_line_flux_meta(meta, *, path: Path) -> list[str]:
     return configs
 
 
+def _config_from_line_fluxes_filename(path: Path) -> str:
+    parts = path.name.split(".")
+    if len(parts) < 3 or parts[-1] != "ecsv" or parts[-2] != "line_fluxes":
+        raise ValueError(f"Expected *.line_fluxes.ecsv, got {path.name!r}")
+    cfg = parts[1]
+    if "hst-" not in cfg:
+        raise ValueError(f"Could not read instrument config from line_fluxes basename {path.name!r}")
+    return cfg
+
+
+def _configs_for_line_fluxes_table(path: Path, lf: table.Table) -> list[str]:
+    raw = lf.meta.get("source files", None)
+    if raw is None:
+        return [_config_from_line_fluxes_filename(path)]
+    try:
+        return _configs_from_line_flux_meta(lf.meta, path=path)
+    except ValueError:
+        return [_config_from_line_fluxes_filename(path)]
+
+
+def _discover_line_fluxes_ecsv_paths(data_dir: Path) -> list[Path]:
+    """``hst/ecsv/*.line_fluxes.ecsv`` (if present) plus ``hst/*.line_fluxes.ecsv``, deduped."""
+    seen: set[Path] = set()
+    out: list[Path] = []
+    ecsv_sub = data_dir / "ecsv"
+    if ecsv_sub.is_dir():
+        for p in sorted(ecsv_sub.glob("*.line_fluxes.ecsv")):
+            r = p.resolve()
+            if r not in seen:
+                seen.add(r)
+                out.append(p)
+    for p in sorted(data_dir.glob("*.line_fluxes.ecsv")):
+        r = p.resolve()
+        if r not in seen:
+            seen.add(r)
+            out.append(p)
+    return out
+
+
+_COADD_N_RE = re.compile(r"(\d+)exposure_coadd")
+
+
+def _line_fluxes_priority_rank(path: Path) -> tuple[int, int, int]:
+    """Higher tuple sorts later under ``max``: prefer larger coadd *n*, then ``x1dsum.``, then ``x1d.``."""
+    name = path.name
+    coadd_ns = [int(m) for m in _COADD_N_RE.findall(name)]
+    coadd_n = max(coadd_ns) if coadd_ns else 0
+    x1dsum = 1 if "x1dsum." in name else 0
+    x1d = 1 if "x1d." in name else 0
+    return (coadd_n, x1dsum, x1d)
+
+
 def _markers_for_band_from_configs(configs: list[str], band: str) -> tuple[str, ...]:
     if band not in ("lya", "fuv"):
         raise ValueError(f"band must be 'lya' or 'fuv', got {band!r}")
@@ -310,8 +374,6 @@ def _row_exptime_seconds(obs_tbl: obt.ObsTable, i: int, data_dir: Path) -> float
     names = list(ks) if not isinstance(ks, str) else [ks]
     tot = 0.0
     for name in names:
-        if "x1d" in str(name).lower():
-            continue
         fp, = dbutils.find_stela_files_from_hst_filenames([name], data_dir)
         with fits.open(fp) as h:
             eh = h[0].header.get("EXPTIME") or h[1].header.get("EXPTIME", 0)
@@ -345,28 +407,46 @@ def _total_exptime_archival_pass_for_markers(
 
 
 def _should_downgrade_pass_to_lowsnr(
-    line_tbl_path: Path,
-    obs_tbl: obt.ObsTable | None,
     data_dir: Path,
+    obs_tbl: obt.ObsTable | None,
     band: str,
     archival_pass_mask: np.ndarray,
 ) -> bool:
-    if obs_tbl is None or len(obs_tbl) == 0 or not line_tbl_path.is_file():
+    if obs_tbl is None or len(obs_tbl) == 0:
         return False
-    lf = table.Table.read(line_tbl_path, format="ascii.ecsv")
-    if not _line_flux_table_condition_a(lf):
+    lf_paths = _discover_line_fluxes_ecsv_paths(data_dir)
+    if not lf_paths:
         return False
-    configs = _configs_from_line_flux_meta(lf.meta, path=line_tbl_path)
-    markers = _markers_for_band_from_configs(configs, band)
-    if not markers:
-        return False
-    texp = _total_exptime_archival_pass_for_markers(obs_tbl, data_dir, markers, archival_pass_mask)
-    return texp < LOW_SNR_EXPTIME_THRESHOLD_S
+    by_cfg: dict[str, list[Path]] = defaultdict(list)
+    for p in lf_paths:
+        try:
+            key = _config_from_line_fluxes_filename(p)
+        except ValueError:
+            continue
+        by_cfg[key].append(p)
+
+    saw_band_relevant = False
+    for _cfg, group in by_cfg.items():
+        chosen = max(group, key=lambda p: (_line_fluxes_priority_rank(p), p.name))
+        lf = table.Table.read(chosen, format="ascii.ecsv")
+        try:
+            configs = _configs_for_line_fluxes_table(chosen, lf)
+        except ValueError:
+            continue
+        markers = _markers_for_band_from_configs(configs, band)
+        if not markers:
+            continue
+        saw_band_relevant = True
+        bad_snr = _line_flux_table_condition_a(lf)
+        texp = _total_exptime_archival_pass_for_markers(obs_tbl, data_dir, markers, archival_pass_mask)
+        low_exp = texp < LOW_SNR_EXPTIME_THRESHOLD_S
+        if (not bad_snr) or (not low_exp):
+            return False
+    return saw_band_relevant
 
 
 def _apply_pass_vs_lowsnr(
     band_result: str | None,
-    line_tbl_path: Path,
     obs_tbl: obt.ObsTable | None,
     data_dir: Path,
     band: str,
@@ -374,7 +454,7 @@ def _apply_pass_vs_lowsnr(
 ) -> str | None:
     if band_result != "pass":
         return band_result
-    if _should_downgrade_pass_to_lowsnr(line_tbl_path, obs_tbl, data_dir, band, archival_pass_mask):
+    if _should_downgrade_pass_to_lowsnr(data_dir, obs_tbl, band, archival_pass_mask):
         return "lowsnr"
     return "pass"
 
@@ -465,9 +545,8 @@ for hostfile in sorted(targets):
     old = old_by_tic.get(tic, {"lya": "none", "fuv": "none"})
 
     data_dir = paths.target_hst_data(hostfile)
-    line_tbl_path = paths.target_data(hostfile) / f"{hostfile}.line-flux-table.ecsv"
 
-    obs_tbl = _load_obs_tbl_if_present(hostfile)
+    obs_tbl = obt.load_obs_tbl(hostfile)
     if obs_tbl is None or len(obs_tbl) == 0:
         lya_obs = None
         fuv_obs = None
@@ -480,12 +559,8 @@ for hostfile in sorted(targets):
         has_ext_fuv = bool(np.any(fuv_m))
         lya_raw = _classify_band(lya_m, archival_pass_mask)
         fuv_raw = _classify_band(fuv_m, archival_pass_mask)
-        lya_obs = _apply_pass_vs_lowsnr(
-            lya_raw, line_tbl_path, obs_tbl, data_dir, "lya", archival_pass_mask
-        )
-        fuv_obs = _apply_pass_vs_lowsnr(
-            fuv_raw, line_tbl_path, obs_tbl, data_dir, "fuv", archival_pass_mask
-        )
+        lya_obs = _apply_pass_vs_lowsnr(lya_raw, obs_tbl, data_dir, "lya", archival_pass_mask)
+        fuv_obs = _apply_pass_vs_lowsnr(fuv_raw, obs_tbl, data_dir, "fuv", archival_pass_mask)
 
     lya_out = _merge_column(lya_obs, old.get("lya", "none"), col="lya", tic=tic)
     fuv_out = _merge_column(fuv_obs, old.get("fuv", "none"), col="fuv", tic=tic)
