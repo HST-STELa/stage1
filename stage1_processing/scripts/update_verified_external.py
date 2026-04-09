@@ -83,6 +83,54 @@ _ION_ROMAN_TAIL = re.compile(r"\s+([IVXLC]+)\s*$", re.IGNORECASE)
 
 VERIFIED_FIELDNAMES = ("hostname", "tic_id", "lya", "fuv")
 
+#%% flags and notes to consider when deciding whether usable
+
+external_data_usability = obt.UsabilityDefinition(
+    ignore_notes = [
+        'GTIs were manually replaced',
+        'flux within central tile',
+        'was able to identify target',
+        'flux near or above median',
+        'sigma from median over',
+        'sigma from zero over',
+
+        'Telemetry indicates that the intended exposures may not',
+        'output lacks some information because',
+        'Saturation of pixels in the second image',
+        'Your ACQ appears to have succeeded',
+        'typical of a successful',
+    ],
+    fail_notes = [
+        'no acquisition found',
+        'COS PEAKD counts zero at all dwell points',
+        'at all dwell points whereas values',
+        'COS PEAKD slewed',
+        'COS PEAKXD counts were zero',
+        'COS PEAKXD slewed to a position',
+        'could not identify target',
+        'substantial wavelength discrepancy',
+        
+        'problem with your acquisition',
+        'The flux in the third image of the ACQ is lower',
+        'problems in the ACQ/PEAK',
+        'inadequate for an accurate',
+        'Some pixels in the confirmation image were saturated',
+        'The ACQ/PEAK flux test failed',
+        'maximum flux in the sequence occurred at one end',
+        ],
+    ignore_flags = [
+        'acquisition untrustworthy',
+        'flux anomalously low',
+        'flux anomalously high',
+        'wavelengths inaccurate', # bad bc also means throughput probably compromised
+        ],
+    fail_flags = [
+        'header targname = wave',
+        'fluxes all zero',
+        'fluxes all nan or non-finite',
+    ],
+)
+
 
 #%% functions
 

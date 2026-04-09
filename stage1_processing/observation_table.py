@@ -1,6 +1,4 @@
-import json
 import re
-from pathlib import Path
 import warnings
 
 import numpy as np
@@ -11,6 +9,30 @@ import paths
 import catalog_utilities as catutils
 import database_utilities as dbutils
 import utilities as utils
+
+
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+@dataclass
+class UsabilityDefinition:
+    # flat, explicit inputs
+    fail_flags: List[str] = field(default_factory=list)
+    ignore_flags: List[str] = field(default_factory=list)
+    fail_notes: List[str] = field(default_factory=list)
+    ignore_notes: List[str] = field(default_factory=list)
+
+    def as_dict(self) -> Dict[str, Dict[str, List[str]]]:
+        return {
+            'flags': {
+                'fail': self.fail_flags,
+                'ignore': self.ignore_flags,
+            },
+            'notes': {
+                'fail': self.fail_notes,
+                'ignore': self.ignore_notes,
+            },
+        }
 
 
 class ObsRow(table.Row):
@@ -724,62 +746,49 @@ class ObsTable(table.Table):
             f'"unusable", "has issues", "all clear", "mask" (aliases: usable, clear)'
         )
 
-    def custom_usbability_mask(
+    def custom_usability_mask(
         self, 
-        serious_flag_substrings=(),
-        benign_flag_substrings=(),
-        serious_note_substrings=(),
-        benign_note_substrings=(),
-        uncategorized_flags_handling='pass', # 'ignore', 'fail', 'warn', 'error'
-        uncategorized_notes_handling='pass', # 'ignore', 'fail', 'warn', 'error'
-        acq_flux_handling='allow human', # 'strict', 'allow human', 'ignore'
+        usability_definition: UsabilityDefinition,
+        action_on_unknown: str = 'warn', # 'ignore', 'fail', 'warn', 'error'
+        retain_unusable_flags = True,
         ):
         mask = []
+        ud = usability_definition.as_dict()
         uncat = {'flags': {}, 'notes': {}}
-        handling = {'flags': uncategorized_flags_handling,
-                    'notes': uncategorized_notes_handling}
-        serious = {'flags': serious_flag_substrings,
-                   'notes': serious_note_substrings}
-        benign = {'flags': benign_flag_substrings,
-                   'notes': benign_note_substrings}
         for row in self:
             _mask = True
             for colname in ('flags', 'notes'):
                 items = row.get(colname, [])
+                subs = ud[colname]
                 for item in items:
-                    _uncat = {}
-                    if any(ss in item for ss in serious[colname]):
+                    in_fail = any(ss in item for ss in subs['fail'])
+                    in_ignore = any(ss in item for ss in subs['ignore'])
+                    if in_fail:
                         _mask = False
-                    elif not any(ss in item for ss in benign[colname]):
-                        _uncat[colname] |= item
-        
-            if acq_flux_handling != 'ignore':
-                passes = row.acq_img_sigma_test()
-                if passes is None or not passes:
-                    if acq_flux_handling == 'strict':
-                        _mask = False
-                    elif acq_flux_handling == 'allow human':
-                        if not row.note_match(self, 'was able to identify target in acquisition image'):
+                    elif in_ignore:
+                        pass
+                    else:
+                        uncat[colname] |= {item}
+                        if action_on_unknown == 'fail':
                             _mask = False
+            mask.append(_mask)
 
-            if _uncat:
-                if handling[colname] == 'ignore':
-                    pass
-                elif handling[colname] == 'fail':
-                    _mask = False
-
-            
         for colname in ('flags', 'notes'):
             if uncat[colname]:
                 msg = f'Unhandled {colname} items:'
                 for item in uncat[colname]:
                     msg += f'\n  {item}'
-                if handling[colname] == 'warn':
+                if action_on_unknown == 'warn':
                     warnings.warn(msg)
-                if handling[colname] == 'error':
+                if action_on_unknown == 'error':
                     raise ValueError(msg)
-            
 
+        mask = np.array(mask, bool)
+        if retain_unusable_flags:
+            mask &= self['usable'].filled(True)
+
+        return mask, uncat
+            
     @classmethod
     def _iter_nonnull_cell_items(cls, val):
         """Yield atomic, non-null items from a cell (scalar or iterable)."""
@@ -863,8 +872,6 @@ reasons_menu = {
     'no data': 'no data taken',
     'shutter closed': 'shutter closed',
     'no gs lock': 'guide star tracking not locked',
-    'acq issue + no flux': 'acquisition issues and negligible target flux',
-    'acq issue + lo flux': 'acquisition issues and anomalously low target flux',
     'wave target': 'wave exposure',
     'zeros': 'fluxes all zero',
     'nans': 'fluxes all nan or non-finite',
@@ -884,7 +891,7 @@ flag_menu = {
     # flux
     'lo flux': 'flux anomalously low',
     'hi flux': 'flux anomalously high',
-    # zero flux not included here because it is only a concern if the acq is suspect, and all flags indicate issues
+    'no flux': 'flux negligible',
 
     # wavelength
     'bad waves': 'wavelengths inaccurate'
@@ -892,30 +899,31 @@ flag_menu = {
 
 notes_menu = {
     # gti issue
-    'clock rollover' : 'exposure time falsely reported as zero '
+    'clock rollover' : 'note exposure time falsely reported as zero '
                        'so GTIs were manually replaced based on first and last photon count',
 
     # acq
-    'acq not found': 'no acquisition found within a {search_radius} search radius',
-    'peakd zeros': 'COS PEAKD counts zero at all dwell points',
-    'peakd lo cts': 'COS PEAKD counts < {} at all dwell points whereas values > {} are typical',
-    'peakd big slew': 'COS PEAKD slewed {slew_diff:.2f} arcsec away from the count-weighed mean of dwell points '
-                      'versus the {atol} threshold for this warning',
-    'peakxd zeros': 'COS PEAKXD counts were zero',
-    'peakxd big slew': 'COS PEAKXD slewed to a position {slew_diff:.2f} arsec from image centroid '
-                       'versus the {atol} threshold for this warning',
-    'acq target flux': 'flux within central tile of {n}x{n} acquisition image tiles is {sigma:+.2f} sigma from median',
-    'can see target in acq': '{user} was able to identify target in acquisition image',
-    'cannot see target in acq': '{user} could not identify target in acquisition image',
-
-    # acq issues not issues
-    'acq + plenty flux': 'flux near or above median of same-configuration spectra despite acquisition issues',
+    'acq not found': 'warning no acquisition found within a {search_radius} search radius',
+    'peakd zeros': 'warning COS PEAKD counts zero at all dwell points',
+    'peakd cts note': 'note COS PEAKD max counts are {maxcounts}',
+    'peakd cts warn': 'warning COS PEAKD max counts < {tol}',
+    'peakd slew note': 'note difference between COS PEAKD slew and count-weighed mean of dwell points is {slew_diff:.2f} arcsec',
+    'peakd slew warn': 'warning COS PEAKD slew - mean difference > {tol}',
+    'peakxd zeros': 'warning COS PEAKXD counts were zero',
+    'peakxd slew note': 'note difference between COS PEAKXD slew and image centroid is {slew_diff:.2f} arsec',
+    'peakxd slew warn': 'warning COS PEAKXD slew - centroid difference > {tol}',
+    'acq target flux note': 'note difference in central flux and median in {n}x{n} acquisition image tiles is {sigma:+.2f}',
+    'acq target flux warn': 'warning acq image flux < {sigma} sigma',
+    'can see target in acq': 'note {user} identified target in acquisition image',
+    'cannot see target in acq': 'warning {user} deemed target absent in acquisition image',
 
     # flux
-    'line flux vs med': '{line} flux {sigma:+.1f} sigma from median over {wa:.2f}–{wb:.2f} AA band',
-    'line flux vs zero': '{line} flux {sigma:+.1f} sigma from zero over {wa:.2f}–{wb:.2f} AA band',
+    'line flux vs med note': 'note {line} flux - median = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
+    'line flux vs med warning': 'warning science flux > {tol} sigma from median',
+    'line flux vs zero note': 'note {line} flux - zero = {sigma:+.1f} sigma ({wa:.2f}–{wb:.2f} AA)',
+    'line flux vs zero warning': 'warning science flux < {tol} sigma above zero',
 
     # wavelength discrepancy
-    'bad waves': '{user} reported substantial wavelength discrepancy',
+    'bad waves': 'warning {user} reported substantial wavelength discrepancy',
 }
 # note that output from the stistools.tastis function is also used to populate notes
