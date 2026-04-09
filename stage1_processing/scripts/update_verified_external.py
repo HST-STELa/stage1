@@ -12,19 +12,21 @@ unexpected table shapes are supposed to raise (or warn once) so problems surface
 existing lines in place. Targets that were not in the CSV are appended at the end, sorted by
 hostname (case-insensitive) then ``tic_id``, so ``git diff`` stays line-aligned for unchanged rows.
 
-- **pass**: at least one qualifying row has ``usability status == 'all clear'`` and ``usable`` True,
-  and the target does not meet the line-flux-table **lowsnr** downgrade (see below).
+- **pass**: at least one qualifying row passes ``ObsTable.custom_usability_mask`` with
+  ``external_data_usability`` (see settings cell), and the target does not meet the line-flux-table
+  **lowsnr** downgrade (see below).
 - **lowsnr**: would be **pass**, but ``{hostname}.line-flux-table.ecsv`` exists and both (a) and (b) hold:
 
   (a) Fewer than three non-Lyα lines have finite SNR > 3, *or* among those lines every SNR>3 line
       shares the same spectroscopic ionization (Roman numeral after the element name, e.g. C **II**,
       Si **III**; Lyα rows are ignored).
 
-  (b) Total exposure time (seconds) summed over **all-clear** HST rows whose ``science config`` matches
+  (b) Total exposure time (seconds) summed over HST rows that pass ``custom_usability_mask`` and whose
+      ``science config`` matches
       at least one instrument mode listed in the line-flux table meta ``source files`` *and* that
       mode belongs to the band (Lyα vs FUV) under consideration, is **< 1000 s**.
 
-- **fail**: qualifying external rows exist but none are all clear.
+- **fail**: qualifying external rows exist but none pass the custom usability mask.
 - **none**: no qualifying rows in the obs table for that band.
 - **planned** / **tentative** / **lowsnr**: preserved from the previous CSV when there are still
   no qualifying external rows for that band.
@@ -83,31 +85,32 @@ _ION_ROMAN_TAIL = re.compile(r"\s+([IVXLC]+)\s*$", re.IGNORECASE)
 
 VERIFIED_FIELDNAMES = ("hostname", "tic_id", "lya", "fuv")
 
+# ``action_on_unknown`` for ``custom_usability_mask``: flag/note substrings not in fail/ignore lists.
+CUSTOM_USABILITY_ACTION_ON_UNKNOWN = "error"
+
 #%% flags and notes to consider when deciding whether usable
 
 external_data_usability = obt.UsabilityDefinition(
     ignore_notes = [
-        'GTIs were manually replaced',
-        'flux within central tile',
-        'was able to identify target',
-        'flux near or above median',
-        'sigma from median over',
-        'sigma from zero over',
+        'bot note',
+        'bot warning acq image flux',  # leave out because should always have accompanying seen/unseen note in latest review
+        'identified target in acquisition',
 
         'Telemetry indicates that the intended exposures may not',
         'output lacks some information because',
         'Saturation of pixels in the second image',
         'Your ACQ appears to have succeeded',
         'typical of a successful',
+        'bot warning science flux',
     ],
     fail_notes = [
         'no acquisition found',
         'COS PEAKD counts zero at all dwell points',
-        'at all dwell points whereas values',
-        'COS PEAKD slewed',
+        'bot warning COS PEAKD max',
+        'bot warning COS PEAKD slew',
         'COS PEAKXD counts were zero',
-        'COS PEAKXD slewed to a position',
-        'could not identify target',
+        'bot warning COS PEAKXD slew',
+        'deemed target absent',
         'substantial wavelength discrepancy',
         
         'problem with your acquisition',
@@ -122,12 +125,13 @@ external_data_usability = obt.UsabilityDefinition(
         'acquisition untrustworthy',
         'flux anomalously low',
         'flux anomalously high',
-        'wavelengths inaccurate', # bad bc also means throughput probably compromised
+        'flux negligible',
         ],
     fail_flags = [
         'header targname = wave',
         'fluxes all zero',
         'fluxes all nan or non-finite',
+        'wavelengths inaccurate', # bad bc also means throughput probably compromised
     ],
 )
 
@@ -163,28 +167,23 @@ def _validate_hst_programs(obs_tbl: obt.ObsTable) -> None:
         _external_program_flag(obs_tbl["program"][i], archive_id=str(aid[i]))
 
 
-def _row_all_clear(obs_tbl: obt.ObsTable, i: int) -> bool:
-    us_col = obs_tbl["usability status"]
-    u_col = obs_tbl["usable"]
-    us_mask = np.asarray(getattr(us_col, "mask", np.zeros(len(obs_tbl), dtype=bool)), dtype=bool)
-    u_mask = np.asarray(getattr(u_col, "mask", np.zeros(len(obs_tbl), dtype=bool)), dtype=bool)
-    if us_mask[i]:
-        return False
-    status = us_col[i]
-    if status is None or _norm(status) != "all clear":
-        return False
-    if u_mask[i]:
-        return False
-    return bool(u_col[i])
+def _archival_pass_mask(obs_tbl: obt.ObsTable) -> np.ndarray:
+    """Boolean mask: True where ``custom_usability_mask`` passes (and ``usable`` if retained)."""
+    mask, _uncat = obs_tbl.custom_usability_mask(
+        external_data_usability,
+        action_on_unknown=CUSTOM_USABILITY_ACTION_ON_UNKNOWN,
+        retain_unusable_flags=True,
+    )
+    return np.asarray(mask, dtype=bool)
 
 
-def _classify_band(obs_tbl: obt.ObsTable, row_mask: np.ndarray) -> str | None:
+def _classify_band(row_mask: np.ndarray, archival_pass_mask: np.ndarray) -> str | None:
+    """pass / fail / None (no rows in ``row_mask``)."""
     idx = np.nonzero(row_mask)[0]
     if idx.size == 0:
         return None
-    for i in idx:
-        if _row_all_clear(obs_tbl, int(i)):
-            return "pass"
+    if np.any(row_mask & archival_pass_mask):
+        return "pass"
     return "fail"
 
 
@@ -305,7 +304,9 @@ def _row_exptime_seconds(obs_tbl: obt.ObsTable, i: int, data_dir: Path) -> float
     ks = obs_tbl["key science files"][i]
     archive_id = str(obs_tbl["archive id"].filled("?")[i])
     if ks is None or obt.ObsTable._is_null_like(ks):
-        raise ValueError(f"all-clear row archive_id={archive_id!r} has no key science files for exptime")
+        raise ValueError(
+            f"archive_id={archive_id!r} passes custom usability but has no key science files for exptime"
+        )
     names = list(ks) if not isinstance(ks, str) else [ks]
     tot = 0.0
     for name in names:
@@ -320,10 +321,11 @@ def _row_exptime_seconds(obs_tbl: obt.ObsTable, i: int, data_dir: Path) -> float
     return tot
 
 
-def _total_exptime_all_clear_for_markers(
+def _total_exptime_archival_pass_for_markers(
     obs_tbl: obt.ObsTable,
     data_dir: Path,
     markers: tuple[str, ...],
+    archival_pass_mask: np.ndarray,
 ) -> float:
     if not markers:
         return 0.0
@@ -333,7 +335,7 @@ def _total_exptime_all_clear_for_markers(
     for i in range(len(obs_tbl)):
         if np.char.lower(str(obsv[i])) != "hst":
             continue
-        if not _row_all_clear(obs_tbl, i):
+        if not archival_pass_mask[i]:
             continue
         c = cfg_col[i].lower()
         if not any(m in c for m in markers):
@@ -347,6 +349,7 @@ def _should_downgrade_pass_to_lowsnr(
     obs_tbl: obt.ObsTable | None,
     data_dir: Path,
     band: str,
+    archival_pass_mask: np.ndarray,
 ) -> bool:
     if obs_tbl is None or len(obs_tbl) == 0 or not line_tbl_path.is_file():
         return False
@@ -357,7 +360,7 @@ def _should_downgrade_pass_to_lowsnr(
     markers = _markers_for_band_from_configs(configs, band)
     if not markers:
         return False
-    texp = _total_exptime_all_clear_for_markers(obs_tbl, data_dir, markers)
+    texp = _total_exptime_archival_pass_for_markers(obs_tbl, data_dir, markers, archival_pass_mask)
     return texp < LOW_SNR_EXPTIME_THRESHOLD_S
 
 
@@ -367,10 +370,11 @@ def _apply_pass_vs_lowsnr(
     obs_tbl: obt.ObsTable | None,
     data_dir: Path,
     band: str,
+    archival_pass_mask: np.ndarray,
 ) -> str | None:
     if band_result != "pass":
         return band_result
-    if _should_downgrade_pass_to_lowsnr(line_tbl_path, obs_tbl, data_dir, band):
+    if _should_downgrade_pass_to_lowsnr(line_tbl_path, obs_tbl, data_dir, band, archival_pass_mask):
         return "lowsnr"
     return "pass"
 
@@ -470,13 +474,18 @@ for hostfile in sorted(targets):
         has_ext_lya = False
         has_ext_fuv = False
     else:
-        ext, lya_m, fuv_m = _band_masks(obs_tbl)
+        _ext, lya_m, fuv_m = _band_masks(obs_tbl)
+        archival_pass_mask = _archival_pass_mask(obs_tbl)
         has_ext_lya = bool(np.any(lya_m))
         has_ext_fuv = bool(np.any(fuv_m))
-        lya_raw = _classify_band(obs_tbl, lya_m)
-        fuv_raw = _classify_band(obs_tbl, fuv_m)
-        lya_obs = _apply_pass_vs_lowsnr(lya_raw, line_tbl_path, obs_tbl, data_dir, "lya")
-        fuv_obs = _apply_pass_vs_lowsnr(fuv_raw, line_tbl_path, obs_tbl, data_dir, "fuv")
+        lya_raw = _classify_band(lya_m, archival_pass_mask)
+        fuv_raw = _classify_band(fuv_m, archival_pass_mask)
+        lya_obs = _apply_pass_vs_lowsnr(
+            lya_raw, line_tbl_path, obs_tbl, data_dir, "lya", archival_pass_mask
+        )
+        fuv_obs = _apply_pass_vs_lowsnr(
+            fuv_raw, line_tbl_path, obs_tbl, data_dir, "fuv", archival_pass_mask
+        )
 
     lya_out = _merge_column(lya_obs, old.get("lya", "none"), col="lya", tic=tic)
     fuv_out = _merge_column(fuv_obs, old.get("fuv", "none"), col="fuv", tic=tic)
