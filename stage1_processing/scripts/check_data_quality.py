@@ -45,6 +45,11 @@ human_review_spec = 'no' # use one of yes, no, issues
 targets = target_lists.last_data_review_before('2026-04-01')
 clear_usability = True
 clear_other = ['flags', 'usability status', 'notes']
+preserve_notes = (
+    'no acquisition found',
+    'identified target in acquisition image',
+    'deemed target absent in acquisition image',
+)
 batch_mode = True
 care_level = 1 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
 
@@ -144,12 +149,18 @@ while True:
     obs_tbl = obt.ObsTable.load_from_targname(target)
 
     if clear_usability:
-        # keep missing acq flags bc they're a pain to search for, though I think only lhs1140 has these
-        missing_acq_mask, missing_acq_notes = obs_tbl.substring_match_mask('notes', 'no acquisition found', return_matches=True)
+        preserved_notes_per_row = [[] for _ in range(len(obs_tbl))]
+        for i in range(len(obs_tbl)):
+            for note in obt.ObsTable._iter_nonnull_cell_items(obs_tbl['notes'][i]):
+                text = note if isinstance(note, str) else str(note)
+                if any(sub in text for sub in preserve_notes):
+                    preserved_notes_per_row[i].append(text)
         obs_tbl = obs_tbl.clear_usability_values(other_columns_to_clear=clear_other)
-        if np.any(missing_acq_mask):
-            print(f'Adding back missing acquisition notes for {target}.')
-            for note, i in zip(missing_acq_notes, np.nonzero(missing_acq_mask)[0]):
+        n_preserved = sum(len(notes) for notes in preserved_notes_per_row)
+        if n_preserved:
+            print(f'Restored {n_preserved} preserved note(s) for {target} after usability clear.')
+        for i, notes in enumerate(preserved_notes_per_row):
+            for note in notes:
                 obs_tbl.add_note(i, note)
 
     print(f'\n{target} observation table:\n')
