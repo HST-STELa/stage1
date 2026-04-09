@@ -48,7 +48,8 @@ toggle_mid_cycle_update = True
 hand_add_visits = []
 
 # can use this for targets that should no longer make rank for stage 1 and that are not flight ready, not Lya bright, and without archival lya transit
-hand_remove_visits = 'BT BU BV BW BX BY BZ CA CB CC OT OU OV OW OY OZ PA PB PC'.split()
+# hand_remove_visits = 'BT BU BV BW BX BY BZ CA CB CC OT OU OV OW OY OZ PA PB PC'.split()
+hand_remove_visits = []
 
 # adds this many orbits-worth of backup targets if desired so you can get ahead on vetting them
 backup_orbits = 0
@@ -1504,28 +1505,6 @@ if toggle_checkpoint_saves:
 if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7__cut-low-snr__add-flags-scores.ecsv')
 
-#%% PRUNE to TTRB-approved targets
-
-allowed = table.Table.read(paths.locked / 'ttrb approved.targets', format='ascii.csv', data_start=5, header_start=4)
-allowed_hst_names = allowed['# Name in the Proposal']
-allowed_hst_names = [n for n in allowed_hst_names if '-OFFSET' not in n]
-allowed_tics = dbutils.stela_name_tbl.loc['hostname_hst', allowed_hst_names]['tic_id']
-allowed_match = np.isin(allowed_tics, cat['tic_id'])
-print(f'{sum(~allowed_match)} TTRB-allowed targets are not in the catalog.')
-catutils.set_index(cat, 'tic_id')
-cat = cat.loc[allowed_tics[allowed_match]]
-
-#%% checkpoint
-
-if toggle_checkpoint_saves:
-    cat.write(paths.selection_intermediates / 'chkpt7-1__allowed_targets_only.ecsv', overwrite=True)
-
-
-#%% load checkpoint
-
-if toggle_checkpoint_saves:
-    cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt7-1__allowed_targets_only.ecsv')
-
 
 #%% make sure already-observed targets are selectable
 
@@ -1554,65 +1533,30 @@ else:
     # this is a mid-cycle update, in which case we need to track what visits have already been cemented
     # and what lemons have been identified
     latest_status_path = dbutils.pathname_max(paths.status_input, 'HST-17804-visit-status*.xml')
-    label_parser = visit_status_xml_parser.parse_visit_labels_from_xml_status
-    labels_in_phase2 = label_parser(latest_status_path)
-
-    # eliminate redo orbits for failed observations
-    # these can be identified by the fact that they start with a number
-    labels_in_phase2 = [lbl for lbl in labels_in_phase2 if lbl[0] in string.ascii_uppercase]
-
-    # add and remove according to hand-picked stuff
-    labels_in_phase2.extend(hand_add_visits)
-    [labels_in_phase2.remove(_lbl) for _lbl in hand_remove_visits]
+    status_tbl = visit_status_xml_parser.load_visit_status_xml_as_table(latest_status_path)
+    nonrefundable_status_substrings = ('Archived', 'Flight Ready', 'Scheduled')
+    nonrefundable_mask = [any(ss in statusstr for ss in nonrefundable_status_substrings)
+                          for statusstr in status_tbl['status'].tolist()]
+    nonrefundable_mask = np.array(nonrefundable_mask)
+    nonrefundable_mask &= np.array([not s.isdigit() for s in status_tbl['visit']])
+    status_tbl['nonrefundable'] = nonrefundable_mask
+    status_tbl['tic_id'] =  dbutils.stela_name_tbl.loc['hostname_hst', status_tbl['target']]['tic_id']
+    status_tbl['counted'] = False # add a column for accounting
+    status_tbl['category'] = ['lya' if lbl[0] <= 'M' else 'fuv' for lbl in status_tbl['visit']]
+    status_tbl['locator'] = np.char.add(status_tbl['tic_id'].astype(str), status_tbl['category'])
+    status_tbl.add_index('locator')
+    nonrfndbl_visit_tbl = status_tbl[np.array(nonrefundable_mask)]
+    available_planned = sum(nonrefundable_mask)
+    available_free = allocated_orbits - available_planned
 
     # load the hand updated observing status sheet to ID lemons
     path_main_table = dbutils.pathname_max(paths.status_input, 'Observation Progress*.xlsx')
     progress_tbl = catutils.read_excel(path_main_table)
-    progress_tbl = progress_tbl[progress_tbl["Global\nRank"] < 200]
-    progress_tbl.add_index('Target')
-    drop = progress_tbl['Pass to\nStage 1b?'] == False
-    lemons = progress_tbl['Target'][drop]
-    stela_names = ref.stela_names.copy()
-    stela_names.add_index('hostname')
-    lemon_ids = stela_names.loc[lemons]['tic_id'] # get the tic ids since some names will have changed
-
-    # make sure every lemon has a match
-    assert np.all(np.in1d(lemon_ids, cat['tic_id']))
+    progress_tbl['lemon'] = progress_tbl['Pass to\nStage 1b?'] == False
+    progress_tbl.add_index('TIC ID')
 
     # load the visit label table
     labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
-
-    # list targets that are in the phase 2
-    lya_planned = np.in1d(labeltbl['base'], labels_in_phase2)
-    fuv_planned = np.in1d(labeltbl['pair'], labels_in_phase2)
-
-    # make a table for accounting
-    plantbl = table.Table(data=(labeltbl['target'].copy(), labeltbl['tic_id'].copy(), lya_planned, fuv_planned),
-                          names='name tic_id lya fuv'.split())
-    mask_inplan = lya_planned | fuv_planned
-    plantbl = plantbl[mask_inplan]
-    planned_targets = plantbl['name'].tolist()
-    plantbl.add_index('tic_id')
-
-    # count how many freed-up orbits there are that we can allocate
-    plantbl['lemon'] = False
-    lemons_in_plan = lemon_ids[np.in1d(lemon_ids, plantbl['tic_id'])]
-    ilmn = plantbl.loc_indices[lemons_in_plan]
-    plantbl['lemon'][ilmn] = True
-    available_planned = sum(plantbl['lya']) + sum(plantbl['fuv'] & ~plantbl['lemon'])
-    available_free = allocated_orbits - available_planned
-    absent_fuv_mask = plantbl['lemon'] & ~plantbl['fuv']
-    print('The fuv visits for these lemons were already absent in the Phase II:')
-    print('\t' + ', '.join(plantbl['name'][absent_fuv_mask].tolist()))
-
-    # add some columns for tracking as orbits are allocated
-    plantbl['lya_registered'] = False
-    plantbl['fuv_registered'] = False
-    plantbl['lemon'] = np.in1d(plantbl['name'], lemons)
-    catutils.scrub_indices(plantbl)
-    plantbl = plantbl['name lya lya_registered fuv fuv_registered lemon'.split()] # grouping columns for easy viewing
-    plantbl.add_index('name')
-
 
 """remember there are still targets we don't want to observe in the table for tracking purposes, 
 so better clean those before we start building a list
@@ -1626,16 +1570,15 @@ candidates.sort('score_host', reverse=True)
 
 # prep columns for which gratings will be used
 catutils.set_index(cat, 'tic_id')
-catutils.add_filled_masked_column(cat, 'stage1_g140m', nan, mask=True)
-catutils.add_filled_masked_column(cat, 'stage1_g140l', nan, mask=True)
-catutils.add_filled_masked_column(cat, 'stage1_e140m', nan, mask=True)
+for status in ('stage1', 'backup'):
+    for grating in ('g140m', 'g140l', 'e140m', 'g130m'):
+        catutils.add_filled_masked_column(cat, f'{status}_{grating}', nan, mask=True)
 
 available_backup = backup_orbits
 if backup_orbits:
     catutils.add_filled_masked_column(cat, 'stage1_backup', False, dtype=bool)
 
 cat['stage1_orbit_total'] = table.MaskedColumn(len(cat), mask=True, dtype=int)
-
 
 
 #%% add any new potential targets to STELa name table
@@ -1663,20 +1606,35 @@ if toggle_save_new_stela_names:
         reload(ref)
         reload(dbutils)
 
+#%% TTRB target list
 
-#%% build target list and allocate orbits, THIS IS WHERE THE MAGIC HAPPENS!
+allowed = table.Table.read(paths.locked / 'ttrb approved.targets', format='ascii.csv', data_start=5, header_start=4)
+allowed_hst_names = allowed['# Name in the Proposal']
+allowed_hst_names = [n for n in allowed_hst_names if '-OFFSET' not in n]
+allowed_tics = dbutils.stela_name_tbl.loc['hostname_hst', allowed_hst_names]['tic_id']
+cat['in_ttrb_list'] = np.isin(cat['tic_id'], allowed_tics)
+
+
+#%% build target list
 
 """allocate orbits target by target working down the ranks"""
-selected_tic_ids = []
+selected_tic_ids = set()
 observations_to_verify = []
 i = 0
 stela_orbit_count = 0
+bands = ('lya', 'fuv')
+grating_map = {
+    'lya': {True:'g140m', False:'e140m'},
+    'fuv': {True:'g140l', False:'g130m'}
+}
 while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
+
     if i >= len(candidates):
         raise ValueError('Reached the end of the candidate list without allocating all orbits. '
                          'Running the next cell will likely reveal what happened based on discrepancies.')
 
     print(f"\rTarget: {i+1}/{len(candidates)}", end="", flush=True)
+
     # find the indices of planets associated with the target host and whether any are already in stage 1
     # fom an earlier iteration of this loop
     host = candidates[i]
@@ -1684,15 +1642,23 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
     tic_id_ = host['tic_id']
     j = cat.loc_indices[tic_id_]
     j = np.atleast_1d(j)
+
+    # use this mask to only update decision for planets still under consideration
     in_stage1 = (cat['stage1'][j].filled(False) == True)
+    up_for_selection = j[in_stage1]
+    up_for_reconsideration = j[~in_stage1]
 
-    # get key info about external observations and if e140m is needed
-    valid_external_lya_obs = host['external_lya_status'] in ['planned', 'valid', 'unverified']
-    valid_external_fuv_obs = host['external_fuv_status'] in ['planned', 'valid', 'unverified']
-    lya_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'lya')
-    fuv_requires_e140m = apt.does_mdwarf_isr_require_e140m(name, 'fuv')
+    # determine whether external observations satisfy
+    valid_external_obs = {
+        band:host[f'external_{band}_status'] in ['planned', 'valid', 'unverified'] for band in bands
+    }
+    if all(valid_external_obs.values()):
+        cat['stage1'][up_for_selection] = False
+        cat['decision'][up_for_selection] = 'Rejected because observations already exist.'
+        i += 1
+        continue
 
-    # if target would have been included but for having been already observed,
+    # if target would have been included but for having been already observed by external program,
     # mark so those observations can be verified later
     if available_free > 0:
         for band in ('lya', 'fuv'):
@@ -1700,130 +1666,97 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
                 observations_to_verify.append(f'{name} {band}')
 
     # allocate orbits
-    g140m, g140l, e140m = 0, 0, 0
-    if not valid_external_lya_obs:
-        if lya_requires_e140m:
-            e140m = 1
-        else:
-            g140m = 1
-    if not valid_external_fuv_obs:
-        if name not in lemons:
-            if fuv_requires_e140m:
-                e140m = 1
+    tallied_obs = 0
+    selected_either_band = False
+    backup_either_band = False
+    lemon = tic_id_ in progress_tbl['TIC ID'] and progress_tbl.loc[tic_id_]['lemon']
+    for band in ('lya', 'fuv'):
+        isr_pass = apt.does_mdwarf_pass_isr(name, band) # get flare isr determination
+
+        loc = f'{tic_id_}{band}'
+        nonrefundable = loc in nonrfndbl_visit_tbl['locator']
+
+        tally = False
+        backup = None
+        grating = grating_map[band][isr_pass]
+        if nonrefundable:
+            tally, backup = True, False
+            available_planned -= 1
+            nonrfndbl_visit_tbl.loc['locator', loc]['counted'] = True
+        elif not valid_external_obs[band]:
+            if band == 'fuv' and lemon:
+                pass
             else:
-                g140l = 1
-    assert not (g140m and e140m and g140l)
+                if available_free > 0:
+                    tally, backup = True, False
+                    available_free -= 1
+                if available_backup > 0:
+                    tally, backup = True, True
 
-    # counting...
-    stela_orbits = g140m + g140l + e140m
-
-    # classify the target as externally observed, already in plan, new addition, or backup
-    if stela_orbits == 0:
-        status = 'external'
-    elif name in planned_targets:
-        iplan = plantbl.loc_indices[name]
-        planned = plantbl[iplan]
-
-        # record for accounting
-        register_lya, register_fuv = False, False
-        if not e140m:
-            register_lya = g140m
-            register_fuv = g140l
-        else:
-            # if e140m is the only mode used, things get tricky bc we messed up some labels in the plan
-            if g140m and g140l:
-                raise ValueError('Trying to use all three modes for planned target.')
-            elif not (g140m or g140l):
-                if planned['lya'] and planned['fuv']:
-                    raise ValueError('Code wants to allocate a single lya or fuv orbit but two are already planned.')
-                else:
-                    # match the "registered" column to whether we labeled the E140M visit as lya or fuv
-                    register_lya = planned['lya']
-                    register_fuv = planned['fuv']
-            elif g140m:
-                register_lya = True
-                register_fuv = True
-            elif g140l:
-                raise ValueError("E140M used for Lya then G140L for FUV, which shouldn't happen")
+        if tally:
+            tallied_obs += 1
+            category = 'backup' if backup else 'stage1'
+            cat[f'{category}_{grating}'][j] = 1
+            if not backup:
+                selected_either_band = True
+                cat['stage1'][j] = True
+                selected_tic_ids |= {tic_id_}
             else:
-                raise ValueError("how did we get here? I thought all options were accounted for")
+                backup_either_band = True
+                cat['stage1_backup'][j] = True
 
-        plantbl['lya_registered'][iplan] = register_lya
-        plantbl['fuv_registered'][iplan] = register_fuv
-
-        plan_cost = register_lya + register_fuv
-        free_cost = stela_orbits - plan_cost
-        if plan_cost > available_planned:
-            raise ValueError('Trying to allocate more planned orbits than expected.')
-        status = 'planned'
-        available_planned -= plan_cost
-        available_free -= free_cost
-
-    else:
-        if available_free > 0:
-            status = 'addition'
-            available_free -= stela_orbits
-        elif available_backup > 0:
-            status = 'backup'
-            available_backup -= stela_orbits
-        else:
-            i += 1
-            continue
-
-    if status == 'external':
-        remove = j[in_stage1]
-        cat['stage1'][remove] = False
-        cat['decision'][remove] = 'Rejected because observations already exist.'
-    elif status in ['planned', 'addition']:
-        stela_orbit_count += stela_orbits
-
-        # mark orbits for host, mark in stage 1
-        selected_tic_ids.append(tic_id_)
-        cat['stage1_g140m'][j] = g140m
-        cat['stage1_g140l'][j] = g140l
-        cat['stage1_e140m'][j] = e140m
-        cat['stage1'][j] = True
-        cat['stage1_orbit_total'][j] = stela_orbit_count
-
+    # update main catalog
+    stela_orbit_count += tallied_obs
+    cat['stage1_orbit_total'][j] = stela_orbit_count
+    if selected_either_band:
         # mark host and best planet as selected
-        select = j[in_stage1]
-        cat['decision'][select] = 'Host selected.'
+        cat['decision'][up_for_selection] = 'Host selected.'
 
         # mark planets in same system that were previously rejected, if any, as now included
-        reintroduce = j[~in_stage1]
         prefix = 'Host ultimately selected. Planet previously '
-        readd_decisions = [prefix + decision for decision in cat['decision'][reintroduce]]
-        cat['decision'][reintroduce] = readd_decisions
-    elif status == 'backup':
-        cat['stage1_backup'][j] = True
-        k = j[in_stage1]
+        readd_decisions = [prefix + decision for decision in cat['decision'][up_for_reconsideration]]
+        cat['decision'][up_for_reconsideration] = readd_decisions
+    elif backup_either_band:
+        k = j[up_for_selection]
         cat['decision'][k] = 'Reserved as backup target.'
-    else:
-        raise ValueError('status variable has unexpected value')
+
     i += 1
 
 print('\n\n')
 
+
 #%% check for discrepancies
+
 if toggle_mid_cycle_update:
-    # first col indicates if it is currently in our APT file
-    # second col indicates if the orbit was assinged in the target selection process
-    discrepant = ((plantbl['lya'] ^ plantbl['lya_registered'])  # ^ is the xor operator (returns true if the two differ)
-                  | (plantbl['fuv'] & ~plantbl['fuv_registered'] & ~plantbl['lemon'])
-                  | (~plantbl['fuv'] & plantbl['fuv_registered'] & plantbl['lemon']))
-    if np.any(discrepant):
-        print('Disrepancies present! Resolve these.')
+    nr_tics = nonrfndbl_visit_tbl['tic_id']
+    nr_lemons = progress_tbl.loc[nr_tics]['lemon'] & (nonrfndbl_visit_tbl['category'] == 'fuv')
+    assert sum(nr_lemons) == 0 # no lemons should be nonrefundable bc we wait to release them
+
+    uncounted = nonrfndbl_visit_tbl['counted'] == False
+    if np.any(uncounted):
+        print("Some nonrefundable visits weren't tallied. Inestigate.")
         print('')
-        plantbl[discrepant].pprint(-1, -1)
+        nonrfndbl_visit_tbl[uncounted].pprint(-1, -1)
+
 
 
 #%% flag selections
 
 cut_mask = np.ones(len(cat), bool)
+selected_tic_ids = list(selected_tic_ids)
 i_keep = cat.loc_indices[selected_tic_ids]
 cut_mask[i_keep] = False
 cut_comment = 'Cut because predicted SNR ranked too low.'
 catutils.flag_cut(cat, cut_mask, cut_comment)
+
+
+#%% examine non ttrb targets in list
+
+viewmask = cat['stage1'].filled(False) & ~cat['in_ttrb_list']
+viewcols = ['hostname', 'stage1_rank']
+temp = cat[viewcols][viewmask]
+temp.sort('stage1_rank')
+temp.pprint(-1,-1)
 
 
 #%% checkpoint

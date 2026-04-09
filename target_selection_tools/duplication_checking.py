@@ -88,7 +88,7 @@ def identify_lya_observations(hst_observations):
                  & (((1215 > wave - 150) & (1215 < wave - 7))
                     | ((1215 > wave + 7) & (1215 < wave + 150))))
 
-    lya_mask = e140m_lya | g140m_lya | g130m_lya
+    lya_mask = e140m_lya | g140m_lya
     return lya_mask, e140m_lya, g140m_lya, g130m_lya
 
 

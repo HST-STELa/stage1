@@ -396,6 +396,21 @@ def does_mdwarf_isr_require_e140m(name, type='lya'):
     return result
 
 
+def does_mdwarf_pass_isr(name, type='lya'):
+    result = True
+    intended_grating = 'G140M' if type == 'lya' else 'G140L'
+
+    # deal with name changes
+    if name in ref.mdwarf_isr['Current Exo Archive Name']:
+        name = ref.mdwarf_isr.loc['Current Exo Archive Name', name]['Target']
+
+    if name in ref.mdwarf_isr['Target']:
+        isr_config = ref.mdwarf_isr.loc[name][f'SCIENCE SETUP {type.upper()}']
+        if not np.ma.is_masked(isr_config) and intended_grating not in isr_config.upper():
+            result = False
+    return result
+
+
 def count_rate_estimates(catalog, grating='g140m'):
     assert not np.any(catalog['st_teff'].mask)
     etc = find_nearest_etc_rows(catalog['st_teff'].filled(nan), grating)
