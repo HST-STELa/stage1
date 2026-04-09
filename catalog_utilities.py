@@ -161,8 +161,8 @@ def add_masked_row(catalog):
 
 
 def add_filled_masked_column(catalog, colname, fill_value, **kws):
-    catalog[colname] = table.MaskedColumn(length=len(catalog), **kws)
-    catalog[colname] = fill_value
+    n = len(catalog)
+    catalog[colname] = table.MaskedColumn(length=len(catalog), data=[fill_value]*n, **kws)
 
 
 def add_masked_columns(catalog, basename, dtype, suffixes=('', 'err1', 'err2', 'lim'), **kws):

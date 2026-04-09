@@ -193,3 +193,5 @@ target base pair batch base_redo pair_redo tic_id
 """TOI-5799""" CA PA 8 "" "" 328081248
 """TOI-7309""" CB PB 8 "" "" 161687285
 """TOI-7182""" CC PC 9 "" "" 408469564
+"""TOI-4529""" CD PD 10 "" "" 384888319
+"""WASP-8""" CE PE 10 "" "" 183532609

@@ -1,0 +1,29 @@
+list name: observed_transit
+list description: systems with planets where Lya transit has already been observed, automatically identified using the target_selection_tools/log_archival_transits.refresh_observed_transit_list function
+55 Cnc
+AU Mic
+DS Tuc A
+GJ 1132
+GJ 1214
+GJ 3470
+GJ 436
+GJ 9827
+HAT-P-11
+HD 136352
+HD 189733
+HD 209458
+HD 3167
+HD 39091
+HD 63433
+HD 73583
+HD 97658
+K2-25
+Kepler-444
+LTT 1445 A
+TOI-2076
+TOI-270
+TOI-776
+TRAPPIST-1
+WASP-29
+WASP-69
+WASP-80

@@ -61,9 +61,12 @@ toggle_save_galex = True
 toggle_save_difftbl = True
 toggle_save_new_stela_names = True # necessary to avoid errors if, e.g., new hosts have shown up in exoplanet archvive
 toggle_save_visit_labels = True
+toggle_save_transit_list = True
 
 toggle_redo_all_galex = False # only needed if galex search methodology modified
 toggle_remake_filtered_hst_archive = True  # needed if it has been a while since the last remake
+toggle_refresh_archival_transit_list = True
+archival_transit_blacklist = ['GJ 3929', 'GJ 486', 'L 98-59']
 
 diff_label = 'target-backfill-2025-09'
 toggle_checkpoint_saves = True
@@ -755,6 +758,28 @@ to be sure that the lya and FUV observations did not fail"""
 
 dc.flag_duplicates(cat, hst_filtered)
 dc.merge_verified(cat, verified)
+
+
+#%% mark external lya transits
+
+if toggle_refresh_archival_transit_list:
+    from target_selection_tools import log_archival_transits as lat
+    check_mask = cat['external_lya'].filled(False)
+    check_tics = cat['tic_id'][check_mask].filled(0)
+    check_names = sorted(list(set(dbutils.stela_name_tbl.loc['tic_id', check_tics]['hostname'])))
+    names_w_transits = lat.refresh_observed_transit_list(target_hostnames=check_names)
+
+    names_w_transits = set(names_w_transits)
+    names_w_transits -= set(archival_transit_blacklist)
+    names_w_tranits = sorted(list(names_w_transits))
+
+    if toggle_save_transit_list:
+        lat.write_observed_transit_list_file(names_w_transits)
+
+    catutils.set_index(cat, 'hostname')
+    i_w_transit = cat.loc_indices['hostname', names_w_transits]
+    cat['requested_observed_transit'] = 0
+    cat['requested_observed_transit'][i_w_transit] = 1
 
 
 #%% checkpoint

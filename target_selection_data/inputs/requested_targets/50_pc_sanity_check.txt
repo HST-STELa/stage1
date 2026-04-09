@@ -1,0 +1,33 @@
+list name: sanity50pc
+list description: Targets Shreyas identified within 50 pc that seem like they should be in our sample but aren't from Aug 20 and 26 2024 discord/phase-iis messages.
+GJ 3090
+TOI-3884
+TOI-674
+TOI-4438
+TOI-544
+TOI-1224
+TOI-2015
+TOI-5082
+HD 73344
+TOI-139
+LP 791-18
+HD 23472
+HD 25463
+TOI-4336
+TOI-406
+TOI-2096
+TOI-2427
+GJ 238
+Kepler-42
+TOI-2120
+TOI-1807
+G 143-29
+GJ 1252
+K2-116
+GJ 806
+TOI-715
+TOI-1450
+TOI-1680
+TOI-237
+TOI-500
+TOI-771

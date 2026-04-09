@@ -66,7 +66,7 @@ toggle_save_visit_labels = True
 toggle_redo_all_galex = False # only needed if galex search methodology modified
 toggle_remake_filtered_hst_archive = False  # as of 2026-04-08, last update was 12-01-2025 and I've remade since then
 
-diff_label = 'target-backfill-2026-04'
+diff_label = 'target-backfill-unrestricted-2026-04'
 toggle_checkpoint_saves = True
 toggle_target_removal_test = False # removes targets to see if sort order changes as a test for bugs
 assumed_transit_range = [-100, 50] # based on typical ranges from actual transit observations
@@ -381,7 +381,8 @@ for tic_id_ in tic_ids_in_cat:
         cat_hostname, = set(cat_hostnames)
     else:
         cat_hostname = cat_hostnames
-    unique_tois.loc[tic_id_]['hostname'] = cat_hostname
+    _i = unique_tois.loc_indices[tic_id_]
+    unique_tois['hostname'][_i] = cat_hostname
 toi_names = np.char.add('TOI-', unique_tois['toipfx'].astype(str))
 unique_tois['hostname'][~in_cat] = toi_names[~in_cat]
 assert not np.any(unique_tois['hostname'].mask)
@@ -424,6 +425,8 @@ alltargets = []
 def concatenate(targets):
     alltargets.extend(targets.tolist())
 _ = catutils.requested_target_lists_loop(concatenate)
+badname_map = {'DS Tuc A': 'V* DS Tuc A'}
+alltargets = [badname_map.get(n, n) for n in alltargets]
 extra_cols = 'ids rvz_radvel plx_value'.split()
 simbad = query.get_simbad_from_names(alltargets, extra_cols=extra_cols)
 # it seems like you should be able to add "measurements" to the query, but this returns an error
@@ -1566,7 +1569,11 @@ candidates = cat[cat['stage1'].filled(False)
 
 # get just the hosts since we're not observing planets in stage 1
 candidates = catutils.planets2hosts(candidates)
-candidates.sort('score_host', reverse=True)
+
+# sort those with existing transit observations to the top to be sure they are considered for an fuv visit
+# before all orbits are allocated
+candidates['has_transit'] = candidates['requested_observed_transit'].filled(0) > 0
+candidates.sort(('has_transit', 'score_host'), reverse=True)
 
 # prep columns for which gratings will be used
 catutils.set_index(cat, 'tic_id')
@@ -1627,6 +1634,11 @@ grating_map = {
     'lya': {True:'g140m', False:'e140m'},
     'fuv': {True:'g140l', False:'g130m'}
 }
+
+# NOTE systems with existing observed transit sorted to top earlier to ensure they get considered first for
+# an fuv visit to homogenize the STELa + archival transit survey
+
+# now go through the ranked list
 while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
 
     if i >= len(candidates):
@@ -1698,6 +1710,8 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
             category = 'backup' if backup else 'stage1'
             cat[f'{category}_{grating}'][j] = 1
             if not backup:
+                if loc in status_tbl['locator']:
+                    status_tbl.loc['locator', loc]['counted'] = True
                 selected_either_band = True
                 cat['stage1'][j] = True
                 selected_tic_ids |= {tic_id_}
@@ -1906,31 +1920,6 @@ if toggle_save_outputs:
 
 
 
-#%% add any new potential targets to STELa name table
-
-if toggle_save_new_stela_names:
-    nametbl = ref.stela_names.copy()
-    not_in_namtbl_mask = ~np.in1d(roster['tic_id'], nametbl['tic_id'])
-    newtargrows = roster[not_in_namtbl_mask]
-    newtargrows = catutils.planets2hosts(newtargrows)
-    for targrow in newtargrows:
-        hostname = targrow['hostname']
-        hstname, = dbutils.target_names_stela2hst([hostname])
-        filename, = dbutils.target_names_stela2file([hostname])
-        namerow = dict(tic_id=targrow['tic_id'],
-                       hostname=hostname,
-                       hostname_hst=hstname,
-                       hostname_file=filename)
-        assert set(namerow.keys()) == set(nametbl.colnames)
-        nametbl.add_row(namerow)
-    nametbl.write(paths.stela_name_tbl, format='ascii.csv', overwrite=True)
-
-    # need to reload some things so the name table used by helper functions gets updated
-    from importlib import reload
-    reload(ref)
-    reload(dbutils)
-
-
 #%% APT info
 
 targets = catutils.planets2hosts(roster)
@@ -2017,9 +2006,13 @@ available."""
 if toggle_save_outputs:
     Ms = apt_info['Mdwarf']
     Mnames = apt_info['name'][Ms]
-    not_in_isr = ~np.in1d(Mnames, ref.mdwarf_isr['Current Exo Archive Name'])
-    Ms_to_add = Mnames[not_in_isr]
-    np.savetxt(paths.selection_outputs / 'Mdwarfs_to_add_to_ISR_table.txt', Ms_to_add, fmt='%s')
+    Mtics = apt_info['tic_id'][Ms]
+    catutils.set_index(selected_hosts, 'tic_id')
+    catMnames = selected_hosts.loc[Mtics]['hostname']
+    not_in_isr = ~np.in1d(catMnames, ref.mdwarf_isr['Current Exo Archive Name'])
+    Ms_to_add = sorted(zip(Mnames[not_in_isr], catMnames[not_in_isr]))
+    np.savetxt(paths.selection_outputs / 'Mdwarfs_to_add_to_ISR_table.txt',
+               Ms_to_add, fmt='%s', delimiter=',', header='stela_name,exocat_name')
 
 
 #%% visit labels for APT

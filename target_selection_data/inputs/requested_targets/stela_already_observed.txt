@@ -1,0 +1,3 @@
+list name: stela_already_observed
+list description: Targets STELa already observed and so should not be cut. Didn't put them all in because some didn't match in SIMBAD.
+TOI-5388
