@@ -1621,8 +1621,7 @@ allowed_hst_names = [n for n in allowed_hst_names if '-OFFSET' not in n]
 allowed_tics = dbutils.stela_name_tbl.loc['hostname_hst', allowed_hst_names]['tic_id']
 cat['in_ttrb_list'] = np.isin(cat['tic_id'], allowed_tics)
 
-
-#%% build target list
+#%% BUILD TARGET LIST
 
 """allocate orbits target by target working down the ranks"""
 selected_tic_ids = set()
@@ -1711,7 +1710,8 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
             cat[f'{category}_{grating}'][j] = 1
             if not backup:
                 if loc in status_tbl['locator']:
-                    status_tbl.loc['locator', loc]['counted'] = True
+                    _iloc = status_tbl.loc_indices['locator', loc]
+                    status_tbl['counted'][_iloc] = True
                 selected_either_band = True
                 cat['stage1'][j] = True
                 selected_tic_ids |= {tic_id_}
@@ -1926,7 +1926,7 @@ targets = catutils.planets2hosts(roster)
 n = len(targets)
 
 guaranteed = targets['stage1'].filled(False) == True
-n_orbits_check = sum(targets[f'stage1_{grating}'][guaranteed].sum() for grating in 'g140m g140l e140m'.split())
+n_orbits_check = sum(targets[f'stage1_{grating}'][guaranteed].sum() for grating in 'g140m g140l e140m g130m'.split())
 assert n_orbits_check in [allocated_orbits, allocated_orbits + 1]
 assert n_orbits_check == selected['stage1_orbit_total'].max()
 
@@ -1937,6 +1937,7 @@ apt_info = apt_info[['name', 'tic_id', 'stage1_rank']]
 apt_info['GM'] = targets['stage1_g140m']
 apt_info['GL'] = targets['stage1_g140l']
 apt_info['EM'] = targets['stage1_e140m']
+apt_info['CM'] = targets['stage1_g130m']
 
 no_simbad_match = targets['simbad_id'].mask
 n_no_simbad = sum(no_simbad_match)
@@ -2066,15 +2067,19 @@ if toggle_save_visit_labels:
     labeltbl.write(paths.locked / 'target_visit_labels.ecsv', overwrite=True)
 
 
+#%% print list of visits to remove from apt (lemons or don't make rank)
+
+redo_mask = np.array([s.isdigit() for s in status_tbl['visit']])
+remove_from_apt_mask = ~status_tbl['counted'] & ~redo_mask
+status_tbl[['target', 'visit', 'status']][remove_from_apt_mask].pprint(-1,-1)
+
+
 #%% print information on visits not currently in the APT to add
 
-e140m_not_in_apt = ((apt_info['EM'].filled(0) == 1) &
-                    ~(np.in1d(apt_info['lbl1'], labels_in_phase2) |
-                      np.in1d(apt_info['lbl2'], labels_in_phase2)))
-g140m_not_in_apt = (apt_info['GM'].filled(0) == 1) & ~np.in1d(apt_info['lbl1'], labels_in_phase2)
-g140l_not_in_apt = (apt_info['GL'].filled(0) == 1) & ~np.in1d(apt_info['lbl2'], labels_in_phase2)
-to_add_apt = e140m_not_in_apt | g140m_not_in_apt | g140l_not_in_apt
-
+to_add_apt = (
+    ~np.isin(apt_info['lbl1'], status_tbl['visit']) |
+    ~np.isin(apt_info['lbl2'], status_tbl['visit'])
+)
 apt_info[to_add_apt].pprint(-1,-1)
 
 #%% examples for printing apt info
