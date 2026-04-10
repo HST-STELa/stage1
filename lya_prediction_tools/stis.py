@@ -62,6 +62,7 @@ def simple_sim_g140m_obs(f, expt, etc_run_date='2021-09-28'):
 
 default_etc_filenames = dict(
     g140m = {
+        '52x2': 'etc.hst-stis-g140m.2026-04-10.2309656.exptime900_flux1e-13_aperture52x2.0.csv',
         '52x0.5': 'etc.hst-stis-g140m.2025-08-05.2025103.exptime900_flux1e-13_aperture52x0.5.csv',
         '52x0.2': 'etc.hst-stis-g140m.2025-08-05.2025093.exptime900_flux1e-13_aperture52x0.2.csv',
         '52x0.1': 'etc.hst-stis-g140m.2025-08-05.2025102.exptime900_flux1e-13_aperture52x0.1.csv',
@@ -78,7 +79,7 @@ default_etc_filenames = dict(
 )
 
 proxy_lsf_apertures = dict(
-    g140m = {'52x0.05':'52x0.1'},
+    g140m = {'52x0.05':'52x0.1', '52x2':'52x0.2'},
     e140m = {'52x0.05':'0.2x0.06'},
     g140l = {}
 )
@@ -117,6 +118,7 @@ class Spectrograph(GenericSpectrograph):
             grating = hdr['opt_elem'].lower()
         if aperture == 'infer':
             aperture = hdr['aperture'].lower()
+            aperture = proxy_lsf_apertures[grating].get(aperture, aperture)
         wdata = x1d_hdu[1].data['wavelength'][order - 1]
 
         # interpolate etc data onto the wavelength grid of the x1d
