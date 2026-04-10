@@ -97,13 +97,25 @@ if toggle_checkpoint_saves:
 
 if toggle_refresh_archival_transit_list:
     from target_selection_tools import log_archival_transits as lat
+    from stage1_processing import observation_table as obt
+
+    # allow just about any data through for this intial "has transit" definition
+    # we should be more strict later when we consider reobserving actual transits
+    usbldef = obt.UsabilityDefinition() # this will let it all through
+    action_on_unknown_flagsnotes = 'ignore'
+
     check_mask = cat['external_lya'].filled(False)
     check_tics = cat['tic_id'][check_mask].filled(0)
     check_names = sorted(list(set(dbutils.stela_name_tbl.loc['tic_id', check_tics]['hostname'])))
-    names_w_transits = lat.refresh_observed_transit_list(target_hostnames=check_names)
+    names_w_transits = lat.refresh_observed_transit_list(
+        target_hostnames=check_names,
+        usability_definition=usbldef,
+        action_on_unknown=action_on_unknown_flagsnotes,
+    )
 
     names_w_transits = set(names_w_transits)
-    names_w_transits -= set(archival_transit_blacklist)
+    names_w_transits -= set(archival_transit_hand_remove)
+    names_w_transits |= set(archival_transit_hand_add)
     names_w_tranits = sorted(list(names_w_transits))
 
     if toggle_save_transit_list:
@@ -153,15 +165,15 @@ else:
     latest_status_path = dbutils.pathname_max(paths.status_input, 'HST-17804-visit-status*.xml')
     status_tbl = visit_status_xml_parser.load_visit_status_xml_as_table(latest_status_path)
     nonrefundable_status_substrings = ('Archived', 'Flight Ready', 'Scheduled')
-    nonrefundable_mask = [any(ss in statusstr for ss in nonrefundable_status_substrings)
-                          for statusstr in status_tbl['status'].tolist()]
-    nonrefundable_mask = np.array(nonrefundable_mask)
-    nonrefundable_mask &= np.array([not s.isdigit() for s in status_tbl['visit']])
-    status_tbl['nonrefundable'] = nonrefundable_mask
     status_tbl['tic_id'] =  dbutils.stela_name_tbl.loc['hostname_hst', status_tbl['target']]['tic_id']
     status_tbl['counted'] = False # add a column for accounting
-    status_tbl['category'] = ['lya' if lbl[0] <= 'M' else 'fuv' for lbl in status_tbl['visit']]
-    status_tbl['locator'] = np.char.add(status_tbl['tic_id'].astype(str), status_tbl['category'])
+    status_tbl['band'] = ['lya' if lbl[0] <= 'M' else 'fuv' for lbl in status_tbl['visit']]
+    status_tbl['redo'] = [s.isdigit() for s in status_tbl['visit']]
+    status_tbl['locator'] = np.char.add(status_tbl['tic_id'].astype(str), status_tbl['band'])
+    nonrefundable_mask = [any(ss in statusstr for ss in nonrefundable_status_substrings)
+                          for statusstr in status_tbl['status'].tolist()]
+    nonrefundable_mask = np.array(nonrefundable_mask) & ~status_tbl['redo']
+    status_tbl['nonrefundable'] = nonrefundable_mask
     status_tbl.add_index('locator')
     nonrfndbl_visit_tbl = status_tbl[np.array(nonrefundable_mask)]
     available_planned = sum(nonrefundable_mask)
@@ -193,8 +205,8 @@ candidates.sort(('has_transit', 'score_host'), reverse=True)
 # prep columns for which gratings will be used
 catutils.set_index(cat, 'tic_id')
 for status in ('stage1', 'backup'):
-    for grating in ('g140m', 'g140l', 'e140m', 'g130m'):
-        catutils.add_filled_masked_column(cat, f'{status}_{grating}', nan, mask=True)
+    for grating in ('g140m', 'g140l', 'e140m', 'g130m', 'lya', 'fuv'):
+        catutils.add_filled_masked_column(cat, f'{status}_{grating}', 0, mask=True, dtype=int)
 
 available_backup = backup_orbits
 if backup_orbits:
@@ -229,7 +241,7 @@ if toggle_save_new_stela_names:
         reload(dbutils)
 
 
-#%% build target list
+#%% BUILD TARGET LIST
 
 """allocate orbits target by target working down the ranks"""
 selected_tic_ids = set()
@@ -321,9 +333,11 @@ while (available_planned > 0) or (available_free > 0) or (available_backup > 0):
             tallied_obs += 1
             category = 'backup' if backup else 'stage1'
             cat[f'{category}_{grating}'][j] = 1
+            cat[f'{category}_{band}'][j] = 1
             if not backup:
                 if loc in status_tbl['locator']:
-                    status_tbl.loc['locator', loc]['counted'] = True
+                    _iloc = status_tbl.loc_indices['locator', loc]
+                    status_tbl['counted'][_iloc] = True
                 selected_either_band = True
                 cat['stage1'][j] = True
                 selected_tic_ids |= {tic_id_}
@@ -355,7 +369,7 @@ print('\n\n')
 
 if toggle_mid_cycle_update:
     nr_tics = nonrfndbl_visit_tbl['tic_id']
-    nr_lemons = progress_tbl.loc[nr_tics]['lemon'] & (nonrfndbl_visit_tbl['category'] == 'fuv')
+    nr_lemons = progress_tbl.loc[nr_tics]['lemon'] & (nonrfndbl_visit_tbl['band'] == 'fuv')
     assert sum(nr_lemons) == 0 # no lemons should be nonrefundable bc we wait to release them
 
     uncounted = nonrfndbl_visit_tbl['counted'] == False
@@ -509,6 +523,9 @@ apt_info = apt_info[['name', 'tic_id', 'stage1_rank']]
 apt_info['GM'] = targets['stage1_g140m']
 apt_info['GL'] = targets['stage1_g140l']
 apt_info['EM'] = targets['stage1_e140m']
+apt_info['CM'] = targets['stage1_g130m']
+apt_info['lya'] = targets['stage1_lya']
+apt_info['fuv'] = targets['stage1_fuv']
 
 no_simbad_match = targets['simbad_id'].mask
 n_no_simbad = sum(no_simbad_match)
@@ -640,20 +657,68 @@ if toggle_save_visit_labels:
 
 #%% print list of visits to remove from apt (lemons or don't make rank)
 
+redo_mask = np.array([s.isdigit() for s in status_tbl['visit']])
+remove_from_apt_mask = ~status_tbl['counted'] & ~redo_mask
+status_tbl[['target', 'visit', 'status']][remove_from_apt_mask].pprint(-1,-1)
 
 
+#%% print passes to release
+
+progtbl_pass = progress_tbl['Pass to\nStage 1b?'] == True
+tics_to_pass = progress_tbl['TIC ID'][progtbl_pass]
+fuv_tbl = status_tbl[(status_tbl['band'] == 'fuv') & ~status_tbl['redo']]
+unreleased_mask = fuv_tbl['next'].mask
+pass_mask = np.isin(fuv_tbl['tic_id'], tics_to_pass)
+statlabels_to_pass = fuv_tbl['visit'][pass_mask & unreleased_mask]
+print(' '.join(statlabels_to_pass.tolist()))
 
 
 #%% print information on visits not currently in the APT to add
 
-e140m_not_in_apt = ((apt_info['EM'].filled(0) == 1) &
-                    ~(np.in1d(apt_info['lbl1'], labels_in_phase2) |
-                      np.in1d(apt_info['lbl2'], labels_in_phase2)))
-g140m_not_in_apt = (apt_info['GM'].filled(0) == 1) & ~np.in1d(apt_info['lbl1'], labels_in_phase2)
-g140l_not_in_apt = (apt_info['GL'].filled(0) == 1) & ~np.in1d(apt_info['lbl2'], labels_in_phase2)
-to_add_apt = e140m_not_in_apt | g140m_not_in_apt | g140l_not_in_apt
+# if your APT is out of sync with online visit status, update path below and use this block
+pro_export_path = '/Users/parke/Google Drive/Research/STELa/phase IIs/cycle 32/apt/STELa cycle 32 stage 1 submission 20 diagnostic.pro'
+lbls_in_apt = []
+with open(pro_export_path) as f:
+    lines = f.readlines()
+for l in lines:
+    result = re.findall(r'Visit: (..)', l)
+    if result:
+        lbls_in_apt.extend(result)
 
-apt_info[to_add_apt].pprint(-1,-1)
+# else use this
+# lbls_in_apt = status_tbl['visit']
+
+# add target numbers to help me find them
+allowed_names = dbutils.stela_name_tbl.loc['tic_id', allowed_tics]['hostname']
+allowed_names = allowed_names.tolist()
+target_no_apt = [allowed_names.index(n)+1 for n in apt_info['name']]
+apt_info['no'] = target_no_apt
+# _colorder = ['no'] + apt_info.colnames[:-1]
+# apt_info = apt_info[_colorder]
+
+add_lya = (
+    ~np.isin(apt_info['lbl1'].filled(''), lbls_in_apt) & # label not already in apt
+    (apt_info['lya'].filled(0) > 0)
+)
+add_fuv = (
+    ~np.isin(apt_info['lbl2'].filled(''), lbls_in_apt) & # label not already in apt
+    (apt_info['fuv'].filled(0) > 0)
+)
+to_add_apt = add_lya | add_fuv
+apt_print = apt_info.copy()
+apt_print['lbl1'].mask[~add_lya] = True
+apt_print['lbl2'].mask[~add_fuv] = True
+apt_print[to_add_apt].pprint(-1,-1)
+print()
+print(f"{sum(to_add_apt)} new visits")
+
+#%% print info on fuv visits we'd like to move to COS
+
+assert sum(selected_hosts['stage1_g130m'].filled(0)) == sum(apt_info['CM'].filled(0))
+cos_mask = apt_info['CM'].filled(0) > 0
+cos_lbls = apt_info[cos_mask]['lbl2']
+print(' '.join(cos_lbls))
+
 
 #%% examples for printing apt info
 
