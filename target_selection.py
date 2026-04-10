@@ -1859,6 +1859,7 @@ for name in request_cols:
 
 cat.sort('stage1_rank')
 selected = cat[cat['stage1'].filled(False)]
+selected_hosts = catutils.planets2hosts(selected)
 print(f'{len(selected)} planets orbit the selected stage 1 targets.')
 roster_set = [selected]
 if backup_orbits > 0:
@@ -1873,7 +1874,6 @@ roster = table.vstack(roster_set)
 
 if toggle_save_outputs:
     selected.write(paths.selection_outputs / 'stage1_planet_catalog.ecsv', overwrite=True)
-    selected_hosts = catutils.planets2hosts(selected)
     selected_hosts.write(paths.selection_outputs / 'stage1_host_catalog.ecsv', overwrite=True)
 
     if backup_orbits > 0:
@@ -2107,15 +2107,31 @@ redo_mask = np.array([s.isdigit() for s in status_tbl['visit']])
 remove_from_apt_mask = ~status_tbl['counted'] & ~redo_mask
 status_tbl[['target', 'visit', 'status']][remove_from_apt_mask].pprint(-1,-1)
 
+# print info on dropped targets
+removed_tics = np.unique(status_tbl['tic_id'][remove_from_apt_mask])
+catutils.set_index(cat, 'tic_id')
+_temp = cat.loc[removed_tics]
+_temp = catutils.planets2hosts(_temp)
+_temp = table.join(_temp, apt_info, keys='tic_id')
+
+_viewcols = 'hostname stage1_rank_1 stage1_g140m stage1_g140l stage1_e140m stage1_g130m lbl1 lbl2'.split()
+_temp[_viewcols].pprint(-1,-1)
+
+
 
 #%% print passes to release
 
 progtbl_pass = progress_tbl['Pass to\nStage 1b?'] == True
 tics_to_pass = progress_tbl['TIC ID'][progtbl_pass]
-fuv_tbl = status_tbl[(status_tbl['band'] == 'fuv') & ~status_tbl['redo']]
-unreleased_mask = fuv_tbl['next'].mask
-pass_mask = np.isin(fuv_tbl['tic_id'], tics_to_pass)
-statlabels_to_pass = fuv_tbl['visit'][pass_mask & unreleased_mask]
+release_mask = (
+    (status_tbl['band'] == 'fuv') & # fuv visit
+    ~status_tbl['redo'] & # not a redo
+    status_tbl['next'].mask & # no plan date yet
+    status_tbl['obsdate'].mask & # not yet observed
+    ~remove_from_apt_mask & # not set to be removed from apt
+    np.isin(status_tbl['tic_id'], tics_to_pass) # has been deemed passing in the progress table
+)
+statlabels_to_pass = status_tbl['visit'][release_mask]
 print(' '.join(statlabels_to_pass.tolist()))
 
 
