@@ -29,7 +29,7 @@ from stage1_processing import observation_table as obt
 # changes that will be resused (bugfixes, feature additions, etc.) should be made to the base script
 # then commited and pushed so we all benefit from them
 
-targets = target_lists.observed_since('2025-09-04')
+targets = ['hip94235']
 missing_acq_action = 'raise' # warn or raise
 batch_mode = True
 care_level = 0 # 0 = just loop with no stopping, 1 = pause before each loop, 2 = pause at each step
