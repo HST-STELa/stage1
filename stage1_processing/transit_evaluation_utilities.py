@@ -209,14 +209,20 @@ def read_quality_table(path, header="| Target | Quality Flag |"):
     return Table(rows=data, names=("Target", "Quality Flag"))
 
 
-def best_by_mean_snr(tbl: Table, category_column: str):
+def best_by_mean_snr(tbl: Table, category_column: str, all_zero_default=None):
     """Pick the category value with the highest mean 'transit sigma' across rows."""
     xunq = np.unique(tbl[category_column])
     means = [np.nanmean(tbl['transit sigma'][tbl[category_column] == x]) for x in xunq]
+
+    assert np.all(np.isfinite(means)), 'Non-finite SNRs.'
+
+    if all(m == 0 for m in means):
+        return all_zero_default
+
     return xunq[int(np.nanargmax(means))]
 
 
-def best_by_det_frac(tbl: Table, category_column: str, detection_threshold):
+def best_by_det_frac(tbl: Table, category_column: str, detection_threshold, all_zero_default=None):
     """Pick the category value that gives the largest fraction of rows with transit_sigma > snr_threshold."""
     xunq = np.unique(tbl[category_column])
     fracs = []
@@ -225,6 +231,13 @@ def best_by_det_frac(tbl: Table, category_column: str, detection_threshold):
         ntot = len(snr_subset)
         ndet = np.sum(snr_subset > detection_threshold)
         fracs.append(ndet / ntot)
+
+    assert np.all(np.isfinite(fracs)), 'Non-finite detection fractions.'
+    assert not any(frac < 0 for frac in fracs), 'Negative detection fractions.'
+
+    if all(frac == 0 for frac in fracs):
+        return all_zero_default
+
     return xunq[int(np.nanargmax(fracs))]
 
 class Host(object):
@@ -590,10 +603,14 @@ class DetectabilityDatabase:
 
         # record best overall offset
         best_offset = db1.best_offset(**kws_for_best_selectors)
+        if best_offset is None:
+            best_offset = 0 * u.h
         db1.meta['best time offset'] = best_offset
 
         # pick offset to use from a smaller "safe" range
         best_safe_offset = db1.best_offset(offset_max_safe, **kws_for_best_selectors)
+        if best_safe_offset is None:
+            best_safe_offset = 0 * u.h
         db1.meta['best safe time offset'] = best_safe_offset
 
         # run for all apertures at best safe, pick best aperture, record
@@ -601,6 +618,8 @@ class DetectabilityDatabase:
         grating_apertures = [(grating, ap) for ap in all_apertures]
         db2 = snr_computer([best_safe_offset], grating_apertures, [0])
         aperture = db2.best_aperture(**kws_for_best_selectors)
+        if aperture is None:
+            aperture = baseline_aperture
         db2.meta[f'best base grating aperture'] = str(aperture)
 
         # run for all lya cases at 0, best_safe, and best offset
