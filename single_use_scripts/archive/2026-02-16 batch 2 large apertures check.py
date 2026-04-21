@@ -211,6 +211,7 @@ for target in targets:
         print(f'Det vol with 52x0.2 aperture: {det_vol_pt2:.3f}')
         print(f'Det vol with {best_ap} (best) aperture: {det_vol_best_ap:.3f}')
 
+
 #%% conclusion
 
 """The 0.5 aperture makes all the difference in these cases. The SNR calcs are factoring in
