@@ -389,7 +389,8 @@ for tic_id_ in tic_ids_in_cat:
         cat_hostname, = set(cat_hostnames)
     else:
         cat_hostname = cat_hostnames
-    unique_tois.loc[tic_id_]['hostname'] = cat_hostname
+    _i = unique_tois.loc_indices[tic_id_]
+    unique_tois['hostname'][_i] = cat_hostname
 toi_names = np.char.add('TOI-', unique_tois['toipfx'].astype(str))
 unique_tois['hostname'][~in_cat] = toi_names[~in_cat]
 assert not np.any(unique_tois['hostname'].mask)
@@ -430,6 +431,8 @@ alltargets = []
 def concatenate(targets):
     alltargets.extend(targets.tolist())
 _ = catutils.requested_target_lists_loop(concatenate)
+badname_map = {'DS Tuc A': 'V* DS Tuc A'}
+alltargets = [badname_map.get(n, n) for n in alltargets]
 extra_cols = 'ids rvz_radvel plx_value'.split()
 simbad = query.get_simbad_from_names(alltargets, extra_cols=extra_cols)
 # it seems like you should be able to add "measurements" to the query, but this returns an error
