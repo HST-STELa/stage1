@@ -38,15 +38,17 @@ else:
     matplotlib.use('agg')
     plt.ioff()
 
-targets = target_lists.eval_no(3)
+# targets = target_lists.eval_no(3)
+# targets.remove('hd60779') # waiting on updated spectrum from girish
+targets = ['hd60779'] # actually this wasn't one of his reruns I don't think
 batch_mode = True
 care_level = 0
 wsplice_phx = 292.
 wsplice_dem = 100.
 
-folder_phoenix = paths.inbox / '2025-10-28 xuv phoenix'
-folder_dem = paths.inbox / '2025-10-30 xuv dem'
-staging_folder = paths.data / 'packages/2025-09-26.stag2.eval2.staging_area/xuv_reconstructions'
+folder_phoenix = paths.inbox / '2026-04-20 xuv phoenix'
+folder_dem = paths.inbox / '2026-04-22 xuv dem'
+staging_folder = paths.data / 'packages/2026-03-10.stage2.eval3.staging_area/xuv_reconstructions'
 
 
 #%% paths and tables
