@@ -383,3 +383,67 @@ if new_hosts_cat is not None and len(new_hosts_cat) > 0:
     print(f"Saved updated host catalog for eval3 package: {outcat_path}")
 else:
     print("No hosts to write: updated host catalog is empty or not defined.")
+
+
+#%% XUV spectra assembly happens via the "process XUV" script
+
+
+#%% make expanded catalog of system parameters from all batches for Ethan
+
+drops = ['toi-4336a', 'hd21520', 'toi-6992', 'wasp-84']
+
+extended_targets = sum([target_lists.eval_no(i) for i in range(1,4)], [])
+assert np.all(np.isin(drops, extended_targets))
+extended_targets = sorted(list(set(extended_targets) - set(drops)))
+
+tics = dbutils.stela_name_tbl.loc['hostname_file', extended_targets]['tic_id']
+
+planetcat.add_index('tic_id')
+full_cat = planetcat.loc[tics]
+full_cat['stela_planet_suffix'] = dbutils.planet_suffixes(full_cat)
+full_cat['stela_name'] = dbutils.target_names_tic2stela(full_cat['tic_id'])
+full_cat_hosts = catutils.planets2hosts(full_cat)
+
+
+#%% add mass range to use for sims
+
+Mlo = np.zeros(len(full_cat))
+Mhi = np.zeros(len(full_cat))
+M = full_cat['pl_bmasse']
+e1 = full_cat['pl_bmasseerr1']
+e2 = full_cat['pl_bmasseerr2']
+lim = full_cat['pl_bmasselim']
+
+# no error means a calculated mass from chen and kipping, use 1 dex range msrd from their plot (5-95%)
+calcd = e1.filled(0) == 0
+Mlo[calcd] = M[calcd]/10**0.5
+Mhi[calcd] = M[calcd]*10**0.5
+
+msrd = ~calcd
+Mlo[msrd] = M[msrd] + 2*e2[msrd]
+Mhi[msrd] = M[msrd] + 2*e1[msrd]
+
+uplim = lim.filled(0) == 1
+Mlo[uplim] = 1
+Mhi[uplim] = M[uplim]
+assert not np.any(lim.filled(0) == -1)
+
+young = full_cat['flag_young'].filled(False)
+Mlo[young] = 1
+Mhi[young] = M[young]
+
+Mlo = np.clip(Mlo, 0.1, np.inf)
+
+full_cat['pl_massgrid_lolim'] = Mlo
+full_cat['pl_massgrid_hilim'] = Mhi
+
+assert np.all(Mlo > 0)
+assert np.all(Mhi > 0)
+assert np.all(Mhi > Mlo)
+
+
+#%% save planet and host tables
+
+full_cat.write(staging_area / 'planet_catalog_all_evals.ecsv', overwrite=True)
+full_cat_hosts.write(staging_area / 'host_catalog_all_evals.ecsv', overwrite=True)
+
