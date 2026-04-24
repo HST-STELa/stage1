@@ -30,3 +30,27 @@ for target in targets:
     plt.title(target)
     plt.xlabel('wave')
     plt.ylabel('flux')
+
+
+#%% now looking at targets where lya xuv prediction is way off from lines
+
+targets = ['hd118203', 'hd183579', 'lhs475', 'toi-1468']
+
+for target in targets:
+    fd = paths.target_data(target)
+    rf, = fd.rglob('*lya-recon.csv')
+    lya = table.Table.read(rf)
+    plt.figure()
+    plt.step(lya['wave_lya'], lya['flux_lya'], where='mid', color='0.6')
+    plt.plot(lya['wave_lya'], lya['lya_model_median'], 'C0')
+    plt.plot(lya['wave_lya'], lya['lya_model_low_1sig'], 'C0:')
+    plt.plot(lya['wave_lya'], lya['lya_model_high_1sig'], 'C0:')
+    plt.title(target)
+    plt.xlabel('wave')
+    plt.ylabel('flux')
+
+    f, = fd.rglob(f'{target}*line-flux-table.ecsv')
+    tbl = table.Table.read(f)
+    print(target)
+    tbl.pprint(-1,-1)
+    print('\n\n')
