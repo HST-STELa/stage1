@@ -1221,6 +1221,14 @@ if toggle_checkpoint_saves:
     cat = catutils.load_and_mask_ecsv(paths.selection_intermediates / 'chkpt5__cut-planet_host_types__add-galex.ecsv')
 
 
+#%% count stars lacking radial velocity
+
+_cathosts = catutils.planets2hosts(cat)
+maskradv = np.isfinite(_cathosts['st_radv'].filled(np.nan))
+Nnoradv = np.sum(maskradv)
+print(f'{Nnoradv}/{len(_cathosts)}')
+
+
 #%% estimate Lya based on galex
 
 for band in ['nuv', 'fuv']:
@@ -1264,6 +1272,8 @@ cat['Flya_1AU_Teff_schneider'] = table.MaskedColumn(Flya_schneider, mask=~valid_
 
 #%% pick best Lya estimate
 
+count_hosts = lambda mask: len(np.unique(cat['tic_id'][mask]))
+
 catutils.add_masked_columns(cat, 'Flya_1AU_adopted', 'float', suffixes=('',), unit='erg s-1 cm-2')
 F = cat['Flya_1AU_adopted'] # changes to F will appear in the cat table
 fuv = cat['sy_fuvmag'].filled(nan)
@@ -1283,29 +1293,33 @@ max_plausible_Flya_1AU = max_plausible_Flya_1AU.to('erg s-1 cm-2')
 
 use_fuv = (np.isfinite(fuv) & (fuvlim == 0) & (cat['Flya_1AU_fuv'].filled(nan) > 0)
            & (cat['Flya_1AU_fuv'].filled(0) < max_plausible_Flya_1AU))
-print(f"Using FUV-estimated Lya (Schneider+ 19) for {np.sum(use_fuv)} targets.")
+print(f"Using FUV-estimated Lya (Schneider+ 19) for {np.sum(use_fuv)} targets "
+      f"({count_hosts(use_fuv)} unique hosts).")
 F[use_fuv] = cat['Flya_1AU_fuv'][use_fuv]
 
 use_nuv = (F.mask & np.isfinite(nuv) & (nuvlim == 0) & (cat['Flya_1AU_nuv'].filled(nan) > 0)
            & (cat['Flya_1AU_nuv'].filled(0) < max_plausible_Flya_1AU))
-print(f"Using NUV-estimated Lya (Schneider+ 19) for {np.sum(use_nuv)} targets.")
+print(f"Using NUV-estimated Lya (Schneider+ 19) for {np.sum(use_nuv)} targets "
+      f"({count_hosts(use_nuv)} unique hosts).")
 F[use_nuv] = cat['Flya_1AU_nuv'][use_nuv]
 
 use_Teff1 = F.mask & (Teff > 0) & (Prot > 0) & (cat['Flya_1AU_Teff_linsky'].filled(nan) > 0)
-print(f"Using Teff+Prot-estimated Lya (Linsky+ 13) for {np.sum(use_Teff1)} targets.")
+print(f"Using Teff+Prot-estimated Lya (Linsky+ 13) for {np.sum(use_Teff1)} targets "
+      f"({count_hosts(use_Teff1)} unique hosts).")
 F[use_Teff1] = cat['Flya_1AU_Teff_linsky'][use_Teff1]
 
 use_Teff1 = F.mask & (Teff > 0) & ~(Prot > 0) & (cat['flag_young'].filled(False)) & (cat['Flya_1AU_Teff_linsky'].filled(nan) > 0)
-print(f"Using Teff estimated Lya from Linsky+ 13 assuming fast rotation due to known youth for {np.sum(use_Teff1)} targets.")
+print(f"Using Teff estimated Lya from Linsky+ 13 assuming fast rotation due to known youth for {np.sum(use_Teff1)} targets "
+      f"({count_hosts(use_Teff1)} unique hosts).")
 F[use_Teff1] = cat['Flya_1AU_Teff_linsky'][use_Teff1]
 
 use_Teff2 = F.mask & (cat['Flya_1AU_Teff_schneider'].filled(nan) > 0)
-print(f"Using Teff-estimated Lya (Schneider+ 19) for remaining {np.sum(use_Teff2)} targets.")
+print(f"Using Teff-estimated Lya (Schneider+ 19) for remaining {np.sum(use_Teff2)} targets "
+      f"({count_hosts(use_Teff2)} unique hosts).")
 F[use_Teff2] = cat['Flya_1AU_Teff_schneider'][use_Teff2]
 
 # make sure there aren't any masked or bad values left in F
 assert np.all(F.filled(nan) > 0)
-
 
 #%% flag Lya flux cut, pre-ISM
 
@@ -1906,6 +1920,35 @@ if toggle_save_outputs:
         selected[savecols].pprint(-1, -1, align='<')
         sys.stdout = sys.__stdout__
 
+
+#%% load slected planets and hosts
+
+selected = catutils.load_and_mask_ecsv(paths.selection_outputs / 'stage1_planet_catalog.ecsv')
+selected_hosts = catutils.load_and_mask_ecsv(paths.selection_outputs / 'stage1_host_catalog.ecsv')
+
+
+#%% count targets beyond 100 pc
+
+mask100 = selected_hosts['sy_dist'].filled(np.nan) > 100*u.pc
+N100 = np.sum(mask100)
+print(N100)
+cat100 = selected_hosts[mask100]
+from lya_prediction_tools import ism, lya
+rv_star = lya.__default_rv_handler(cat100, 'ism')
+ras, decs = cat100['ra'].quantity, cat100['dec'].quantity
+rv_ism = u.Quantity(list(map(ism.ism_velocity, ras, decs)))
+rv_diff = rv_star - rv_ism
+cat100['st_radv_vs_ism'] = rv_diff
+
+print(cat100['hostname', 'sy_dist', 'st_radv_vs_ism'])
+print(np.min(np.abs(cat100['st_radv_vs_ism'])))
+print(np.max(np.abs(cat100['st_radv_vs_ism'])))
+print(np.sum(cat100['sy_dist'] < 116))
+
+plt.figure()
+plt.plot(cat100['sy_dist'], np.abs(cat100['st_radv_vs_ism']), 'o')
+plt.xlabel('distance')
+plt.xlabel('abs rv offset vs ism')
 
 #%% save diff table
 
