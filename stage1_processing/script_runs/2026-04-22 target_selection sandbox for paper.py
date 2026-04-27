@@ -1348,6 +1348,36 @@ FLya_basic_too_faint_str = (f'Cut because a basic, no ISM estimate of the Lya fl
 catutils.flag_cut(cat, FLya_basic_too_faint, FLya_basic_too_faint_str)
 
 
+
+#%% ism sight line n_H range
+
+from lya_prediction_tools import ism
+from scipy.stats import gaussian_kde
+
+n_h = ism.ism_columns['n_H']
+lognh = np.log10(n_h)
+
+# Kernel density estimation using scipy
+kde = gaussian_kde(lognh, bw_method=0.5)
+x_grid = np.linspace(np.min(lognh)-1, np.max(lognh)+1, 500)
+plt.figure()
+plt.plot(x_grid, kde(x_grid), label='KDE')
+plt.xlabel('log10(n_H) [cm$^{-3}$]')
+plt.ylabel('Density')
+plt.title('Kernel Density Estimate of log$_{10}$ n$_H$')
+plt.legend()
+
+# Percentile statistics
+p16, p50, p84 = np.percentile(lognh, [16, 50, 84])
+p5, p95 = np.percentile(lognh, [5, 95])
+
+print(
+    f"n_H median: {p50:.1f} +{p84-p50:.1f} -{p50-p16:.1f} cm^-3,"
+    f" ±34%% range: [{p16:.1f}, {p84:.1f}] cm^-3,"
+    f" (5-95th): [{p5:.1f}, {p95:.1f}] cm^-3"
+)
+
+
 #%% transit SNR estimates
 
 """
@@ -1950,423 +1980,34 @@ plt.plot(cat100['sy_dist'], np.abs(cat100['st_radv_vs_ism']), 'o')
 plt.xlabel('distance')
 plt.xlabel('abs rv offset vs ism')
 
-#%% save diff table
-
-"""These are simplified tables to enable comparisons of target pools and ordering."""
-
-if toggle_save_difftbl:
-    save_info_sets = (
-        ('hostname', 'name', 's'),
-        ('stage1', 'slctd', '.0f'),
-        ('stage1_rank', 'rank', '.0f')
-    )
-    savecols, _, _ = zip(*save_info_sets)
-    difftbl = roster[savecols]
-    for old, new, fmt in save_info_sets:
-        difftbl.rename_column(old, new)
-        difftbl[new].format = fmt
-    timetag = datetime.now().strftime("%Y-%m-%dT%H.%M.%S")
-    savename = f'selection_diff_{timetag}_{diff_label}.csv'
-    difftbl.write(paths.difftbls / savename)
-
-
-#%% select TOI list to hand vet
-
-"""
-a list of TOIs that are still candidates have not been manually vetted so that we can vet them before actually
-using them
-
-these targets should then be put into new "remove" and "vetted" lists in the inputs/hand_checked directory
-"""
-
-# verify that there aren't any duplicates
-vetted_ids = catutils.read_hand_checked_planets(('vetted',))
-remove_ids = catutils.read_hand_checked_planets(('remove',))
-all_ids = np.hstack((vetted_ids, remove_ids))
-idcheck, check_count = np.unique(all_ids, return_counts=True)
-if np.any(check_count > 1):
-    duplicated_ids = idcheck[check_count > 1]
-    raise ValueError(f'These targets appear more than once in the hand checked lists {duplicated_ids.tolist()}')
-
-if toggle_save_outputs:
-    tfop_disp = roster['tfopwg_disp'].filled('').astype(str)
-    unconfirmed = np.char.count(tfop_disp, 'PC') > 0
-
-    # remove those that have already been hand checked
-    checked = np.in1d(roster['toi'], all_ids)
-    unconfirmed[checked] = False
-
-    list_to_vet = roster['toi'][unconfirmed].tolist()
-    np.savetxt(paths.selection_outputs / 'tess_candidates_in_need_of_vetting.txt', list_to_vet, fmt='%s')
-
-
-
-#%% APT info
-
-targets = catutils.planets2hosts(roster)
-n = len(targets)
-
-guaranteed = targets['stage1'].filled(False) == True
-n_orbits_check = sum(targets[f'stage1_{grating}'][guaranteed].sum() for grating in 'g140m g140l e140m g130m'.split())
-assert n_orbits_check in [allocated_orbits, allocated_orbits + 1]
-assert n_orbits_check == selected['stage1_orbit_total'].max()
-
-# start compact table for hand input to APT
-apt_info = targets[['tic_id', 'stage1_rank']]
-apt_info['name'] = dbutils.target_names_tic2stela(targets['tic_id'])
-apt_info = apt_info[['name', 'tic_id', 'stage1_rank']]
-apt_info['GM'] = targets['stage1_g140m']
-apt_info['GL'] = targets['stage1_g140l']
-apt_info['EM'] = targets['stage1_e140m']
-apt_info['CM'] = targets['stage1_g130m']
-apt_info['lya'] = targets['stage1_lya']
-apt_info['fuv'] = targets['stage1_fuv']
-
-no_simbad_match = targets['simbad_id'].mask
-n_no_simbad = sum(no_simbad_match)
-if n_no_simbad > 0:
-    no_simbad_names = targets['hostname'][no_simbad_match].tolist()
-    print(f'Warning: these targets will not match to an object in SIMBAD {no_simbad_names}.')
-
-simbad = apt.get_simbad_info(targets['simbad_id'].filled('?'))
-
-apt.fill_spectral_types(targets, simbad)
-apt.fill_optical_magnitudes(targets, simbad)
-apt_target_table = apt.make_apt_target_table(targets, simbad)
-past_targets = table.Table.read(paths.locked / 'ttrb approved.targets', format='ascii.csv', data_start=5, header_start=4)
-
-# identify new targets by coordinates in case of name changes
-apt_coords = coord.SkyCoord(apt_target_table['RA'], apt_target_table['DEC'], unit=(u.hourangle, u.deg))
-past_coords = coord.SkyCoord(past_targets['RA'], past_targets['DEC'], unit=(u.hourangle, u.deg))
-i_past, i_apt, _, _ = apt_coords.search_around_sky(past_coords, 0.1*u.arcsec) # APT rounds DEC to the second decimal place
-mask_new = np.ones(len(apt_target_table), bool)
-mask_new[i_apt] = False
-
-# print any name changes
-current_names = apt_target_table['Target Name']
-past_names = past_targets['# Name in the Proposal']
-name_change_mask = ~np.isin(past_names[i_past], current_names[i_apt])
-current_names = current_names[i_apt][name_change_mask]
-past_names = past_names[i_past][name_change_mask]
-name_change_tbl = table.Table((past_names, current_names), names=['previous','current'])
-print('')
-print('Old names of targets that have have had a name change')
-print('')
-name_change_tbl.pprint(-1)
-
-if toggle_save_outputs:
-    apt.write_target_table(apt_target_table[mask_new], paths.selection_outputs / 'new_targets_for_apt.csv', overwrite=True)
-
-acq_setup_table = apt.acquisition_setup(targets)
-apt_info['acq'] = acq_setup_table['acq_filter']
-apt_info['Tacq'] = acq_setup_table['acq_Texp']
-
-g140m_buffers = apt.buffer_times(targets, 'g140m')
-g140l_buffers = apt.buffer_times(targets, 'g140l')
-e140m_buffers = apt.buffer_times(targets, 'e140m')
-apt_info['GMbuff'] = g140m_buffers
-apt_info['GLbuff'] = g140l_buffers
-apt_info['EMbuff'] = e140m_buffers
-
-apt_info['Mdwarf'] = np.char.count(targets['st_spectype'].filled('M').astype(str), 'M') > 0
-
-for col in apt_info.columns:
-    if apt_info[col].dtype == float:
-        apt_info[col].format = '.1f'
-
-# new info for old targets
-i_apt_, i_past_, _, _ = past_coords.search_around_sky(apt_coords, 0.1*u.arcsec)
-i_apt_ = i_apt_[np.argsort(i_past_)]
-old_target_new_info = apt_target_table[['Target Name', 'Other Fluxes', 'Comments']][i_apt_]
-if toggle_save_outputs:
-    old_target_new_info.write(paths.selection_outputs / 'new_info_old_targets.csv', overwrite=True)
-
-
-#%% M dwarfs not in ISR table (might want to check that they aren't just name changes)
-
-"""You will need to rerun the selection if any of these must be observed with E140M, since that will make more orbits
-available."""
-
-if toggle_save_outputs:
-    Ms = apt_info['Mdwarf']
-    Mnames = apt_info['name'][Ms]
-    Mtics = apt_info['tic_id'][Ms]
-    catutils.set_index(selected_hosts, 'tic_id')
-    catMnames = selected_hosts.loc[Mtics]['hostname']
-    not_in_isr = ~np.in1d(catMnames, ref.mdwarf_isr['Current Exo Archive Name'])
-    Ms_to_add = sorted(zip(Mnames[not_in_isr], catMnames[not_in_isr]))
-    np.savetxt(paths.selection_outputs / 'Mdwarfs_to_add_to_ISR_table.txt',
-               Ms_to_add, fmt='%s', delimiter=',', header='stela_name,exocat_name')
-
-
-#%% visit labels for APT
-
-labeltbl = table.Table.read(paths.locked / 'target_visit_labels.ecsv')
-
-# be sure all targets have (or had, prior to cuts) a match
-# if not, fix it
-unmatched = catutils.unmatched_names(labeltbl['tic_id'], merged['tic_id'])
-if len(unmatched) > 0:
-    raise KeyError(f'These targets in the visit label table have no match: {unmatched.tolist()}')
-
-new_batch_no = labeltbl['batch'].max() + 1
-existing_base_labels = list(map(apt.VisitLabel, labeltbl['base'].tolist()))
-last_base_label = max(existing_base_labels)
-
-targets_selected = catutils.planets2hosts(selected)
-for row in targets_selected:
-    tic_id = row['tic_id']
-    if tic_id not in labeltbl['tic_id']:
-        name = dbutils.target_names_tic2stela(tic_id)
-        last_base_label, pair = last_base_label.next_pair()
-        new_row = [name, str(last_base_label), str(pair), new_batch_no, '', '', tic_id]
-        labeltbl.add_row(new_row)
-
-catutils.set_index(labeltbl, 'target')
-in_labeltbl = np.in1d(apt_info['tic_id'], labeltbl['tic_id'])
-apt_info['lbl1'] = table.MaskedColumn(length=len(apt_info), mask=True, dtype='object')
-apt_info['lbl2'] = table.MaskedColumn(length=len(apt_info), mask=True, dtype='object')
-apt_info['lbl1'][in_labeltbl] = labeltbl.loc[apt_info['name'][in_labeltbl]]['base']
-apt_info['lbl2'][in_labeltbl] = labeltbl.loc[apt_info['name'][in_labeltbl]]['pair']
-
-if toggle_save_outputs:
-    catutils.set_index(apt_info, 'name')
-    in_apt = np.isin(labeltbl['target'], apt_info['name'])
-    names_in_apt = labeltbl['target'][in_apt]
-    apt_visit_info = apt_info.loc[names_in_apt]
-    apt_visit_info.write(paths.selection_outputs / 'info_for_apt_entry.csv', overwrite=True)
-
-    catutils.set_index(apt_target_table, 'Target Name')
-    _labeltbl_apt_names = dbutils.target_names_tic2stela(labeltbl['tic_id'])
-    in_targets = np.isin(_labeltbl_apt_names, apt_target_table['Target Name'])
-    names_in_targets = _labeltbl_apt_names[in_targets]
-    apt_visit_info = apt_target_table.loc[names_in_targets]
-    apt_visit_info.write(paths.selection_outputs / 'info_all_targets.csv', overwrite=True)
-
-
-#%% save the label map
-
-if toggle_save_visit_labels:
-    labeltbl.write(paths.locked / 'target_visit_labels.ecsv', overwrite=True)
-
-
-#%% print list of visits to remove from apt (lemons or don't make rank)
-
-redo_mask = np.array([s.isdigit() for s in status_tbl['visit']])
-remove_from_apt_mask = ~status_tbl['counted'] & ~redo_mask
-status_tbl[['target', 'visit', 'status']][remove_from_apt_mask].pprint(-1,-1)
-
-# print info on dropped targets
-removed_tics = np.unique(status_tbl['tic_id'][remove_from_apt_mask])
-catutils.set_index(cat, 'tic_id')
-_temp = cat.loc[removed_tics]
-_temp = catutils.planets2hosts(_temp)
-_temp = table.join(_temp, apt_info, keys='tic_id')
-
-_viewcols = 'hostname stage1_rank_1 stage1_g140m stage1_g140l stage1_e140m stage1_g130m lbl1 lbl2'.split()
-_temp[_viewcols].pprint(-1,-1)
-
-
-
-#%% print passes to release
-
-progtbl_pass = progress_tbl['Pass to\nStage 1b?'] == True
-tics_to_pass = progress_tbl['TIC ID'][progtbl_pass]
-release_mask = (
-    (status_tbl['band'] == 'fuv') & # fuv visit
-    ~status_tbl['redo'] & # not a redo
-    status_tbl['next'].mask & # no plan date yet
-    status_tbl['obsdate'].mask & # not yet observed
-    ~remove_from_apt_mask & # not set to be removed from apt
-    np.isin(status_tbl['tic_id'], tics_to_pass) # has been deemed passing in the progress table
-)
-statlabels_to_pass = status_tbl['visit'][release_mask]
-print(' '.join(statlabels_to_pass.tolist()))
-
-
-#%% print information on visits not currently in the APT to add
-
-# if your APT is out of sync with online visit status, update path below and use this block
-pro_export_path = '/Users/parke/Google Drive/Research/STELa/phase IIs/cycle 32/apt/STELa cycle 32 stage 1 submission 20 diagnostic.pro'
-lbls_in_apt = []
-with open(pro_export_path) as f:
-    lines = f.readlines()
-for l in lines:
-    result = re.findall(r'Visit: (..)', l)
-    if result:
-        lbls_in_apt.extend(result)
-
-# else use this
-# lbls_in_apt = status_tbl['visit']
-
-# add target numbers to help me find them
-allowed_names = dbutils.stela_name_tbl.loc['tic_id', allowed_tics]['hostname']
-allowed_names = allowed_names.tolist()
-target_no_apt = [allowed_names.index(n)+1 for n in apt_info['name']]
-apt_info['no'] = target_no_apt
-# _colorder = ['no'] + apt_info.colnames[:-1]
-# apt_info = apt_info[_colorder]
-
-add_lya = (
-    ~np.isin(apt_info['lbl1'].filled(''), lbls_in_apt) & # label not already in apt
-    (apt_info['lya'].filled(0) > 0)
-)
-add_fuv = (
-    ~np.isin(apt_info['lbl2'].filled(''), lbls_in_apt) & # label not already in apt
-    (apt_info['fuv'].filled(0) > 0)
-)
-to_add_apt = add_lya | add_fuv
-apt_print = apt_info.copy()
-apt_print['lbl1'].mask[~add_lya] = True
-apt_print['lbl2'].mask[~add_fuv] = True
-apt_print[to_add_apt].pprint(-1,-1)
-print()
-print(f"{sum(to_add_apt)} new visits")
-
-#%% print info on fuv visits we'd like to move to COS
-
-assert sum(selected_hosts['stage1_g130m'].filled(0)) == sum(apt_info['CM'].filled(0))
-cos_mask = apt_info['CM'].filled(0) > 0
-cos_lbls = apt_info[cos_mask]['lbl2']
-print(' '.join(cos_lbls))
-
-
-#%% examples for printing apt info
-
-
-"""print the whole table"""
-apt_info.pprint(-1)
-
-# find a target or visit and print its row
-apt_info.add_index('name')
-print(apt_info.loc['name', 'GJ 143'])
-
-
-#%% check that no targets exceed bright limits
-
-
-active, _, _ = apt.categorize_activity(targets)
-for grating in ['g140m', 'g140l', 'e140m']:
-    max_local = 75
-    max_global_inactive = 200000 if grating == 'e140m' else 30000
-    max_global_active = 800000 if grating == 'e140m' else 12000
-    obs_mask = targets[f'stage1_{grating}'].filled(0) == 1
-    active_obs = active[obs_mask]
-    cps_local, cps_global = apt.count_rate_estimates(targets[obs_mask], grating)
-    local_violations = cps_local > max_local
-    global_violations = np.zeros(len(cps_global), bool)
-    global_violations[~active_obs] = cps_global[~active_obs] > max_global_inactive
-    global_violations[active_obs] = cps_global[active_obs] > max_global_active
-    all_violations = local_violations | global_violations
-    if np.any(all_violations):
-        raise ValueError('There were count rate violations. You will need to poke around to find out what and '
-                         'deal with them. Some may be dealt with just by using a more accurate Lya estimate.')
-
-
-#%% table for ETC input
-active, _, _ = apt.categorize_activity(targets)
-targets['variable'] = active
-
-etcrows = apt.find_nearest_etc_rows(targets['st_teff'].filled(nan), 'g140m')
-targets['template_teff'] = etcrows['Teff']
-
-FUVmags = apt.conservatively_bright_FUV(targets)
-targets['FUV'] = FUVmags
-
-etctbl = labeltbl[['target', 'base', 'pair']]
-names = labeltbl['target']
-isintargets = np.in1d(names, targets['hostname'])
-etctbl = etctbl[isintargets]
-
-etctbl['target'] = etctbl['target'].astype('object')
-joincols = ['hostname', 'st_teff', 'template_teff', 'FUV', 'variable']
-etctbl = table.join(etctbl, targets[joincols], join_type='left', keys_left='target', keys_right='hostname')
-etctbl.remove_column('hostname')
-
-etctbl.meta['Notes'] = ("FUV values are measured values from GALEX when available and conservatively bright "
-                        "estimates when not available.",
-                        "Variable classification is based on indications of activity from age, rotation, or "
-                        "measured FUV flux. If there is no measurement indicating inactivity, the star is assumed"
-                        "active. These classifications *do not* follow the protocol for M dwarfs and so should not"
-                        "be used for M dwarf clearance per ISR-2017.")
-
-if toggle_save_outputs:
-    etctbl.write(paths.selection_outputs / 'etc_inputs_for_brightness_checks.ecsv', overwrite=True)
-
-
-#%% list of borderline SpTs for ISR
-
-targets = catutils.planets2hosts(roster)
-spt_flags = apt.fill_spectral_types(targets, simbad, return_flags=True)
-
-# pull spectral type and subtypes in consistent formats
-spt_letters, spt_numbers = [], []
-for entry in targets['st_spectype'].tolist():
-    match = re.match(r'([A-Z])', entry)  # Match first letter (spectral type)
-    number_match = re.search(r'\d+(\.\d+)?', entry)  # Match first number (subtype)
-    if match:
-        spt_letters.append(match.group(1))
-    else:
-        spt_letters.append('')
-    if number_match:
-        spt_numbers.append(float(number_match.group(0)))
-    else:
-        spt_numbers.append(-1)
-spt_letters, spt_numbers = map(np.array, (spt_letters, spt_numbers))
-
-# identify targets with catalog or simbad type that is concerningly close to an ISR edge
-spt_from_lit = spt_flags <= 1
-spt_questionable = (simbad['sp_qual'].filled('F') >= 'C') | (simbad['sp_qual'].filled('') == '')
-KM_edge_spt = ((spt_letters == 'K') & (spt_numbers >= 7))
-midM_edge_spt = ((spt_letters == 'M') & ((spt_numbers >= 2) & (spt_numbers < 3)))
-lateM_edge_spt = ((spt_letters == 'M') & ((spt_numbers >= 5) & (spt_numbers < 6)))
-spt_needs_investigation = (spt_from_lit & spt_questionable
-                           & (KM_edge_spt | midM_edge_spt | lateM_edge_spt))
-
-# identify targets where SpT is based on Teff and Teff is within 200 K of an ISR division
-spt_from_teff = spt_flags == 2
-Teff_slop = 200
-KM_edge_teff = ((targets['st_teff'] > 3850) & (targets['st_teff'] < 3850 + Teff_slop))
-midM_edge_teff = ((targets['st_teff'] > 3430) & (targets['st_teff'] < 3430 + Teff_slop))
-lateM_edge_teff = ((targets['st_teff'] > 2810) & (targets['st_teff'] < 2810 + Teff_slop))
-teff_needs_investigation = (spt_from_teff
-                            & (KM_edge_teff | midM_edge_teff | lateM_edge_teff))
-
-needs_investigation = spt_needs_investigation | teff_needs_investigation & targets['stage1'].filled(False)
-targets_to_investigate = targets[['hostname', 'st_spectype']][needs_investigation]
-
-if toggle_save_outputs:
-    targets_to_investigate.write(paths.selection_outputs / 'targets_needing_spT_followup.csv', overwrite=True)
-
-
-#%% optional: check that acq entry in APT is correct
-"""If they aren't way off, probably no need to correct and risk throwing off planning"""
-
-# parse latest pro file
-path = dbutils.pathname_max(paths.other, '*.pro')
-acq_apt_tbl = apt.parse_acqs_from_formatted_listing(path)
-
-# get apt names so we can match tables
-_newnames = [ref.archive2locked_name_map.get(name, name) for name in apt_info['name']]
-aptnames = apt.cat2apt_names(_newnames)
-apt_info['aptname'] = aptnames
-
-# run through checks
-catutils.set_index(apt_info, 'aptname')
-for row in acq_apt_tbl:
-    name, aper, expt = row
-    try:
-        intended_aper = apt_info.loc[name]['acq']
-        intended_expt = apt_info.loc[name]['Tacq']
-        if (aper != intended_aper) or not np.isclose(intended_expt, expt, atol=0.05):
-            print(f'Setting mismatch for {name}')
-            print(f'\tIn APT {aper} {expt:.1f}')
-            print(f'\tIntended {intended_aper} {intended_expt:.1f}')
-    except KeyError:
-        print(f'{name} not in apt_info table')
-
-#%% End Note
-"""Once you have the pipeline has completed to your satisfication, 
-I recommend you archive a copy of the input, intermediate, and output folders labeled with todays date.
-Future runs will overwrite the local files."""
+#%% count targets, planets, archival
+
+slctd_sept_path = '/Users/parke/Google Drive/Research/STELa/phase IIs/cycle 32/target builds/2025-09/outputs/stage1_planet_catalog.ecsv'
+slctd_sept = catutils.load_and_mask_ecsv(slctd_sept_path)
+slctd_sept_hosts = catutils.planets2hosts(slctd_sept)
+# haven't used these sept cats for stats yet, but might
+
+noxlya_hosts = ~selected_hosts['external_lya'].filled(False)
+print(f'num stage 1 hosts {np.sum(noxlya_hosts)}')
+noxlya_planets = ~selected['external_lya'].filled(False)
+print(f'num stage 1 hosts {np.sum(noxlya_planets)}')
+
+getslya = selected_hosts['stage1_lya'].filled(0) > 0
+incld = getslya & (selected_hosts['hostname'] != 'TOI-5388')
+score_cutoff = np.min(selected_hosts['score_host'][incld])
+print(score_cutoff)
+
+hasxlya_cat = cat['external_lya'].filled(False)
+has_transit_already = cat['requested_observed_transit'].filled(False)
+makes_rank = cat['score_host'] > score_cutoff
+np.sum(makes_rank & hasxlya_cat & ~has_transit_already)
+np.sum(~makes_rank & hasxlya_cat & ~has_transit_already)
+
+catutils.pick_planet_parameters(selected, 'transit_snr_optimistic', np.max, 'best_opt_snr')
+incld = (selected['stage1_lya'].filled(0) > 0) & (selected['hostname'] != 'TOI-5388')
+np.min(selected['best_opt_snr'][incld])
+
+selected_hosts['transit_snr_optimistic'][-10:].pprint(-1)
+
+# compare with visit labels to be sure numbers agree
 
