@@ -16,7 +16,7 @@ from astropy.coordinates import SkyCoord
 
 import database_utilities as dbutils
 import utilities as utils
-from stage1_processing import observation_table as obt
+from processing import observation_table as obt
 
 trapz = np.trapz if 'trapz' in dir(np) else np.trapezoid
 

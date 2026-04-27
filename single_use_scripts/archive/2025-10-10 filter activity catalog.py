@@ -1,6 +1,6 @@
 from astropy import table
-from stage1_processing import target_lists
-from stage1_processing import preloads
+from processing import target_lists
+from processing import preloads
 
 
 targets = target_lists.eval_no(2)

@@ -16,7 +16,7 @@ import utilities as utils
 import catalog_utilities as catutils
 import database_utilities as dbutils
 
-from stage1_processing import target_lists
+from processing import target_lists
 
 
 #%%

@@ -15,10 +15,10 @@ import catalog_utilities as catutils
 import database_utilities as dbutils
 import utilities as utils
 
-from stage1_processing import target_lists
-from stage1_processing import preloads
-from stage1_processing import processing_utilities as pu
-from stage1_processing import transit_evaluation_utilities as tutils
+from processing import target_lists
+from processing import preloads
+from processing import processing_utilities as pu
+from processing import transit_evaluation_utilities as tutils
 
 from lya_prediction_tools import stis
 from lya_prediction_tools import lya

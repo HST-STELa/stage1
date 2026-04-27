@@ -6,8 +6,8 @@ import database_utilities as dbutils
 from astropy import table
 import numpy as np
 
-from stage1_processing import preloads
-from stage1_processing import target_lists
+from processing import preloads
+from processing import target_lists
 
 
 #%%

@@ -14,7 +14,7 @@ import database_utilities as dbutils
 import utilities as utils
 import catalog_utilities as catutils
 
-from stage1_processing import target_lists
+from processing import target_lists
 
 staging_area = paths.packages / '2025-09-26.stag2.eval2.staging_area'
 

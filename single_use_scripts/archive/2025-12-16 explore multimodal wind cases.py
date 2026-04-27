@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 
 import paths
 from lya_prediction_tools import lya
-from stage1_processing import transit_evaluation_utilities as tutils
+from processing import transit_evaluation_utilities as tutils
 
 #%%
 

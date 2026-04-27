@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 import catalog_utilities as catutils
 import paths
 
-from stage1_processing import preloads
+from processing import preloads
 
 
 #%% table of target parameters combined with observation table values

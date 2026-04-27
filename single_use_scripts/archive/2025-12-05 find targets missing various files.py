@@ -1,7 +1,7 @@
 import paths
 from functools import lru_cache
 
-from stage1_processing import target_lists
+from processing import target_lists
 
 targets = target_lists.eval_no(1) + target_lists.eval_no(2)
 

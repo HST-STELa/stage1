@@ -42,7 +42,7 @@ hst_database_https = 'https://archive.stsci.edu/pub/catalogs/paec_7-present.cat'
 reports = selection_outputs / 'target_request_reports'
 difftbls = selection_outputs / 'diff_tables'
 
-stage1_processing = Path('stage1_processing')
+stage1_processing = Path('processing')
 status_input = stage1_processing / 'status_input'
 status_output = stage1_processing / 'status_output'
 stage2_requests = stage1_processing / 'stage2_requests'

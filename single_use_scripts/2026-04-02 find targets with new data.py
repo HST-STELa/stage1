@@ -5,8 +5,8 @@ from astropy import table
 import paths
 import database_utilities as dbutils
 
-from stage1_processing import target_lists
-from stage1_processing import observation_table as obt
+from processing import target_lists
+from processing import observation_table as obt
 
 #%%
 

@@ -7,8 +7,8 @@ import matplotlib as mpl
 import paths
 import catalog_utilities as catutils
 
-from stage1_processing import transit_evaluation_utilities as tutils
-from stage1_processing import preloads
+from processing import transit_evaluation_utilities as tutils
+from processing import preloads
 
 
 #%% settings

@@ -4,7 +4,7 @@ from astropy import table
 import paths
 import catalog_utilities as catutils
 
-from stage1_processing.observation_table import ObsTable
+from processing.observation_table import ObsTable
 
 #%% load obs tables, remove rawtags from cos sci files, save
 

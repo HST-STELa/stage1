@@ -3,7 +3,7 @@ from tqdm import tqdm
 import paths
 import database_utilities as dbutils
 
-from stage1_processing import transit_evaluation_utilities as tutils
+from processing import transit_evaluation_utilities as tutils
 
 files = list(paths.data_targets.rglob('*.detection-sigmas.ecsv'))
 

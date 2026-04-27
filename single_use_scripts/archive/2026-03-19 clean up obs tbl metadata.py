@@ -4,8 +4,8 @@ from tqdm import tqdm
 
 import paths
 
-from stage1_processing import target_lists
-from stage1_processing.observation_table import ObsTable
+from processing import target_lists
+from processing.observation_table import ObsTable
 
 
 #%%

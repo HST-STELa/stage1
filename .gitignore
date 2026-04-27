@@ -15,6 +15,6 @@
 /stage1/target_selection_data/intermediates/*
 /stage1/target_selection_data/outputs/*
 /stage1/target_selection_data/inputs/requested_targets/*
-stage1_processing/status_input/*
-stage1_processing/status_output/*
+processing/status_input/*
+processing/status_output/*
 env.py

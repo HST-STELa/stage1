@@ -10,9 +10,9 @@ import paths
 from lya_prediction_tools import ism
 from lya_prediction_tools import lya
 
-from stage1_processing import target_lists
-from stage1_processing import preloads
-from stage1_processing import processing_utilities as pu
+from processing import target_lists
+from processing import preloads
+from processing import processing_utilities as pu
 
 #%%
 

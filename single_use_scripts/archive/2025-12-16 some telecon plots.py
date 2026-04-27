@@ -6,7 +6,7 @@ from astropy import table
 import catalog_utilities as catutils
 import paths
 
-from stage1_processing import preloads
+from processing import preloads
 
 slide_size = [9, 5]
 

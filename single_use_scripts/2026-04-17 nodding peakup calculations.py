@@ -3,8 +3,8 @@ import paths
 import catalog_utilities as catutils
 import database_utilities as dbutils
 
-from stage1_processing import preloads
-from stage1_processing import target_lists
+from processing import preloads
+from processing import target_lists
 
 
 #%%

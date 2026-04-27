@@ -3,7 +3,7 @@ import numpy as np
 from astropy import table
 
 import paths
-from stage1_processing import observation_table as obt
+from processing import observation_table as obt
 
 #%% def acq rule
 

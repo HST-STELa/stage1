@@ -12,9 +12,9 @@ import hst_utilities as hstutils
 import paths
 import catalog_utilities as catutils
 
-from stage1_processing import target_lists
-from stage1_processing import preloads
-from stage1_processing import observation_table as obs_tbl_tools
+from processing import target_lists
+from processing import preloads
+from processing import observation_table as obs_tbl_tools
 
 
 #%% settings

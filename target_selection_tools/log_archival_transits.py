@@ -65,12 +65,12 @@ from astropy.io import fits
 
 import database_utilities as dbutils
 import paths
-from stage1_processing import observation_table as obt
-from stage1_processing import preloads
-from stage1_processing import target_lists
-from stage1_processing.observation_table import UsabilityDefinition
+from processing import observation_table as obt
+from processing import preloads
+from processing import target_lists
+from processing.observation_table import UsabilityDefinition
 
-# Keep aligned with ``stage1_processing.scripts.update_verified_external.external_data_usability``.
+# Keep aligned with ``processing.scripts.update_verified_external.external_data_usability``.
 DEFAULT_ARCHIVAL_USABILITY = UsabilityDefinition(
     ignore_notes=[
         "bot note",

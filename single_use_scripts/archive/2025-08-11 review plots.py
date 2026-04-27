@@ -8,7 +8,7 @@ from matplotlib.colors import Normalize
 import paths
 
 from lya_prediction_tools import lya
-from stage1_processing import preloads
+from processing import preloads
 
 hostcat = preloads.hosts.copy()
 name_tbl = preloads.stela_names.copy()

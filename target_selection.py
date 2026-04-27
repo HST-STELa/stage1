@@ -18,7 +18,7 @@ import catalog_utilities
 import empirical
 import paths
 import catalog_utilities as catutils
-from stage1_processing import visit_status_xml_parser
+from processing import visit_status_xml_parser
 from lya_prediction_tools import transit
 from target_selection_tools import galex_query
 from target_selection_tools import duplication_checking as dc
@@ -772,7 +772,7 @@ dc.merge_verified(cat, verified)
 
 if toggle_refresh_archival_transit_list:
     from target_selection_tools import log_archival_transits as lat
-    from stage1_processing import observation_table as obt
+    from processing import observation_table as obt
 
     # allow just about any data through for this intial "has transit" definition
     # we should be more strict later when we consider reobserving actual transits
