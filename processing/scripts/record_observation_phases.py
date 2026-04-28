@@ -7,6 +7,7 @@ from astropy import table
 from astropy import coordinates
 from astropy import units as u
 from astropy import time
+from astropy.io import fits
 import numpy as np
 
 import paths
@@ -52,6 +53,24 @@ for target in targets:
     obs_tbl = ObsTable.load_from_targname(target)
     configs = np.unique(obs_tbl['science config'])
 
+
+#%% add an exposure time column if one does not already exist
+
+    if 'exptime' not in obs_tbl.colnames:
+        exptimes = []
+        for fs in obs_tbl['key science files']:
+            f = fs[0]
+            fpath, = dbutils.find_stela_files_from_hst_filenames(f, data_dir)
+            exptime = fits.getval(fpath, 'exptime', 1)
+            exptimes.append(exptime)
+        i_start = obs_tbl.colnames.index('start')
+        obs_tbl.add_column(exptimes, name='exptime', index=i_start+1)
+        obs_tbl['exptime'].format = '.1f'
+        obs_tbl['exptime'].unit = 's'
+
+
+#%% obs times
+
     # get target coordinates
     ids = preloads.stela_names.loc['hostname_file', target]
     tic_id = ids['tic_id']
@@ -60,9 +79,12 @@ for target in targets:
     coords = coordinates.SkyCoord(props['ra'], props['dec'])
 
     # adjust obs start times to barycentric frame
-    start = time.Time(obs_tbl['start'])
-    offset = ephemeris.bary_offset(start, coords)
-    start_bary = start + offset
+    tmid = time.Time(obs_tbl['start']) + obs_tbl['exptime'].quantity
+    offset = ephemeris.bary_offset(tmid, coords)
+    tmid_bary = tmid + offset
+
+
+    #%% phases
 
     # find all ephemeris tables
     eph_dir = paths.target_epehemerides(target)
@@ -88,7 +110,7 @@ for target in targets:
         eph_row, = eph_tbl[eph_tbl['picked']]
         ephem = ephemeris.Ephemeris.from_table_row(eph_row)
 
-        phase, phase_err = ephem.transit_offset(start_bary)
+        phase, phase_err = ephem.transit_offset(tmid_bary)
         phasecolname = f'phase_{letter}'
         obs_tbl[phasecolname] = phase.to('h')
         obs_tbl[phasecolname].format = '.2f'
