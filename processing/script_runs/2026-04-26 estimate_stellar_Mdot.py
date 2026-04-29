@@ -12,6 +12,15 @@ import catalog_utilities as catutils
 from processing import target_lists
 from processing import preloads
 
+#%% settings
+
+fd_staging = paths.packages / '2026-03-10.stage2.eval3.staging_area'
+
+targets = target_lists.eval_no(3) + target_lists.eval_no(2) + target_lists.eval_no(1)
+drops = ['toi-4336a', 'hd21520', 'toi-6992', 'wasp-84']
+targets = sorted(list(set(targets) - set(drops)))
+
+
 #%% host catalog
 
 with warnings.catch_warnings():
@@ -19,11 +28,8 @@ with warnings.catch_warnings():
     hosts = preloads.hosts.copy()
 hosts.add_index('tic_id')
 
-#%% target list
+#%% target properties
 
-targets = target_lists.eval_no(3) + target_lists.eval_no(2) + target_lists.eval_no(1)
-drops = ['toi-4336a', 'hd21520', 'toi-6992', 'wasp-84']
-targets = sorted(list(set(targets) - set(drops)))
 tic_ids = preloads.stela_names.loc['hostname_file', targets]['tic_id']
 proptbl = hosts.loc[tic_ids]
 
@@ -74,5 +80,9 @@ Mdot_tbl = Table((proptbl['hostname'], proptbl['tic_id'], targets, Fxs, Mdots),
                  names='hostname tic_id hostname_file Fx Mdot'.split())
 Mdot_tbl['Fx'].description = 'X-ray flux at Earth in the 0.1-2.4 keV ROSAT band'
 
-path = paths.catalogs / 'host_wind_estimates.ecsv'
-Mdot_tbl.write(path)
+filename = 'host_wind_estimates.ecsv'
+path_cat = paths.catalogs / filename
+Mdot_tbl.write(path_cat, overwrite=True)
+
+path_eval = fd_staging / filename
+Mdot_tbl.write(path_eval, overwrite=True)
