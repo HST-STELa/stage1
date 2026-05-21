@@ -118,7 +118,7 @@ def get_required_grating(target):
 def get_outflow_sim_letter(planet_row, planet_row_order):
     letter = planet_row['pl_letter']
     if np.ma.is_masked(letter):
-        letter = 'bcdefg'[planet_row_order]
+        letter = 'bcdefgh'[planet_row_order]
     return letter
 
 

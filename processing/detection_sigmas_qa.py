@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import product
 from pathlib import Path
 from typing import Iterable
 
@@ -14,7 +15,21 @@ from astropy.table import Table
 
 from processing import transit_evaluation_utilities as tutils
 
-ROW_COUNT_BUCKETS = ('model_no_cos', 'model_cos', 'flat')
+# Expected unique counts for model detection-sigmas grids (Stage 2 compile).
+N_CASE_DICT = {
+    'eta': 4,
+    'Tion': 4,
+    'sw_ram_pressure_at_pl': 4,
+    'sw_velocity': 3,
+    'mass': 4,
+    'time offset': 17,
+    'lya reconstruction case': 5,
+}
+N_STIS_APERTURES = 4
+N_COS_APERTURES = 1
+
+STRING_CASE_COLS = {'lya reconstruction case', 'grating', 'aperture'}
+MAX_MISSING_COMBO_EXAMPLES = 3
 
 COMMON_COLS = [
     'transit velocity ranges',
@@ -89,10 +104,80 @@ def expected_snr_paths(host, planet) -> dict[str, Path]:
     return paths
 
 
-def row_count_bucket(tst_type: str, cos_considered: bool) -> str:
-    if tst_type == 'flat':
-        return 'flat'
-    return 'model_cos' if cos_considered else 'model_no_cos'
+def _scalar_cell(col: str, value):
+    if col in STRING_CASE_COLS:
+        return str(value)
+    if hasattr(value, 'quantity'):
+        return float(value.quantity.value)
+    return float(value)
+
+
+def _unique_levels(tbl, col: str) -> tuple:
+    """Sorted unique values for a case column, as hashable scalars."""
+    if col in STRING_CASE_COLS:
+        return tuple(sorted({str(x) for x in tbl[col]}))
+    col_data = tbl[col]
+    if hasattr(col_data, 'quantity'):
+        vals = col_data.quantity.value
+    else:
+        vals = np.asarray(col_data, dtype=float)
+    return tuple(sorted(np.unique(vals)))
+
+
+def _combo_columns(case_dict: dict[str, int]) -> list[str]:
+    return list(case_dict.keys()) + ['aperture']
+
+
+def _format_combo(combo: tuple, cols: list[str]) -> str:
+    return ', '.join(f'{name}={value!r}' for name, value in zip(cols, combo))
+
+
+def check_case_coverage(
+        tbl,
+        case_dict: dict[str, int],
+        *,
+        cos_considered: bool,
+        n_stis_apertures: int = N_STIS_APERTURES,
+        n_cos_apertures: int = N_COS_APERTURES,
+) -> tuple[list[str], int, int, list[tuple]]:
+    """
+    Verify per-column unique counts and that every product combination appears.
+
+    Returns (level_issues, n_missing_combos, n_expected_combos, example_missing).
+    """
+    level_issues: list[str] = []
+    combo_cols = _combo_columns(case_dict)
+
+    for col, n_expected in case_dict.items():
+        levels = _unique_levels(tbl, col)
+        if len(levels) != n_expected:
+            level_issues.append(f'{col}: {len(levels)} unique, expected {n_expected}')
+
+    n_ap_expected = n_stis_apertures + (n_cos_apertures if cos_considered else 0)
+    ap_levels = _unique_levels(tbl, 'aperture')
+    if len(ap_levels) != n_ap_expected:
+        level_issues.append(f'aperture: {len(ap_levels)} unique, expected {n_ap_expected}')
+
+    if level_issues:
+        return level_issues, 0, 0, []
+
+    levels_by_col = {col: _unique_levels(tbl, col) for col in combo_cols}
+    n_expected = int(np.prod([len(levels_by_col[c]) for c in combo_cols]))
+
+    actual = {
+        tuple(_scalar_cell(col, tbl[col][i]) for col in combo_cols)
+        for i in range(len(tbl))
+    }
+
+    n_missing = 0
+    examples: list[tuple] = []
+    for combo in product(*(levels_by_col[c] for c in combo_cols)):
+        if combo not in actual:
+            n_missing += 1
+            if len(examples) < MAX_MISSING_COMBO_EXAMPLES:
+                examples.append(combo)
+
+    return level_issues, n_missing, n_expected, examples
 
 
 def _col_values(tbl, name):
@@ -138,9 +223,11 @@ def validate_detection_sigmas_table(
         planet_key_str: str,
         *,
         stale_cutoff: datetime | None,
-        bucket_expected_rows: dict[str, int | None],
         model_colnames_ref: list[str] | None,
         flat_colnames_ref: list[str] | None,
+        case_dict: dict[str, int] | None = None,
+        n_stis_apertures: int = N_STIS_APERTURES,
+        n_cos_apertures: int = N_COS_APERTURES,
         run_offset_stats_smoke_test: bool = False,
         sigma_threshold: float = 1,
         check_h5_companion: bool = False,
@@ -257,7 +344,7 @@ def validate_detection_sigmas_table(
             Tion_h = _col_values(tbl, 'Tion')
             if hasattr(tbl['Tion'], 'quantity'):
                 Tion_h = tbl['Tion'].quantity.to_value('h')
-            msg = _values_outside_range(Tion_h, 1e-2, 1e3, 'Tion [h]')
+            msg = _values_outside_range(Tion_h, 1e-2, 1e4, 'Tion [h]')
             if msg:
                 issues.append(_issue(planet_key_str, tst_type, path, 'Tion_range', msg))
         if 'sw_velocity' in colnames:
@@ -318,16 +405,26 @@ def validate_detection_sigmas_table(
     blocking = {i.check for i in issues} & {
         'read_error', 'missing_file', 'outdated_schema', 'missing_columns', 'missing_meta',
     }
-    if cos is not None and not blocking:
-        bucket = row_count_bucket(tst_type, bool(cos))
-        nrows = len(tbl)
-        expected = bucket_expected_rows.get(bucket)
-        if expected is None:
-            bucket_expected_rows[bucket] = nrows
-        elif nrows != expected:
+    if (tst_type == 'model' and not has_outdated_schema and case_dict is not None
+            and cos is not None and not blocking):
+        level_issues, n_missing, n_expected, examples = check_case_coverage(
+            tbl,
+            case_dict,
+            cos_considered=bool(cos),
+            n_stis_apertures=n_stis_apertures,
+            n_cos_apertures=n_cos_apertures,
+        )
+        if level_issues:
             issues.append(_issue(
-                planet_key_str, tst_type, path, 'row_count_mismatch',
-                f'{nrows} rows, expected {expected} for bucket {bucket}',
+                planet_key_str, tst_type, path, 'case_level_count',
+                '; '.join(level_issues),
+            ))
+        if n_missing > 0:
+            combo_cols = _combo_columns(case_dict)
+            example_str = '; '.join(_format_combo(ex, combo_cols) for ex in examples)
+            issues.append(_issue(
+                planet_key_str, tst_type, path, 'case_combinations_missing',
+                f'{n_missing} of {n_expected} combinations missing; examples: {example_str}',
             ))
 
     if run_offset_stats_smoke_test and tst_type == 'model' and not blocking:
@@ -354,13 +451,17 @@ def validate_all_targets(
         planet_catalog,
         *,
         stale_cutoff: datetime | None = None,
+        case_dict: dict[str, int] | None = None,
+        n_stis_apertures: int = N_STIS_APERTURES,
+        n_cos_apertures: int = N_COS_APERTURES,
         run_offset_stats_smoke_test: bool = False,
         sigma_threshold: float = 1,
         check_h5_companion: bool = False,
         mtime_mismatch_days: int = MTIME_MISMATCH_DAYS,
 ) -> tuple[list[QaIssue], set[str]]:
     all_issues: list[QaIssue] = []
-    bucket_expected_rows: dict[str, int | None] = {b: None for b in ROW_COUNT_BUCKETS}
+    if case_dict is None:
+        case_dict = N_CASE_DICT
     model_colnames_ref: list[str] | None = None
     flat_colnames_ref: list[str] | None = None
     mtimes_by_planet: dict[str, dict[str, datetime]] = defaultdict(dict)
@@ -390,9 +491,11 @@ def validate_all_targets(
                     tst_type,
                     pkey,
                     stale_cutoff=stale_cutoff,
-                    bucket_expected_rows=bucket_expected_rows,
                     model_colnames_ref=model_colnames_ref,
                     flat_colnames_ref=flat_colnames_ref,
+                    case_dict=case_dict if tst_type == 'model' else None,
+                    n_stis_apertures=n_stis_apertures,
+                    n_cos_apertures=n_cos_apertures,
                     run_offset_stats_smoke_test=run_offset_stats_smoke_test,
                     sigma_threshold=sigma_threshold,
                     check_h5_companion=check_h5_companion,

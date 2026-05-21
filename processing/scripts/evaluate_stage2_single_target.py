@@ -40,7 +40,7 @@ from lya_prediction_tools import stis
 #%% global settings
 
 targets = sum([target_lists.eval_no(i) for i in range(1,4)], [])
-targets = set(targets) - {'v1298tau'}
+targets = set(targets)
 
 tst_types = ('model', 'flat')
 sigma_threshold = 1
@@ -243,6 +243,7 @@ def calculate_snr_tables_for_target(target, overwrite=False, selected_tst_types=
                     all_apertures,
                     offsets,
                     max_safe_offset,
+                    detection_threshold=sigma_threshold,
                     verbose=True,
                 )
                 return snrs
