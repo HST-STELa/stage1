@@ -552,6 +552,18 @@ class DetectabilityDatabase:
         imed = isort[len(isort) // 2]
         return self.snrs[imed]
 
+    def geometric_mean_unique_tion_hours(self) -> float:
+        """Geometric mean of unique positive finite Tion values in this table, in hours."""
+        col = self.snrs['Tion']
+        if hasattr(col, 'quantity'):
+            Tion_h = col.quantity.to_value('h')
+        else:
+            Tion_h = np.asarray(col, dtype=float)
+        _Tion_unq = np.unique(Tion_h[np.isfinite(Tion_h) & (Tion_h > 0)])
+        if len(_Tion_unq) == 0:
+            raise ValueError('no finite positive Tion values')
+        return float(10 ** np.mean(np.log10(_Tion_unq)))
+
     def clean_duplicates(self, keys='all'):
         if keys == 'all':
             keys = []

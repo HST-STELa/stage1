@@ -95,19 +95,6 @@ def row_count_bucket(tst_type: str, cos_considered: bool) -> str:
     return 'model_cos' if cos_considered else 'model_no_cos'
 
 
-def geometric_mean_unique_tion_hours(tbl) -> float:
-    """Geometric mean of unique positive finite Tion values, in hours."""
-    col = tbl['Tion']
-    if hasattr(col, 'quantity'):
-        Tion_h = col.quantity.to_value('h')
-    else:
-        Tion_h = np.asarray(col, dtype=float)
-    _Tion_unq = np.unique(Tion_h[np.isfinite(Tion_h) & (Tion_h > 0)])
-    if len(_Tion_unq) == 0:
-        raise ValueError('no finite positive Tion values')
-    return float(10 ** np.mean(np.log10(_Tion_unq)))
-
-
 def _col_values(tbl, name):
     col = tbl[name]
     if hasattr(col, 'quantity'):
