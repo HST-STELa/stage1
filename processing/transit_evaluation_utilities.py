@@ -580,6 +580,78 @@ class DetectabilityDatabase:
         new = new.clean_duplicates()
         return new
 
+    @staticmethod
+    def _meta_offset_hours(value) -> float:
+        if hasattr(value, 'to_value'):
+            return float(value.to_value('h'))
+        return float(np.asarray(value).reshape(-1)[0])
+
+    @classmethod
+    def nested_exploration_obs_configs(
+            cls,
+            grating,
+            base_aperture,
+            best_aperture,
+            apertures_considered,
+            offsets_considered,
+            best_safe_offset,
+            best_time_offset,
+    ) -> set[tuple[float, str, str, str]]:
+        """
+        Observation configurations produced by one
+        ``build_db_with_nested_offset_aperture_exploration`` run (db1 + db2 + db3).
+        """
+        median_lya = LyaReconstruction.sig2lbl[0]
+        g = str(grating)
+        base_ap = str(base_aperture)
+        best_ap = str(best_aperture)
+        apertures = [str(ap) for ap in apertures_considered]
+        offsets = np.asarray(offsets_considered, dtype=float)
+        best_safe = cls._meta_offset_hours(best_safe_offset)
+        best_overall = cls._meta_offset_hours(best_time_offset)
+
+        configs: set[tuple[float, str, str, str]] = set()
+
+        # db1: all offsets at baseline aperture, median Lya
+        for offset in offsets:
+            configs.add((float(offset), g, base_ap, median_lya))
+
+        # db2: all apertures at best safe offset, median Lya
+        for aperture in apertures:
+            configs.add((best_safe, g, aperture, median_lya))
+
+        # db3: selected offsets × best aperture × full Lya range
+        phase3_offsets = np.unique([0.0, best_safe, best_overall])
+        for offset in phase3_offsets:
+            for lya_case in LyaReconstruction.case_labels:
+                configs.add((float(offset), g, best_ap, lya_case))
+
+        return configs
+
+    @classmethod
+    def expected_nested_obs_configs(cls, meta, cos_considered: bool = False) -> set[tuple[float, str, str, str]]:
+        """Union of STIS (base grating) and optional COS nested exploration configs."""
+        configs = cls.nested_exploration_obs_configs(
+            meta['base grating'],
+            meta['base aperture'],
+            meta['best base grating aperture'],
+            meta['base grating apertures considered'],
+            meta['offsets considered'],
+            meta['best safe time offset'],
+            meta['best time offset'],
+        )
+        if cos_considered:
+            configs |= cls.nested_exploration_obs_configs(
+                'g130m',
+                'psa',
+                'psa',
+                ['psa'],
+                meta['offsets considered'],
+                meta['best safe time offset'],
+                meta['best time offset'],
+            )
+        return configs
+
     @classmethod
     def build_db_with_nested_offset_aperture_exploration(
             cls,

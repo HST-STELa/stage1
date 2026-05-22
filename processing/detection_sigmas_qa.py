@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from itertools import product
+from itertools import product as iterproduct
 from pathlib import Path
 from typing import Iterable
 
@@ -15,7 +15,7 @@ from astropy.table import Table
 
 from processing import transit_evaluation_utilities as tutils
 
-# Expected unique counts for model detection-sigmas grids (Stage 2 compile).
+# Expected unique counts for transit-parameter columns (simulation grid).
 N_CASE_DICT = {
     'eta': 4,
     'Tion': 4,
@@ -25,11 +25,15 @@ N_CASE_DICT = {
     'time offset': 17,
     'lya reconstruction case': 5,
 }
+TRANSIT_CASE_COLS = [k for k in N_CASE_DICT if k not in ('time offset', 'lya reconstruction case')]
+OBS_CONFIG_COLS = ['time offset', 'grating', 'aperture', 'lya reconstruction case']
+N_LYA_CASES = len(tutils.LyaReconstruction.case_labels)
 N_STIS_APERTURES = 4
 N_COS_APERTURES = 1
 
 STRING_CASE_COLS = {'lya reconstruction case', 'grating', 'aperture'}
 MAX_MISSING_COMBO_EXAMPLES = 3
+OFFSET_RTOL = 1e-6
 
 COMMON_COLS = [
     'transit velocity ranges',
@@ -124,34 +128,78 @@ def _unique_levels(tbl, col: str) -> tuple:
     return tuple(sorted(np.unique(vals)))
 
 
-def _combo_columns(case_dict: dict[str, int]) -> list[str]:
-    return list(case_dict.keys()) + ['aperture']
+def _combo_columns() -> list[str]:
+    return TRANSIT_CASE_COLS + OBS_CONFIG_COLS
 
 
 def _format_combo(combo: tuple, cols: list[str]) -> str:
     return ', '.join(f'{name}={value!r}' for name, value in zip(cols, combo))
 
 
-def check_case_coverage(
+def _obs_config_tuple(tbl, row_index: int) -> tuple[float, str, str, str]:
+    return tuple(_scalar_cell(col, tbl[col][row_index]) for col in OBS_CONFIG_COLS)
+
+
+def _transit_config_tuple(tbl, row_index: int) -> tuple:
+    return tuple(_scalar_cell(col, tbl[col][row_index]) for col in TRANSIT_CASE_COLS)
+
+
+def _obs_config_in_set(obs: tuple[float, str, str, str], expected: set) -> bool:
+    """Match observation config allowing float tolerance on time offset."""
+    offset, grating, aperture, lya = obs
+    for exp_offset, exp_g, exp_ap, exp_lya in expected:
+        if (grating == exp_g and aperture == exp_ap and lya == exp_lya
+                and np.isclose(offset, exp_offset, rtol=0, atol=OFFSET_RTOL)):
+            return True
+    return False
+
+
+def _normalize_expected_obs_configs(configs: set[tuple[float, str, str, str]]):
+    """Convert meta-derived configs to hashable tuples with plain floats."""
+    return {
+        (float(off), str(g), str(ap), str(lya))
+        for off, g, ap, lya in configs
+    }
+
+
+def check_nested_case_coverage(
         tbl,
-        case_dict: dict[str, int],
+        meta,
+        transit_case_dict: dict[str, int] | None = None,
         *,
         cos_considered: bool,
         n_stis_apertures: int = N_STIS_APERTURES,
         n_cos_apertures: int = N_COS_APERTURES,
 ) -> tuple[list[str], int, int, list[tuple]]:
     """
-    Verify per-column unique counts and that every product combination appears.
+    Verify transit/observation unique counts and nested-exploration case completeness.
+
+    Expected rows are the Cartesian product of the full transit-parameter grid and
+    the observation configurations from ``DetectabilityDatabase.expected_nested_obs_configs``.
 
     Returns (level_issues, n_missing_combos, n_expected_combos, example_missing).
     """
-    level_issues: list[str] = []
-    combo_cols = _combo_columns(case_dict)
+    if transit_case_dict is None:
+        transit_case_dict = {k: N_CASE_DICT[k] for k in TRANSIT_CASE_COLS}
 
-    for col, n_expected in case_dict.items():
+    level_issues: list[str] = []
+    combo_cols = _combo_columns()
+
+    for col, n_expected in transit_case_dict.items():
         levels = _unique_levels(tbl, col)
         if len(levels) != n_expected:
             level_issues.append(f'{col}: {len(levels)} unique, expected {n_expected}')
+
+    n_offsets_expected = len(np.asarray(meta['offsets considered']).reshape(-1))
+    n_offsets_actual = len(_unique_levels(tbl, 'time offset'))
+    if n_offsets_actual != n_offsets_expected:
+        level_issues.append(
+            f'time offset: {n_offsets_actual} unique, expected {n_offsets_expected} from meta',
+        )
+
+    n_lya_actual = len(_unique_levels(tbl, 'lya reconstruction case'))
+    if n_lya_actual != N_LYA_CASES:
+        level_issues.append(f'lya reconstruction case: {n_lya_actual} unique, expected {N_LYA_CASES}')
 
     n_ap_expected = n_stis_apertures + (n_cos_apertures if cos_considered else 0)
     ap_levels = _unique_levels(tbl, 'aperture')
@@ -161,21 +209,41 @@ def check_case_coverage(
     if level_issues:
         return level_issues, 0, 0, []
 
-    levels_by_col = {col: _unique_levels(tbl, col) for col in combo_cols}
-    n_expected = int(np.prod([len(levels_by_col[c]) for c in combo_cols]))
+    transit_levels = {col: _unique_levels(tbl, col) for col in TRANSIT_CASE_COLS}
+    n_transit = int(np.prod([len(transit_levels[c]) for c in TRANSIT_CASE_COLS]))
+    expected_obs = _normalize_expected_obs_configs(
+        tutils.DetectabilityDatabase.expected_nested_obs_configs(meta, cos_considered),
+    )
+    n_obs = len(expected_obs)
+    n_expected = n_transit * n_obs
 
-    actual = {
-        tuple(_scalar_cell(col, tbl[col][i]) for col in combo_cols)
+    actual_obs = {_obs_config_tuple(tbl, i) for i in range(len(tbl))}
+    actual_transit = {_transit_config_tuple(tbl, i) for i in range(len(tbl))}
+    actual_full = {
+        _transit_config_tuple(tbl, i) + _obs_config_tuple(tbl, i)
         for i in range(len(tbl))
     }
 
-    n_missing = 0
-    examples: list[tuple] = []
-    for combo in product(*(levels_by_col[c] for c in combo_cols)):
-        if combo not in actual:
-            n_missing += 1
-            if len(examples) < MAX_MISSING_COMBO_EXAMPLES:
-                examples.append(combo)
+    # Flag observation configs that never appear (before counting transit×obs gaps).
+    for obs in expected_obs:
+        if not any(_obs_config_in_set(a, {obs}) for a in actual_obs):
+            level_issues.append(
+                f'obs config missing entirely: offset={obs[0]}, grating={obs[1]!r}, '
+                f'aperture={obs[2]!r}, lya={obs[3]!r}',
+            )
+
+    blocking = [msg for msg in level_issues if not msg.startswith('obs config missing entirely')]
+    if blocking:
+        return level_issues, 0, n_expected, []
+
+    expected_full = {
+        transit_tuple + obs
+        for transit_tuple in iterproduct(*(transit_levels[c] for c in TRANSIT_CASE_COLS))
+        for obs in expected_obs
+    }
+    missing = expected_full - actual_full
+    n_missing = len(missing)
+    examples = list(missing)[:MAX_MISSING_COMBO_EXAMPLES]
 
     return level_issues, n_missing, n_expected, examples
 
@@ -407,9 +475,11 @@ def validate_detection_sigmas_table(
     }
     if (tst_type == 'model' and not has_outdated_schema and case_dict is not None
             and cos is not None and not blocking):
-        level_issues, n_missing, n_expected, examples = check_case_coverage(
+        transit_case_dict = {k: case_dict[k] for k in TRANSIT_CASE_COLS if k in case_dict}
+        level_issues, n_missing, n_expected, examples = check_nested_case_coverage(
             tbl,
-            case_dict,
+            tbl.meta,
+            transit_case_dict,
             cos_considered=bool(cos),
             n_stis_apertures=n_stis_apertures,
             n_cos_apertures=n_cos_apertures,
@@ -420,7 +490,7 @@ def validate_detection_sigmas_table(
                 '; '.join(level_issues),
             ))
         if n_missing > 0:
-            combo_cols = _combo_columns(case_dict)
+            combo_cols = _combo_columns()
             example_str = '; '.join(_format_combo(ex, combo_cols) for ex in examples)
             issues.append(_issue(
                 planet_key_str, tst_type, path, 'case_combinations_missing',
@@ -458,7 +528,7 @@ def validate_all_targets(
         sigma_threshold: float = 1,
         check_h5_companion: bool = False,
         mtime_mismatch_days: int = MTIME_MISMATCH_DAYS,
-) -> tuple[list[QaIssue], set[str]]:
+) -> tuple[list[QaIssue], set[str], set[str]]:
     all_issues: list[QaIssue] = []
     if case_dict is None:
         case_dict = N_CASE_DICT
@@ -513,8 +583,84 @@ def validate_all_targets(
                         f'model vs flat mtime differ by {delta.days} days',
                     ))
 
-    excluded = {issue.planet_key for issue in all_issues}
-    return all_issues, excluded
+    excluded, cos_incomplete = partition_planet_qa(all_issues)
+    return all_issues, excluded, cos_incomplete
+
+
+def is_cos_related_issue(issue: QaIssue) -> bool:
+    """True when a QA issue is explained by incomplete or invalid COS SNR exploration."""
+    if issue.check == 'cos_rows':
+        return True
+    if issue.check == 'case_level_count' and 'aperture' in issue.detail:
+        return True
+    if issue.check in ('case_combinations_missing', 'obs config missing entirely'):
+        return 'g130m' in issue.detail
+    return False
+
+
+def _issues_for_planet(issues: list[QaIssue], planet_key_str: str) -> list[QaIssue]:
+    return [issue for issue in issues if issue.planet_key == planet_key_str]
+
+
+def _ignorable_planet_issue(issue: QaIssue) -> bool:
+    return issue.tst_type == 'flat' or issue.check == 'mtime_mismatch'
+
+
+def classify_planet_qa(issues: list[QaIssue], planet_key_str: str) -> str:
+    """
+    Classify planet-level QA outcome.
+
+    Returns one of: 'ok', 'cos_incomplete', 'excluded'.
+    """
+    planet_issues = _issues_for_planet(issues, planet_key_str)
+    if not planet_issues:
+        return 'ok'
+
+    significant = [i for i in planet_issues if not _ignorable_planet_issue(i)]
+    if not significant:
+        return 'ok'
+
+    model_issues = [i for i in significant if i.tst_type == 'model']
+    non_model = [i for i in significant if i.tst_type != 'model']
+    if non_model:
+        return 'excluded'
+
+    if model_issues and all(is_cos_related_issue(i) for i in model_issues):
+        return 'cos_incomplete'
+    return 'excluded'
+
+
+def partition_planet_qa(issues: list[QaIssue]) -> tuple[set[str], set[str]]:
+    """Split planets into hard-excluded vs. COS-incomplete (STIS metrics still OK)."""
+    excluded: set[str] = set()
+    cos_incomplete: set[str] = set()
+    planet_keys = {issue.planet_key for issue in issues}
+    for pkey in planet_keys:
+        outcome = classify_planet_qa(issues, pkey)
+        if outcome == 'excluded':
+            excluded.add(pkey)
+        elif outcome == 'cos_incomplete':
+            cos_incomplete.add(pkey)
+    return excluded, cos_incomplete
+
+
+def is_cos_metric_column(colname: str) -> bool:
+    """Compiled-table columns filled from COS SNR exploration."""
+    name = colname.lower()
+    return (
+        name.startswith('sim cos')
+        or name.startswith('cos det')
+        or name.startswith('cos snr')
+    )
+
+
+def cos_metric_column_names(sigma_threshold: float) -> list[str]:
+    return [
+        'sim COS safe offset\nmax snr',
+        f'sim COS safe offset\nfrac w snr > {sigma_threshold}',
+        'cos det\nfrac ratio',
+        'cos snr\nratio',
+    ]
 
 
 def planet_qa_reason(issues: list[QaIssue], planet_key_str: str) -> str:
@@ -522,6 +668,19 @@ def planet_qa_reason(issues: list[QaIssue], planet_key_str: str) -> str:
     seen = set()
     for issue in issues:
         if issue.planet_key != planet_key_str:
+            continue
+        label = f'{issue.check}: {issue.detail}'
+        if label not in seen:
+            seen.add(label)
+            parts.append(label)
+    return '; '.join(parts)
+
+
+def planet_cos_qa_reason(issues: list[QaIssue], planet_key_str: str) -> str:
+    parts = []
+    seen = set()
+    for issue in _issues_for_planet(issues, planet_key_str):
+        if not is_cos_related_issue(issue):
             continue
         label = f'{issue.check}: {issue.detail}'
         if label not in seen:

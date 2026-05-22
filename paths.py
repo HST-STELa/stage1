@@ -8,6 +8,7 @@ stage1_code = Path(env.stage1_code_path)
 
 catalogs = data / 'catalogs'
 packages = data / 'packages'
+population_plots = data / 'population plots'
 inbox = packages / 'inbox'
 data_targets =  data / 'targets'
 def target_data(target):
