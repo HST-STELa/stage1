@@ -1,0 +1,336 @@
+# %ECSV 1.0
+# ---
+# datatype:
+# - name: hostname
+#   datatype: string
+#   description: Host Name
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - name: hd_name
+#   datatype: string
+#   description: HD ID
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - name: hip_name
+#   datatype: string
+#   description: HIP ID
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - {name: tic_id, datatype: int32}
+# - name: gaia_dr2_id
+#   datatype: string
+#   description: Gaia DR2 ID
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - name: gaia_dr3_id
+#   datatype: string
+#   description: Gaia DR3 ID
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - {name: cb_flag, datatype: int32}
+# - name: discoverymethod
+#   datatype: string
+#   description: Discovery Method
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: disc_year, datatype: int32}
+# - name: disc_refname
+#   datatype: string
+#   description: Discovery Reference
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - name: disc_pubdate
+#   datatype: string
+#   description: Discovery Publication Date
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - {name: rv_flag, datatype: int32}
+# - {name: tran_flag, datatype: int64}
+# - name: st_spectype
+#   datatype: string
+#   description: Spectral Type
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - {name: st_teff, unit: K, datatype: float64}
+# - {name: st_tefferr1, unit: K, datatype: float64}
+# - {name: st_tefferr2, unit: K, datatype: float64}
+# - {name: st_tefflim, datatype: int32}
+# - {name: st_rad, unit: solRad, datatype: float64, format: .2f}
+# - {name: st_raderr1, unit: solRad, datatype: float64}
+# - {name: st_raderr2, unit: solRad, datatype: float64}
+# - {name: st_radlim, datatype: int32}
+# - {name: st_mass, unit: solMass, datatype: float64}
+# - {name: st_masserr1, unit: solMass, datatype: float64}
+# - {name: st_masserr2, unit: solMass, datatype: float64}
+# - {name: st_masslim, datatype: int32}
+# - {name: st_met, unit: dex, datatype: float64}
+# - {name: st_meterr1, unit: dex, datatype: float64}
+# - {name: st_meterr2, unit: dex, datatype: float64}
+# - {name: st_metlim, datatype: int32}
+# - name: st_metratio
+#   datatype: string
+#   description: Stellar Metallicity Ratio
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: float64[null]
+# - {name: st_lum, unit: dex(solLum), datatype: float64}
+# - {name: st_lumerr1, unit: dex(solLum), datatype: float64}
+# - {name: st_lumerr2, unit: dex(solLum), datatype: float64}
+# - {name: st_lumlim, datatype: int32}
+# - {name: st_logg, unit: dex(cm / s2), datatype: float64}
+# - {name: st_loggerr1, unit: dex(cm / s2), datatype: float64}
+# - {name: st_loggerr2, unit: dex(cm / s2), datatype: float64}
+# - {name: st_logglim, unit: dex(cm / s2), datatype: int32}
+# - {name: st_age, unit: Gyr, datatype: float64, format: .1f}
+# - {name: st_ageerr1, unit: Gyr, datatype: float64}
+# - {name: st_ageerr2, unit: Gyr, datatype: float64}
+# - {name: st_agelim, datatype: int32}
+# - {name: st_dens, unit: g / cm3, datatype: float64}
+# - {name: st_denserr1, unit: g / cm3, datatype: float64}
+# - {name: st_denserr2, unit: g / cm3, datatype: float64}
+# - {name: st_denslim, datatype: int32}
+# - {name: st_vsin, unit: km / s, datatype: float64}
+# - {name: st_vsinerr1, datatype: float64}
+# - {name: st_vsinerr2, datatype: float64}
+# - {name: st_vsinlim, datatype: int32}
+# - {name: st_rotp, unit: d, datatype: float64, format: .1f}
+# - {name: st_rotperr1, datatype: float64}
+# - {name: st_rotperr2, datatype: float64}
+# - {name: st_rotplim, datatype: int32}
+# - {name: st_radv, unit: km / s, datatype: float64}
+# - {name: st_radverr1, unit: km / s, datatype: float64}
+# - {name: st_radverr2, unit: km / s, datatype: float64}
+# - {name: st_radvlim, datatype: int32}
+# - name: rastr
+#   unit: sexagesimal
+#   datatype: string
+#   description: Right Ascension (J2000) String for Display
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: ra, unit: deg, datatype: float64}
+# - name: decstr
+#   unit: sexagesimal
+#   datatype: string
+#   description: Declination (J2000) String for Display
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: dec, unit: deg, datatype: float64}
+# - {name: sy_dist, unit: pc, datatype: float64}
+# - {name: sy_disterr1, unit: pc, datatype: float64}
+# - {name: sy_disterr2, unit: pc, datatype: float64}
+# - {name: sy_plx, unit: mas, datatype: float64}
+# - {name: sy_plxerr1, datatype: float64}
+# - {name: sy_plxerr2, datatype: float64}
+# - {name: sy_pnum, datatype: int32}
+# - {name: sy_pmra, unit: mas / yr, datatype: float64}
+# - {name: sy_pmraerr1, unit: mas / yr, datatype: float64}
+# - {name: sy_pmraerr2, unit: mas / yr, datatype: float64}
+# - {name: sy_pmdec, unit: mas / yr, datatype: float64}
+# - {name: sy_pmdecerr1, unit: mas / yr, datatype: float64}
+# - {name: sy_pmdecerr2, unit: mas / yr, datatype: float64}
+# - {name: sy_bmag, datatype: float64}
+# - {name: sy_bmagerr1, datatype: float64}
+# - {name: sy_bmagerr2, datatype: float64}
+# - {name: sy_vmag, datatype: float64}
+# - {name: sy_vmagerr1, datatype: float64}
+# - {name: sy_vmagerr2, datatype: float64}
+# - {name: sy_jmag, datatype: float64}
+# - {name: sy_jmagerr1, datatype: float64}
+# - {name: sy_jmagerr2, datatype: float64}
+# - {name: sy_hmag, datatype: float64}
+# - {name: sy_hmagerr1, datatype: float64}
+# - {name: sy_hmagerr2, datatype: float64}
+# - {name: sy_kmag, datatype: float64}
+# - {name: sy_kmagerr1, datatype: float64}
+# - {name: sy_kmagerr2, datatype: float64}
+# - {name: sy_umag, datatype: float64}
+# - {name: sy_umagerr1, datatype: float64}
+# - {name: sy_umagerr2, datatype: float64}
+# - {name: sy_gmag, datatype: float64}
+# - {name: sy_gmagerr1, datatype: float64}
+# - {name: sy_gmagerr2, datatype: float64}
+# - {name: sy_rmag, datatype: float64}
+# - {name: sy_rmagerr1, datatype: float64}
+# - {name: sy_rmagerr2, datatype: float64}
+# - {name: sy_imag, datatype: float64}
+# - {name: sy_imagerr1, datatype: float64}
+# - {name: sy_imagerr2, datatype: float64}
+# - {name: sy_zmag, datatype: float64}
+# - {name: sy_zmagerr1, datatype: float64}
+# - {name: sy_zmagerr2, datatype: float64}
+# - {name: sy_w1mag, datatype: float64}
+# - {name: sy_w1magerr1, datatype: float64}
+# - {name: sy_w1magerr2, datatype: float64}
+# - {name: sy_w2mag, datatype: float64}
+# - {name: sy_w2magerr1, datatype: float64}
+# - {name: sy_w2magerr2, datatype: float64}
+# - {name: sy_w3mag, datatype: float64}
+# - {name: sy_w3magerr1, datatype: float64}
+# - {name: sy_w3magerr2, datatype: float64}
+# - {name: sy_w4mag, datatype: float64}
+# - {name: sy_w4magerr1, datatype: float64}
+# - {name: sy_w4magerr2, datatype: float64}
+# - {name: sy_gaiamag, datatype: float64}
+# - {name: sy_gaiamagerr1, datatype: float64}
+# - {name: sy_gaiamagerr2, datatype: float64}
+# - {name: sy_icmag, datatype: float64}
+# - {name: sy_icmagerr1, datatype: float64}
+# - {name: sy_icmagerr2, datatype: float64}
+# - {name: sy_tmag, datatype: float64}
+# - {name: sy_tmagerr1, datatype: float64}
+# - {name: sy_tmagerr2, datatype: float64}
+# - {name: sy_kepmag, datatype: float64}
+# - {name: sy_kepmagerr1, datatype: float64}
+# - {name: sy_kepmagerr2, datatype: float64}
+# - name: toi_created
+#   datatype: string
+#   description: TOI Created Date
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: sy_pmralim, datatype: int32}
+# - {name: sy_pmdeclim, datatype: int32}
+# - {name: sy_tmaglim, datatype: int32}
+# - name: rowupdate
+#   datatype: string
+#   description: Last Update Date
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - name: ctoi_alias
+#   datatype: string
+#   description: Community TESS Object of Interest Alias
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: sy_distlim, datatype: int32}
+# - name: toi
+#   datatype: string
+#   description: TESS Object of Interest Identifier (TOI nnn.xx)
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - name: tfopwg_disp
+#   datatype: string
+#   description: TFOPWG Disposition
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: warning1, datatype: bool, description: Planets from the TOI catalog that were listed as known planets but that don't appearin
+#     the confirmed planets catalog.}
+# - name: toipfx
+#   datatype: string
+#   description: TESS Object of Interest Prefix (Stellar Portion of TOI Name)
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - name: id
+#   datatype: string
+#   format: s
+#   description: Planet Name
+#   meta: !!omap
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: requested_target, datatype: bool}
+# - {name: manually_added, datatype: bool}
+# - {name: requested_top20, datatype: int64}
+# - {name: requested_sanity50pc, datatype: int64}
+# - {name: requested_evie, datatype: int64}
+# - {name: requested_thyme, datatype: int64}
+# - {name: requested_observed_transit, datatype: int64}
+# - {name: requested_harps, datatype: int64}
+# - {name: requested_luca, datatype: int64}
+# - {name: requested_fei, datatype: int64}
+# - {name: requested_michaelz, datatype: int64}
+# - {name: requested_andrewv, datatype: int64}
+# - {name: requested_vincentb, datatype: int64}
+# - {name: requested_anonymous0812, datatype: int64}
+# - {name: stage1, datatype: bool, format: ' '}
+# - {name: decision, datatype: string, format: s, subtype: json}
+# - {name: simbad_match, datatype: bool}
+# - name: simbad_id
+#   datatype: string
+#   description: Main identifier for an object
+#   meta: !!omap
+#   - {ucd: meta.id;meta.main}
+#   - {_votable_string_dtype: char}
+#   subtype: json
+# - {name: n_stis_e140m_lya_obs, datatype: int64}
+# - {name: n_stis_g140m_lya_obs, datatype: int64}
+# - {name: n_cos_g130m_lya_obs, datatype: int64}
+# - {name: external_lya, datatype: bool}
+# - {name: external_fuv, datatype: bool}
+# - {name: n_stis_e140m_obs, datatype: int64}
+# - {name: n_stis_g140m_obs, datatype: int64}
+# - {name: n_stis_g140l_obs, datatype: int64}
+# - {name: n_cos_g130m_obs, datatype: int64}
+# - {name: n_cos_g140l_obs, datatype: int64}
+# - {name: lya_verified, datatype: string, subtype: 'float64[null]'}
+# - {name: fuv_verified, datatype: string, subtype: 'float64[null]'}
+# - {name: external_lya_status, datatype: string, subtype: json}
+# - {name: external_fuv_status, datatype: string, subtype: json}
+# - {name: st_radsrc, datatype: string, subtype: json}
+# - {name: st_masssrc, datatype: string, subtype: json}
+# - {name: st_teffsrc, datatype: string, subtype: json}
+# - {name: st_lumsrc, datatype: string, subtype: json}
+# - {name: sy_jmagsrc, datatype: string, subtype: json}
+# - {name: flag_gaseous, datatype: bool}
+# - {name: flag_young, datatype: bool}
+# - {name: flag_multiplanet, datatype: bool, description: multiple confirmed or candidate planets in system}
+# - {name: sy_nuvmag, datatype: float64}
+# - {name: sy_nuvmagerr1, datatype: float64}
+# - {name: sy_nuvmagerr2, datatype: float64}
+# - {name: sy_nuvmaglim, datatype: float64}
+# - {name: sy_nuvmagobs, datatype: bool}
+# - {name: sy_fuvmag, datatype: float64}
+# - {name: sy_fuvmagerr1, datatype: float64}
+# - {name: sy_fuvmagerr2, datatype: float64}
+# - {name: sy_fuvmaglim, datatype: float64}
+# - {name: sy_fuvmagobs, datatype: bool}
+# - {name: Flya_1AU_nuv, unit: erg / (s cm2), datatype: float64}
+# - {name: Flya_1AU_fuv, unit: erg / (s cm2), datatype: float64}
+# - {name: Flya_1AU_Teff_linsky, unit: erg / (s cm2), datatype: float64, description: Lya flux estimated based on Teff and Prot using
+#     Lisnky+ 2013.}
+# - {name: Flya_1AU_Teff_schneider, unit: erg2 K / (s2 cm4), datatype: float64, description: Lya flux estimated based on Teff using Schneider+
+#     2019.}
+# - {name: Flya_1AU_adopted, unit: erg / (s cm2), datatype: float64, format: .2f}
+# - {name: Flya_earth_no_ISM, unit: erg / (s cm2), datatype: float64, format: .2e, description: 'Flya_1AU_adopted scaled to earth distance,
+#     no ISM abosprtion.'}
+# - {name: transit_snr_optimistic, unit: '', datatype: float64}
+# - {name: transit_snr_nominal, unit: '', datatype: float64, format: .1f}
+# - {name: Feuv_1AU, unit: erg / (s cm2), datatype: float64}
+# - {name: Feuv_at_planet, unit: erg / (s cm2), datatype: float64}
+# - {name: flag_gap_upper_cusp, datatype: bool}
+# - {name: flag_water_world, datatype: bool}
+# - {name: flag_outflow, datatype: bool}
+# - {name: flag_outflow_and_not_in_sys, datatype: bool, description: systems contains planets with and without H/He envelopes}
+# - {name: flag_gas_and_rocky_in_sys, datatype: bool, description: systems contains planets with and without H/He envelopes}
+# - {name: flag_super_puff, datatype: bool}
+# - {name: TSM, datatype: float64}
+# - {name: flag_high_TSM, datatype: bool}
+# - {name: flag_measured_mass, datatype: bool}
+# - {name: flag_has_FUV_or_Lya_already, datatype: bool}
+# - {name: score, unit: '', datatype: float64}
+# - {name: score_host, datatype: float64}
+# - {name: stage1_rank, datatype: int64, format: .0f}
+# - {name: stage1_g140m, datatype: float64}
+# - {name: stage1_g140l, datatype: float64}
+# - {name: stage1_e140m, datatype: float64}
+# - {name: stage1_backup, datatype: bool}
+# - {name: stage1_orbit_total, datatype: int64}
+# schema: astropy-2.0
+hostname hd_name hip_name tic_id gaia_dr2_id gaia_dr3_id cb_flag discoverymethod disc_year disc_refname disc_pubdate rv_flag tran_flag st_spectype st_teff st_tefferr1 st_tefferr2 st_tefflim st_rad st_raderr1 st_raderr2 st_radlim st_mass st_masserr1 st_masserr2 st_masslim st_met st_meterr1 st_meterr2 st_metlim st_metratio st_lum st_lumerr1 st_lumerr2 st_lumlim st_logg st_loggerr1 st_loggerr2 st_logglim st_age st_ageerr1 st_ageerr2 st_agelim st_dens st_denserr1 st_denserr2 st_denslim st_vsin st_vsinerr1 st_vsinerr2 st_vsinlim st_rotp st_rotperr1 st_rotperr2 st_rotplim st_radv st_radverr1 st_radverr2 st_radvlim rastr ra decstr dec sy_dist sy_disterr1 sy_disterr2 sy_plx sy_plxerr1 sy_plxerr2 sy_pnum sy_pmra sy_pmraerr1 sy_pmraerr2 sy_pmdec sy_pmdecerr1 sy_pmdecerr2 sy_bmag sy_bmagerr1 sy_bmagerr2 sy_vmag sy_vmagerr1 sy_vmagerr2 sy_jmag sy_jmagerr1 sy_jmagerr2 sy_hmag sy_hmagerr1 sy_hmagerr2 sy_kmag sy_kmagerr1 sy_kmagerr2 sy_umag sy_umagerr1 sy_umagerr2 sy_gmag sy_gmagerr1 sy_gmagerr2 sy_rmag sy_rmagerr1 sy_rmagerr2 sy_imag sy_imagerr1 sy_imagerr2 sy_zmag sy_zmagerr1 sy_zmagerr2 sy_w1mag sy_w1magerr1 sy_w1magerr2 sy_w2mag sy_w2magerr1 sy_w2magerr2 sy_w3mag sy_w3magerr1 sy_w3magerr2 sy_w4mag sy_w4magerr1 sy_w4magerr2 sy_gaiamag sy_gaiamagerr1 sy_gaiamagerr2 sy_icmag sy_icmagerr1 sy_icmagerr2 sy_tmag sy_tmagerr1 sy_tmagerr2 sy_kepmag sy_kepmagerr1 sy_kepmagerr2 toi_created sy_pmralim sy_pmdeclim sy_tmaglim rowupdate ctoi_alias sy_distlim toi tfopwg_disp warning1 toipfx id requested_target manually_added requested_top20 requested_sanity50pc requested_evie requested_thyme requested_observed_transit requested_harps requested_luca requested_fei requested_michaelz requested_andrewv requested_vincentb requested_anonymous0812 stage1 decision simbad_match simbad_id n_stis_e140m_lya_obs n_stis_g140m_lya_obs n_cos_g130m_lya_obs external_lya external_fuv n_stis_e140m_obs n_stis_g140m_obs n_stis_g140l_obs n_cos_g130m_obs n_cos_g140l_obs lya_verified fuv_verified external_lya_status external_fuv_status st_radsrc st_masssrc st_teffsrc st_lumsrc sy_jmagsrc flag_gaseous flag_young flag_multiplanet sy_nuvmag sy_nuvmagerr1 sy_nuvmagerr2 sy_nuvmaglim sy_nuvmagobs sy_fuvmag sy_fuvmagerr1 sy_fuvmagerr2 sy_fuvmaglim sy_fuvmagobs Flya_1AU_nuv Flya_1AU_fuv Flya_1AU_Teff_linsky Flya_1AU_Teff_schneider Flya_1AU_adopted Flya_earth_no_ISM transit_snr_optimistic transit_snr_nominal Feuv_1AU Feuv_at_planet flag_gap_upper_cusp flag_water_world flag_outflow flag_outflow_and_not_in_sys flag_gas_and_rocky_in_sys flag_super_puff TSM flag_high_TSM flag_measured_mass flag_has_FUV_or_Lya_already score score_host stage1_rank stage1_g140m stage1_g140l stage1_e140m stage1_backup stage1_orbit_total
+"""TOI-4643""" "" "" 270355392 "" "" "" """Transit""" "" "" "" "" 1 "" 3782.0 157.0 -157.0 0 0.518021 0.0153843 -0.0153843 0 0.5445 "" "" "" "" "" "" "" "" -1.2535 "" "" "" 4.72167 0.0087074 -0.0087074 0 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" 9.44 "" "" "" """02h08m52.31s""" 32.217966 """+04d18m24.94s""" 4.306928 40.1036 0.06965 -0.06965 "" "" "" 2 -19.526 0.074 -0.074 119.094 0.065 -0.065 "" "" "" "" "" "" 9.397000312805176 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" 10.6127 0.007 -0.007 "" "" "" """2022-04-20 20:40:07""" 0 0 0 """2024-12-10 12:03:04""" """270355392.02""" 0 """4643.02""" """PC""" False """4643""" """4643.02""" False False 0 0 0 0 0 0 0 0 0 0 0 0 False """Cut because predicted SNR ranked too low.""" True """StKM 1-237""" 0 0 0 False False 0 0 0 0 0 "" "" """none""" """none""" """catalog""" """inferred from Teff""" """catalog""" """inferred from Teff""" """catalog""" True False True 21.867885789539994 0.6664868214004276 0.6664868214004276 0.0 True 21.789438104032104 "" "" -1.0 True 2.60991560186354 "" 12.579181979928029 0.8229298202455058 2.60991560186354 3.81425283249509e-14 4.617431979528024 1.3039232036112935 2.7117706847948915 448.177226307667 True "" True False True "" 4.838455007199953 False "" False 1.3039232036112935 1.3039232036112935 161 nan nan nan True 970
+"""TOI-214""" "" "" 167415965 "" "" "" """Transit""" "" "" "" "" 1 "" 5346.2 141.5 -141.5 0 0.8 0.05 -0.05 0 0.8938545454545455 "" "" "" "" "" "" "" "" -0.2845818181818183 "" "" "" 4.6 0.09 -0.09 0 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" 17.703 "" "" "" """06h37m50.1s""" 99.458741 """-70d55m52.78s""" -70.931327 38.96 0.03765 -0.03765 "" "" "" 1 -149.853 0.043 -0.043 298.759 0.058 -0.058 "" "" "" "" "" "" 7.310999870300293 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" 8.0089 0.006 -0.006 "" "" "" """2019-05-07 17:42:38""" 0 0 0 """2024-09-05 10:08:02""" """167415965.01""" 0 """214.01""" """PC""" False """214""" """214.01""" True False 11 0 0 0 0 0 0 0 0 0 0 0 False """Cut because predicted SNR ranked too low.""" True """HD  48611""" 0 0 0 False False 0 0 0 0 0 "" "" """none""" """none""" """catalog""" """inferred from Teff""" """catalog""" """inferred from Teff""" """catalog""" True False True 14.682229420640383 0.007236407020709018 0.007236407020709018 0.0 True 19.323807249704494 0.16869263776457327 0.16869263776457327 0.0 True "" "" 22.6427848528159 9.37181010106211 9.37181010106211 1.4512268911226695e-13 7.39084917981617 1.2490080408927098 5.670036946018286 324.8118101565546 True "" True False True "" 6.801803882599768 False "" False 1.2490080408927098 1.2490080408927098 164 nan nan nan True 970
+"""TOI-4556""" "" "" 107018378 "" "" "" """Transit""" "" "" "" "" 1 "" 3319.0 157.0 -157.0 0 0.218553 0.0065861 -0.0065861 0 0.30062500000000003 "" "" "" "" "" "" "" "" -1.9565 "" "" "" 5.03236 0.0204889 -0.0204889 0 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" """12h11m42.02s""" 182.925066 """-32d31m57.29s""" -32.53258 36.6717 0.08675 -0.08675 "" "" "" 1 -265.946 0.094 -0.094 -282.684 0.072 -0.072 "" "" "" "" "" "" 11.505000114440918 "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" 13.0454 0.007 -0.007 "" "" "" """2021-10-28 01:47:23""" 0 0 0 """2025-07-09 16:00:02""" """107018378.01""" 0 """4556.01""" """PC""" False """4556""" """4556.01""" False False 0 0 0 0 0 0 0 0 0 0 0 0 False """Cut because predicted SNR ranked too low.""" True """2MASS J12114235-3231527""" 0 0 0 False False 0 0 0 0 0 "" "" """none""" """none""" """catalog""" """inferred from Teff""" """catalog""" """inferred from Teff""" """catalog""" True False False 21.816796813297863 0.9216705736024341 0.9216705736024341 0.0 True 21.328405938597445 "" "" -1.0 True 2.379787250194766 "" 10.570384861448396 0.40054618531658037 2.379787250194766 4.159353007352543e-14 5.684120194340678 1.1907707893008244 2.4622744823979845 2422.2756867152857 True "" True False False "" 9.369803906320673 False "" False 1.1907707893008244 1.1907707893008244 165 nan nan nan True 970

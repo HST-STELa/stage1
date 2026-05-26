@@ -51,5 +51,6 @@ new_data_lists = stage1_processing / 'targets_w_new_data'
 data_reduction_tools = Path('data_reduction_tools')
 
 mdwarf_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/14V4VAoDKTPLT_qSqW64henNFJyI74fZI/export?format=xlsx&gid=1771378421'
+mdwarf_google_sheet_csv_export = 'https://docs.google.com/spreadsheets/d/14V4VAoDKTPLT_qSqW64henNFJyI74fZI/export?format=csv&gid=1771378421'
 escape_catalog_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/1dEvK_yr4eP9nq2zorvs0k3Lyt8UrqYznmb80mY4Z5X0/export?format=xlsx&gid=0'
 observation_progress_google_sheet_xlsx_export = 'https://docs.google.com/spreadsheets/d/1-Ng0aoIWy3MqmGaNZcVOjMxBdqLO9W9qTmvx3VOD63k/export?format=xlsx&gid=0'

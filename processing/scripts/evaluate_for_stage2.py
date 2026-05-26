@@ -237,7 +237,7 @@ for target in utils.printprogress(targets, prefix='host '):
             get_snr_iterable, _ = consrtuct_snr_samplers(host, transit, tst_type)
             def build_planet_snrs(grating, base_aperture, all_apertures):
                 snrs = build_snrs(get_snr_iterable, grating, base_aperture, all_apertures,
-                                  offsets, max_safe_offset, verbose=True)
+                                  offsets, max_safe_offset, detection_threshold=sigma_threshold, verbose=True)
                 return snrs
 
             snrs = build_planet_snrs(grating, base_aperture, all_apertures)
