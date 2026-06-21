@@ -20,7 +20,8 @@ from processing import observation_table as obt
 #%% setup
 
 star = 'l98-59'
-planet = f'{star}-c'
+ltr = 'c'
+planet = f'{star}-{ltr}'
 fd = paths.target_data(star)
 obs_month = '2026-04'
 tst_window = [-10, 10]
@@ -31,6 +32,7 @@ rv_kms = rv.to_value('km/s')
 v_lim = 300  # km s^-1 symmetric window around stellar Lyα
 
 v_integrate = [-200, -10] * u.km/u.s
+
 
 #%% files
 
@@ -47,10 +49,10 @@ obstbl = obstbl[month_mask]
 obstbl.sort('start')
 obstbl.add_index('archive id')
 
-phases = obstbl['phase_c']
+phases = obstbl[f'phase_{ltr}']
 
 # get midpt of transit visit
-tstmask = (obstbl['phase_c'] > tst_window[0]) & (obstbl['phase_c'] < tst_window[1])
+tstmask = (phases > tst_window[0]) & (phases < tst_window[1])
 phmid_visit = (np.min(phases[tstmask]) + np.max(phases[tstmask])) / 2
 
 #%% folder to store transit results
@@ -60,10 +62,28 @@ tst_fd.mkdir(parents=True, exist_ok=True)
 
 #%% utils
 
-def get_phase(filepath, planet='c'):
+def get_phase(filepath, planet=ltr):
     obsid = dbutils.parse_filename(filepath)['id']
     phase = obstbl.loc[obsid][f'phase_{planet}']
     return phase
+
+
+PHASE_CMAP = 'Plasma'
+BASELINE_COLOR = 'rgba(140,140,140,0.85)'
+BASELINE_MARKER = 'rgba(120,120,120,0.95)'
+
+
+def phase_colors_map(rows, cmap=PHASE_CMAP):
+    phases = np.array([float(r['phase']) for r in rows], dtype=float)
+    if phases.size == 0:
+        return {}
+    p_lo, p_hi = phases.min(), phases.max()
+    denom = (p_hi - p_lo) if np.isfinite(p_hi - p_lo) and (p_hi > p_lo) else 1.0
+    norm = (phases - p_lo) / denom
+    return {
+        r['obsid']: c
+        for r, c in zip(rows, sample_colorscale(cmap, norm.tolist()))
+    }
 
 
 #%% plot flats
@@ -73,7 +93,7 @@ flats_dir.mkdir(parents=True, exist_ok=True)
 
 for i, flt_file in enumerate(flt_files):
     obsid = dbutils.parse_filename(flt_file)['id']
-    phase = get_phase(flt_file, 'c')
+    phase = get_phase(flt_file, ltr)
     data = np.asarray(fits.getdata(flt_file, 1), dtype=float)
     z = np.cbrt(data)
     plt.figure(figsize=(8, 5))
@@ -94,7 +114,7 @@ for i, flt_file in enumerate(flt_files):
 spec_records = []
 for x1d_file in x1d_files:
     obsid = dbutils.parse_filename(x1d_file)['id']
-    phase = get_phase(x1d_file, 'c')
+    phase = get_phase(x1d_file, ltr)
     data = fits.getdata(x1d_file, 1)
     wave = np.ravel(np.asarray(data['wavelength'], dtype=np.float64))
     flux = np.ravel(np.asarray(data['flux'], dtype=np.float64))
@@ -131,19 +151,9 @@ spec_records.sort(key=lambda r: r['phase'])
 
 
 transit_only = [r for r in spec_records if r['in_transit']]
-colors_map = {}
-# Sequential colormap for phase (time): warm late / cool early is easy to read in order
-_cmap_transit = 'Plasma'
-phases_only = np.array([r['phase'] for r in transit_only], dtype=float)
-p_lo, p_hi = phases_only.min(), phases_only.max()
-denom = (p_hi - p_lo) if np.isfinite(p_hi - p_lo) and (p_hi > p_lo) else 1.0
-norm = (phases_only - p_lo) / denom
-colors_map = {
-    r['obsid']: c
-    for r, c in zip(transit_only, sample_colorscale(_cmap_transit, norm.tolist()))
-}
-first_oid = transit_only[0]['obsid']
-last_oid = transit_only[-1]['obsid']
+colors_map = phase_colors_map(transit_only)
+first_oid = transit_only[0]['obsid'] if transit_only else None
+last_oid = transit_only[-1]['obsid'] if transit_only else None
 
 fig = go.Figure()
 baseline_legend_done = False
@@ -153,7 +163,7 @@ for r in spec_records:
     fx = np.asarray(r['flux'][mask], dtype=np.float64)
     trace_name = f'phase = {r["phase"]:.2f} h'
     if not r['in_transit']:
-        linekws = dict(color='rgba(140,140,140,0.85)', width=1)
+        linekws = dict(color=BASELINE_COLOR, width=1)
         showlegend = not baseline_legend_done
         baseline_legend_done = True
     else:
@@ -193,8 +203,10 @@ fig.write_html(str(spectra_html), include_plotlyjs='cdn')
 
 #%% plot lightcurves
 
-v_int_kms = v_integrate.to_value('km s-1')
-w_integrate = lya.v2w(v_int_kms + rv_kms)
+v_int_kms = np.asarray(v_integrate.to_value('km s-1'), dtype=float).ravel()
+w_lo = lya.v2w(float(v_int_kms[0]) + rv_kms)
+w_hi = lya.v2w(float(v_int_kms[1]) + rv_kms)
+w_integrate = tuple(sorted((w_lo, w_hi)))
 
 
 def integrated_line_flux(record):
@@ -234,6 +246,23 @@ def phase_axis_extent(rows):
     return lo - pad, hi + pad, span + 2 * pad
 
 
+def add_lc_trace(fig, rows, col, colors_map, in_transit=False):
+    xs, ys, yerr, xhalf = lc_trace_arrays(rows)
+    if in_transit:
+        marker_color = [colors_map[r['obsid']] for r in rows]
+    else:
+        marker_color = BASELINE_MARKER
+    kw = dict(
+        mode='markers',
+        marker=dict(size=9, color=marker_color),
+        error_x=dict(type='data', array=xhalf, thickness=1),
+        showlegend=False,
+    )
+    if len(yerr) and np.any(np.isfinite(yerr)):
+        kw['error_y'] = dict(type='data', array=np.asarray(yerr, dtype=np.float64))
+    fig.add_trace(go.Scatter(x=xs, y=ys, **kw), row=1, col=col)
+
+
 baseline_lc = [r for r in spec_records if not r['in_transit']]
 transit_lc = [r for r in spec_records if r['in_transit']]
 eb = phase_axis_extent(baseline_lc)
@@ -255,35 +284,13 @@ fig_lc = make_subplots(
     shared_yaxes=True,
 )
 
-xb, yb, yeb, xhb = lc_trace_arrays(baseline_lc)
-xt, yt, yet, xht = lc_trace_arrays(transit_lc)
-
-_kw_bl = dict(
-    mode='markers',
-    marker=dict(size=9, color='rgba(120,120,120,0.95)'),
-    error_x=dict(type='data', array=xhb, thickness=1),
-    name='baseline',
-    showlegend=False,
-)
-if len(yeb) and np.any(np.isfinite(yeb)):
-    _kw_bl['error_y'] = dict(type='data', array=np.asarray(yeb, dtype=np.float64))
-fig_lc.add_trace(go.Scatter(x=xb, y=yb, **_kw_bl), row=1, col=1)
-
-_kw_tr = dict(
-    mode='markers',
-    marker=dict(size=9, color='rgba(120,60,140,0.95)'),
-    error_x=dict(type='data', array=xht, thickness=1),
-    name='in transit',
-    showlegend=False,
-)
-if len(yet) and np.any(np.isfinite(yet)):
-    _kw_tr['error_y'] = dict(type='data', array=np.asarray(yet, dtype=np.float64))
-fig_lc.add_trace(go.Scatter(x=xt, y=yt, **_kw_tr), row=1, col=2)
-
-if eb:
-    fig_lc.update_xaxes(range=[eb[0], eb[1]], row=1, col=1)
-if et:
-    fig_lc.update_xaxes(range=[et[0], et[1]], row=1, col=2)
+for rows, col, in_transit, extent in (
+    (baseline_lc, 1, False, eb),
+    (transit_lc, 2, True, et),
+):
+    add_lc_trace(fig_lc, rows, col, colors_map, in_transit=in_transit)
+    if extent:
+        fig_lc.update_xaxes(range=[extent[0], extent[1]], row=1, col=col)
 
 fig_lc.update_xaxes(title_text='Phase (h)', row=1, col=1)
 fig_lc.update_xaxes(title_text='Phase (h)', row=1, col=2)

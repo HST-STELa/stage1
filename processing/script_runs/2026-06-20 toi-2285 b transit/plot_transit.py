@@ -68,6 +68,24 @@ def get_phase(filepath, planet=ltr):
     return phase
 
 
+PHASE_CMAP = 'Plasma'
+BASELINE_COLOR = 'rgba(140,140,140,0.85)'
+BASELINE_MARKER = 'rgba(120,120,120,0.95)'
+
+
+def phase_colors_map(rows, cmap=PHASE_CMAP):
+    phases = np.array([float(r['phase']) for r in rows], dtype=float)
+    if phases.size == 0:
+        return {}
+    p_lo, p_hi = phases.min(), phases.max()
+    denom = (p_hi - p_lo) if np.isfinite(p_hi - p_lo) and (p_hi > p_lo) else 1.0
+    norm = (phases - p_lo) / denom
+    return {
+        r['obsid']: c
+        for r, c in zip(rows, sample_colorscale(cmap, norm.tolist()))
+    }
+
+
 #%% plot flats
 
 flats_dir = tst_fd / 'flats'
@@ -133,19 +151,9 @@ spec_records.sort(key=lambda r: r['phase'])
 
 
 transit_only = [r for r in spec_records if r['in_transit']]
-colors_map = {}
-# Sequential colormap for phase (time): warm late / cool early is easy to read in order
-_cmap_transit = 'Plasma'
-phases_only = np.array([r['phase'] for r in transit_only], dtype=float)
-p_lo, p_hi = phases_only.min(), phases_only.max()
-denom = (p_hi - p_lo) if np.isfinite(p_hi - p_lo) and (p_hi > p_lo) else 1.0
-norm = (phases_only - p_lo) / denom
-colors_map = {
-    r['obsid']: c
-    for r, c in zip(transit_only, sample_colorscale(_cmap_transit, norm.tolist()))
-}
-first_oid = transit_only[0]['obsid']
-last_oid = transit_only[-1]['obsid']
+colors_map = phase_colors_map(transit_only)
+first_oid = transit_only[0]['obsid'] if transit_only else None
+last_oid = transit_only[-1]['obsid'] if transit_only else None
 
 fig = go.Figure()
 baseline_legend_done = False
@@ -155,7 +163,7 @@ for r in spec_records:
     fx = np.asarray(r['flux'][mask], dtype=np.float64)
     trace_name = f'phase = {r["phase"]:.2f} h'
     if not r['in_transit']:
-        linekws = dict(color='rgba(140,140,140,0.85)', width=1)
+        linekws = dict(color=BASELINE_COLOR, width=1)
         showlegend = not baseline_legend_done
         baseline_legend_done = True
     else:
@@ -238,6 +246,23 @@ def phase_axis_extent(rows):
     return lo - pad, hi + pad, span + 2 * pad
 
 
+def add_lc_trace(fig, rows, col, colors_map, in_transit=False):
+    xs, ys, yerr, xhalf = lc_trace_arrays(rows)
+    if in_transit:
+        marker_color = [colors_map[r['obsid']] for r in rows]
+    else:
+        marker_color = BASELINE_MARKER
+    kw = dict(
+        mode='markers',
+        marker=dict(size=9, color=marker_color),
+        error_x=dict(type='data', array=xhalf, thickness=1),
+        showlegend=False,
+    )
+    if len(yerr) and np.any(np.isfinite(yerr)):
+        kw['error_y'] = dict(type='data', array=np.asarray(yerr, dtype=np.float64))
+    fig.add_trace(go.Scatter(x=xs, y=ys, **kw), row=1, col=col)
+
+
 baseline_lc = [r for r in spec_records if not r['in_transit']]
 transit_lc = [r for r in spec_records if r['in_transit']]
 eb = phase_axis_extent(baseline_lc)
@@ -259,44 +284,13 @@ fig_lc = make_subplots(
     shared_yaxes=True,
 )
 
-xb, yb, yeb, xhb = lc_trace_arrays(baseline_lc)
-xt, yt, yet, xht = lc_trace_arrays(transit_lc)
-
-phases_arr = np.asarray(xs, dtype=float)
-if phases_arr.size:
-    p_lo, p_hi = phases_arr.min(), phases_arr.max()
-    denom = (p_hi - p_lo) if np.isfinite(p_hi - p_lo) and (p_hi > p_lo) else 1.0
-    norm = (phases_arr - p_lo) / denom
-    marker_colors = sample_colorscale('Plasma', norm.tolist())
-else:
-    marker_colors = []
-
-_kw_bl = dict(
-    mode='markers',
-    marker=dict(size=9, color='rgba(120,120,120,0.95)'),
-    error_x=dict(type='data', array=xhb, thickness=1),
-    name='baseline',
-    showlegend=False,
-)
-if len(yeb) and np.any(np.isfinite(yeb)):
-    _kw_bl['error_y'] = dict(type='data', array=np.asarray(yeb, dtype=np.float64))
-fig_lc.add_trace(go.Scatter(x=xb, y=yb, **_kw_bl), row=1, col=1)
-
-_kw_tr = dict(
-    mode='markers',
-    marker=dict(size=9, color='rgba(120,60,140,0.95)'),
-    error_x=dict(type='data', array=xht, thickness=1),
-    name='in transit',
-    showlegend=False,
-)
-if len(yet) and np.any(np.isfinite(yet)):
-    _kw_tr['error_y'] = dict(type='data', array=np.asarray(yet, dtype=np.float64))
-fig_lc.add_trace(go.Scatter(x=xt, y=yt, **_kw_tr), row=1, col=2)
-
-if eb:
-    fig_lc.update_xaxes(range=[eb[0], eb[1]], row=1, col=1)
-if et:
-    fig_lc.update_xaxes(range=[et[0], et[1]], row=1, col=2)
+for rows, col, in_transit, extent in (
+    (baseline_lc, 1, False, eb),
+    (transit_lc, 2, True, et),
+):
+    add_lc_trace(fig_lc, rows, col, colors_map, in_transit=in_transit)
+    if extent:
+        fig_lc.update_xaxes(range=[extent[0], extent[1]], row=1, col=col)
 
 fig_lc.update_xaxes(title_text='Phase (h)', row=1, col=1)
 fig_lc.update_xaxes(title_text='Phase (h)', row=1, col=2)
