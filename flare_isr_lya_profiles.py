@@ -62,6 +62,8 @@ def get_stela_names():
     if _stela_names_tbl is None:
         _stela_names_tbl = table.Table.read(paths.stela_name_tbl)
         _stela_names_tbl.add_index('tic_id')
+        if not catutils.has_index(_stela_names_tbl, 'hostname'):
+            _stela_names_tbl.add_index('hostname')
     return _stela_names_tbl
 
 
@@ -191,13 +193,31 @@ def load_target_parameters():
     )
     parameters = catutils.planets2hosts(parameters)
     isr_table = load_isr_table()
-    parameters.add_index('hostname')
-    in_cat = np.isin(isr_table['Target'], parameters['hostname'])
+
+    # ISR "Target" names follow stela_names hostnames (e.g. TOI-1730), but the exocat
+    # may use a different hostname for the same star (e.g. LHS 1903). Match via tic_id.
+    stela = get_stela_names()
+    if not catutils.has_index(parameters, 'tic_id'):
+        parameters.add_index('tic_id')
+
+    tic_ids = []
+    not_in_stela = []
+    for target in isr_table['Target']:
+        try:
+            tic_ids.append(int(stela.loc['hostname', target]['tic_id']))
+        except KeyError:
+            tic_ids.append(None)
+            not_in_stela.append(target)
+    if not_in_stela:
+        print(f'ISR targets not in stela_names ({len(not_in_stela)}): {not_in_stela}')
+
+    in_cat = np.array([t is not None and t in parameters['tic_id'] for t in tic_ids])
     missing = isr_table['Target'][~in_cat]
     if len(missing):
         print(f'ISR targets not in exocat ({len(missing)}): {list(missing)}')
     isr_table = isr_table[in_cat]
-    target_parameters = parameters.loc[isr_table['Target']]
+    tic_ids = [t for t, keep in zip(tic_ids, in_cat) if keep]
+    target_parameters = parameters.loc[tic_ids]
     return table.hstack((target_parameters, isr_table))
 
 

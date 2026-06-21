@@ -9,6 +9,7 @@ from importlib import reload
 import numpy as np
 import numpy.typing as npt
 from astropy import units as u
+from astropy.utils.masked import Masked
 from astropy.coordinates import SkyCoord
 from astropy.table import Table, QTable, Row, unique
 import h5py
@@ -95,24 +96,6 @@ def get_spectrograph_object(grating, aperture, host_ra, host_dec) -> Spectrograp
     spec = Spectrograph(lsf_x, lsf_y, etc)
 
     return spec
-
-
-def get_required_grating(target):
-    targfolder = paths.target_data(target)
-
-    # base the choice on whether the existing Lya data are e140m
-    g140m_files = list(targfolder.rglob('*hst-stis-g140m.*_x1d.fits'))
-    e140m_files = list(targfolder.rglob('*hst-stis-e140m.*_x1d.fits'))
-    g130m_files = list(targfolder.rglob('*hst-cos-g130m.*_x1d.fits'))
-    if g140m_files or g130m_files:
-        grating = 'g140m'
-    else:
-        if e140m_files:
-            grating = 'e140m'
-        else:
-            raise ValueError(f"No lya data for {target}. That ain't right.")
-
-    return grating
 
 
 def get_outflow_sim_letter(planet_row, planet_row_order):
@@ -272,6 +255,7 @@ class Host(object):
         # radial velocities
         if np.ma.is_masked(params['st_radv']):
             rv_star = 0 * u.km/u.s
+            rv_star = Masked(rv_star, False)
         else:
             rv_star = params['st_radv']
         rv_ism = ism.ism_velocity(params['ra'], params['dec'])
@@ -320,7 +304,9 @@ class HostVariability(object):
         if not hasattr(x['st_rad'], 'unit'):
             raise ValueError('Host parameters, which is just a Table.Row object, has no units. To ensure units, '
                              'be sure the host and planet catalogs are transformed into QTable')
-        Mstar = x['st_mass'].unmasked # unmasked avoids a bug in mors when the value is a MaskedQuantity
+        Mstar = x['st_mass']
+        if hasattr(Mstar, 'mask'):
+            Mstar = Mstar.unmasked # unmasked avoids a bug in mors when the value is a MaskedQuantity
 
         # get or guess at age
         fallback_age = 5 * u.Gyr
@@ -661,7 +647,8 @@ class DetectabilityDatabase:
             all_apertures: list[str],
             offsets: u.Quantity,
             offset_max_safe: u.Quantity,
-            detection_threshold=3,
+            fn_to_choose_best: Callable,
+            chooser_fn_kws: dict,
             verbose=True,
     ):
         """
@@ -682,8 +669,10 @@ class DetectabilityDatabase:
             [0] # lya case -- 0 = median
         )
 
-        kws_for_best_selectors = dict(slctn_fn=best_by_det_frac,
-                                      slctn_fn_kws=dict(detection_threshold=detection_threshold))
+        # kws_for_best_selectors = dict(slctn_fn=best_by_det_frac,
+        #                               slctn_fn_kws=dict(detection_threshold=detection_threshold))
+        kws_for_best_selectors = dict(slctn_fn=fn_to_choose_best,
+                                      slctn_fn_kws=chooser_fn_kws)
 
         # record best overall offset
         best_offset = db1.best_offset(**kws_for_best_selectors)

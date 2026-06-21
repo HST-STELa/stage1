@@ -39,10 +39,13 @@ from lya_prediction_tools import stis
 
 #%% global settings
 
-targets = sum([target_lists.eval_no(i) for i in range(1,4)], [])
-targets = set(targets)
+target_sets = [target_lists.eval_no(i) for i in range(1,4)]
+targets = sum(target_sets, [])
+drops = ['toi-4336a', 'hd21520', 'toi-6992', 'wasp-84', 'v1298tau'] # shouldn't need these in the future as I de-flagged them in the obsprog sheet
+targets = set(targets) - set(drops)
+targets = sorted(list(targets))
 
-tst_types = ('model', 'flat')
+tst_types = ('flat',)
 sigma_threshold = 1
 staging_area = paths.packages / '2026-03-10.stage2.eval3.staging_area'
 
@@ -107,11 +110,22 @@ variability_predictor = tutils.VariabilityPredictor(
 #%% planet and host catalogs
 
 with catutils.catch_QTable_unit_warnings():
-    planet_catalog = catutils.load_and_mask_ecsv(staging_area / 'planet_catalog.ecsv')
+    planet_catalog = catutils.load_and_mask_ecsv(staging_area / 'planet_catalog_all_evals.ecsv')
     planet_catalog = table.QTable(planet_catalog)
     planet_catalog.add_index('tic_id')
-    host_catalog = table.QTable.read(staging_area / 'host_catalog.ecsv')
+    host_catalog = table.QTable.read(staging_area / 'host_catalog_all_evals.ecsv')
     host_catalog.add_index('tic_id')
+
+
+#%% one-off to remove GJ 3090 c bc accidentally included in archive despite non transiting
+
+mask = planet_catalog['pl_name'].filled('') != 'GJ 3090 c'
+planet_catalog = planet_catalog[mask]
+
+#%% one-off to add trandur for 60779
+
+mask = planet_catalog['hostname'] == 'HD 60779'
+planet_catalog['pl_trandur'][mask] = 1.405*2*u.h
 
 
 #%% a few loose closures
