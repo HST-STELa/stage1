@@ -71,7 +71,8 @@ with catutils.catch_QTable_unit_warnings():
 
 stg1_mask = (
     cat['stage1'].filled(False)  # either selected for stage1
-    | cat['stage1_backup'].filled(False)  # backup for stage1
+    | (cat['backup_lya'] > 0)  # backup for stage1
+    | (cat['backup_fuv'] > 0)  # backup for stage1
     | cat['external_lya'].filled(False)  # or archival
 )
 
@@ -138,7 +139,7 @@ target_info["Optimistic Lya\nTransit SNR"] = roster_hosts['transit_snr_optimisti
 n = len(roster_hosts)
 ext_lya_mask = roster_hosts['external_lya'].filled(False) == True
 selected_mask = roster_hosts['stage1'].filled(False)
-backup_mask = roster_hosts['stage1_backup'].filled(False)
+backup_mask = roster_hosts['backup_lya'].filled(False) | roster_hosts['backup_fuv'].filled(False)
 target_info['Status'] = table.MaskedColumn(length=n, dtype='object', mask=True)
 target_info['Status'][selected_mask] = 'target'
 target_info['Status'][backup_mask] = 'backup'
